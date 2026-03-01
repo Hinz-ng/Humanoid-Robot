@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Humanoid Control</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #121212; color: #eee; padding: 10px; margin: 0; }
+        .toolbar { position: sticky; top: 0; background: #222; padding: 15px; border-radius: 0 0 8px 8px; display: flex; gap: 10px; flex-wrap: wrap; z-index: 100; margin-bottom: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); justify-content: center; align-items: center; }
+        button { padding: 8px 12px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 13px; }
+        .btn-save { background: #4caf50; color: white; }
+        .btn-neutral { background: #f44336; color: white; }
+        .btn-squat { background: #2196f3; color: white; }
+        .btn-stand { background: #03a9f4; color: white; }
+        .btn-preset { background: #673ab7; color: white; margin: 2px;}
+        input[type=text] { padding: 8px; border-radius: 4px; border: 1px solid #555; background: #333; color: white;}
+        .container { max-width: 650px; margin: 0 auto; padding-bottom: 40px; }
+        
+        .preset-box { background: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; border: 1px solid #333;}
+        
+        .servo-row { display: flex; flex-wrap: wrap; align-items: center; background: #1e1e1e; margin-bottom: 8px; padding: 10px; border-radius: 6px; border-left: 4px solid #333; }
+        .right-leg { border-left-color: #ff9800; }
+        .left-leg { border-left-color: #2196f3; }
+        .info { flex: 1; min-width: 170px; font-size: 14px; }
+        .info span { display: block; font-size: 11px; color: #aaa; margin-top: 3px; }
+        .info .meta { color: #00bcd4; font-weight: bold; }
+        .controls { flex: 2; display: flex; align-items: center; gap: 8px; min-width: 300px; }
+        
+        input[type=range] { flex-grow: 1; min-width: 100px; }
+        
+        .input-group { display: flex; flex-direction: column; align-items: center; font-size: 10px; color: #888; }
+        input[type=number] { width: 55px; background: #333; color: white; border: 1px solid #555; padding: 5px; border-radius: 4px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <button class="btn-neutral" onclick="sendCmd('RESETP')">Neutral</button>
+        <button class="btn-squat" onclick="sendCmd('SQUAT_DOWN')">Squat Down</button>
+        <button class="btn-stand" onclick="sendCmd('STAND_UP')">Stand Up</button>
+        
+        <input type="text" id="poseName" placeholder="Pose name">
+        <button class="btn-save" onclick="savePose()">Save</button>
+        <span id="ws-status" style="color:gray;">...</span>
+    </div>
+
+    <div class="container">
+        <div class="preset-box" id="presetBox">
+            <span style="color:#aaa; font-size: 12px;">Saved Presets:</span><br>
+            <div id="presetList" style="margin-top: 10px;"></div>
+        </div>
+
+        <h2>Joint Control</h2>
+        <div id="servosContainer"></div>
+    </div>
+
+<script>
+    const USMIN = 500;
+    const USMAX = 2500;
+    const RANGE = 270;
+
+    const joints = [
+        {ch: 0, name: "Right Ankle Roll", class: "right-leg", dir: "+Pulse = Inward (to left)", default: 131},
+        {ch: 1, name: "Right Ankle Pitch", class: "right-leg", dir: "+Pulse = Dorsiflexion", default: 125},
+        {ch: 2, name: "Right Knee Pitch", class: "right-leg", dir: "+Pulse = Extension", default: 133},
+        {ch: 3, name: "Right Hip Roll", class: "right-leg", dir: "+Pulse = Abduction", default: 130},
+        {ch: 4, name: "Right Hip Yaw", class: "right-leg", dir: "+Pulse = Outward", default: 130},
+        {ch: 5, name: "Right Hip Pitch", class: "right-leg", dir: "+Pulse = Swing Forward", default: 145},
+        
+        {ch: 10, name: "Left Hip Pitch", class: "left-leg", dir: "+Pulse = Swing Back", default: 145},
+        {ch: 11, name: "Left Hip Yaw", class: "left-leg", dir: "+Pulse = Inward", default: 130},
+        {ch: 12, name: "Left Hip Roll", class: "left-leg", dir: "+Pulse = Adduction", default: 134},
+        {ch: 13, name: "Left Knee Pitch", class: "left-leg", dir: "+Pulse = Flexion", default: 128},
+        {ch: 14, name: "Left Ankle Pitch", class: "left-leg", dir: "+Pulse = Plantar Flexion", default: 125},
+        {ch: 15, name: "Left Ankle Roll", class: "left-leg", dir: "+Pulse = Outward", default: 127}
+    ];
+
+    function clamp(val, min, max) { return Math.min(Math.max(val, min), max); }
+    function degToPulse(deg) { return Math.round((clamp(deg, 0, RANGE) / RANGE) * (USMAX - USMIN) + USMIN); }
+    function pulseToDeg(pls) { return Number(((clamp(pls, USMIN, USMAX) - USMIN) / (USMAX - USMIN) * RANGE).toFixed(1)); }
+
+    function buildUI() {
+        const container = document.getElementById("servosContainer");
+        joints.forEach(j => {
+            const defaultPulse = degToPulse(j.default);
+            container.innerHTML += `
+                <div class="servo-row ${j.class}">
+                    <div class="info">${j.name}<span>CH ${j.ch}</span><span class="meta">${j.dir}</span></div>
+                    <div class="controls">
+                        <input type="range" id="sl${j.ch}" min="0" max="270" step="0.5" value="${j.default}" oninput="uiUpdate(${j.ch}, 'sl')">
+                        <div class="input-group">
+                            <input type="number" id="deg${j.ch}" value="${j.default}" step="0.5" onchange="uiUpdate(${j.ch}, 'deg')">
+                            Deg (°)
+                        </div>
+                        <div class="input-group">
+                            <input type="number" id="pls${j.ch}" value="${defaultPulse}" onchange="uiUpdate(${j.ch}, 'pls')">
+                            Pulse (µs)
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    function uiUpdate(ch, source) {
+        let deg, pls;
+        if (source === 'sl') {
+            deg = parseFloat(document.getElementById('sl'+ch).value);
+            pls = degToPulse(deg);
+        } else if (source === 'deg') {
+            deg = parseFloat(document.getElementById('deg'+ch).value);
+            pls = degToPulse(deg);
+        } else if (source === 'pls') {
+            pls = parseInt(document.getElementById('pls'+ch).value);
+            deg = pulseToDeg(pls);
+        }
+        if (source !== 'sl') document.getElementById('sl'+ch).value = deg;
+        if (source !== 'deg') document.getElementById('deg'+ch).value = deg;
+        if (source !== 'pls') document.getElementById('pls'+ch).value = pls;
+
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+            websocket.send(ch + ":" + deg);
+        }
+    }
+
+    function syncUI(ch, deg) {
+        let slider = document.getElementById('sl'+ch);
+        if (!slider) return;
+        let pls = degToPulse(deg);
+        slider.value = deg;
+        document.getElementById('deg'+ch).value = deg;
+        document.getElementById('pls'+ch).value = pls;
+    }
+
+    var gateway = `ws://${window.location.hostname}/ws`;
+    var websocket;
+
+    function initWebSocket() {
+        websocket = new WebSocket(gateway);
+        websocket.onopen = () => { document.getElementById('ws-status').innerText = "Connected"; document.getElementById('ws-status').style.color = "#4caf50"; };
+        websocket.onclose = () => { document.getElementById('ws-status').innerText = "Disconnected"; document.getElementById('ws-status').style.color = "#f44336"; setTimeout(initWebSocket, 2000); };
+        
+        websocket.onmessage = (event) => {
+            let msg = event.data;
+            if (msg.startsWith("POSES:")) {
+                updatePoseList(msg.substring(6));
+            } 
+            else if (msg.startsWith("STATE:")) {
+                let pairs = msg.substring(6).split(",");
+                pairs.forEach(pair => {
+                    let parts = pair.split("=");
+                    if(parts.length === 2) syncUI(parseInt(parts[0]), parseFloat(parts[1]));
+                });
+            }
+        };
+    }
+
+    function sendCmd(cmd) { if (websocket.readyState === WebSocket.OPEN) websocket.send("CMD:" + cmd); }
+    
+    function savePose() { 
+        let name = document.getElementById("poseName").value.trim();
+        if (name && websocket.readyState === WebSocket.OPEN) {
+            websocket.send("SAVE:" + name);
+            document.getElementById("poseName").value = ''; 
+        } else {
+            alert("Please enter a valid pose name.");
+        }
+    }
+
+    function updatePoseList(csv) {
+        const list = document.getElementById("presetList");
+        list.innerHTML = "";
+        if (!csv) return;
+        
+        let poses = csv.split(",").filter(p => p.trim() !== "");
+        poses.forEach(pose => {
+            let btn = document.createElement("button");
+            btn.className = "btn-preset";
+            btn.innerText = pose;
+            btn.onclick = () => sendCmd("LOAD:" + pose);
+            list.appendChild(btn);
+        });
+    }
+
+    window.onload = () => { buildUI(); initWebSocket(); };
+</script>
+</body>
+</html>

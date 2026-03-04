@@ -6,10 +6,10 @@
 #include <ESPAsyncWebServer.h>
 #include "servo_control.h"
 #include "gait_squat.h"
+#include "oe_control.h"    // --- ADD: OE pin control (estop/clear) ---
 
 class WebComm {
 public:
-    // Update constructor to take SquatGait
     WebComm(ServoControl* servoCtrl, SquatGait* squatGait);
     void init();
     void cleanupClients();
@@ -18,11 +18,14 @@ public:
 private:
     AsyncWebServer server;
     AsyncWebSocket ws;
-    ServoControl* _servoCtrl;
-    SquatGait* _squatGait; // Store the pointer
+    ServoControl*  _servoCtrl;
+    SquatGait*     _squatGait;
 
-    void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
-    void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
+    void broadcastJointInfo();
+
+    void onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
+                 AwsEventType type, void* arg, uint8_t* data, size_t len);
+    void handleWebSocketMessage(void* arg, uint8_t* data, size_t len);
 };
 
 #endif

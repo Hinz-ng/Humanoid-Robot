@@ -1,35 +1,38 @@
 #include "WebComm.h"
 #include <LittleFS.h>
 
-// Update Constructor to accept SquatGait pointer
-WebComm::WebComm(ServoControl* servoCtrl, SquatGait* squatGait) 
+WebComm::WebComm(ServoControl* servoCtrl, SquatGait* squatGait)
     : server(80), ws("/ws"), _servoCtrl(servoCtrl), _squatGait(squatGait) {}
 
-void listFiles() { 
+// ---------------------------------------------------------------------------
+
+void listFiles() {
     Serial.println("[LittleFS] Listing files:");
     File root = LittleFS.open("/");
     File file = root.openNextFile();
-    while(file){
+    while (file) {
         Serial.printf(" - %s (%d bytes)\n", file.name(), file.size());
         file = root.openNextFile();
     }
 }
 
+// ---------------------------------------------------------------------------
+
 void WebComm::init() {
     WiFi.softAP(AP_SSID, AP_PASS);
-    delay(500); 
+    delay(500);
     Serial.printf("[WiFi] Started. IP: %s\n", WiFi.softAPIP().toString().c_str());
 
-    if (!LittleFS.begin(true)) { Serial.println("[LittleFS] Mount Failed!"); } 
+    if (!LittleFS.begin(true)) { Serial.println("[LittleFS] Mount Failed!"); }
     else { Serial.println("[LittleFS] Mounted."); listFiles(); }
 
-    ws.onEvent([this](AsyncWebSocket *server, AsyncWebSocketClient *client, 
-                      AwsEventType type, void *arg, uint8_t *data, size_t len) {
+    ws.onEvent([this](AsyncWebSocket* server, AsyncWebSocketClient* client,
+                      AwsEventType type, void* arg, uint8_t* data, size_t len) {
         this->onEvent(server, client, type, arg, data, len);
     });
     server.addHandler(&ws);
 
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
         if (LittleFS.exists("/index.html")) request->send(LittleFS, "/index.html", "text/html");
         else request->send(200, "text/plain", "index.html missing");
     });
@@ -38,49 +41,94 @@ void WebComm::init() {
 
 void WebComm::cleanupClients() { ws.cleanupClients(); }
 
+// =============================================================================
+//  STATE BROADCAST
+//  Protocol: "STATE:<ch>=<pulse_us>:<deg>,..."
+//  Also appends E-stop status so UI can reflect it on reconnect.
+// =============================================================================
+
 void WebComm::broadcastState() {
     if (!_servoCtrl) return;
-    String stateMsg = "STATE:";
+    String msg = "STATE:";
     for (int i = 0; i < NUM_SERVOS; i++) {
-        stateMsg += String(i) + "=" + String(_servoCtrl->getTargetAngle(i));
-        if (i < NUM_SERVOS - 1) stateMsg += ",";
+        int   p = _servoCtrl->getTargetPulse(i);
+        float d = _servoCtrl->getTargetAngle(i);
+        msg += String(i) + "=" + String(p) + ":" + String(d, 1);
+        if (i < NUM_SERVOS - 1) msg += ",";
     }
-    ws.textAll(stateMsg);
+    // --- ADD: append E-stop flag so UI always knows current safety state ---
+    msg += ";ESTOP=" + String(oe_is_estopped() ? "1" : "0");
+    ws.textAll(msg);
 }
 
-void WebComm::onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, 
-                      AwsEventType type, void *arg, uint8_t *data, size_t len) {
+// =============================================================================
+//  JOINT INFO BROADCAST
+//  Protocol: "JOINTS:<ch>|<name>|<neutral_pulse>|<neutral_deg>|<hint>,..."
+// =============================================================================
+
+void WebComm::broadcastJointInfo() {
+    String msg = "JOINTS:";
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        const JointDef& j = JOINT_MAP[i];
+        msg += String(j.channel)      + "|"
+             + String(j.name)         + "|"
+             + String(j.neutral_pulse)+ "|"
+             + String(j.neutral_deg, 1) + "|"
+             + String(j.ui_direction_hint);
+        if (i < NUM_SERVOS - 1) msg += ",";
+    }
+    ws.textAll(msg);
+}
+
+// =============================================================================
+//  EVENT HANDLER
+// =============================================================================
+
+void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
+                      AwsEventType type, void* arg, uint8_t* data, size_t len) {
     if (type == WS_EVT_CONNECT) {
+        Serial.printf("[WebComm] Client #%u connected\n", client->id());
         if (_servoCtrl) {
             client->text(_servoCtrl->listPoses());
-            broadcastState(); 
+            broadcastJointInfo();
+            broadcastState();
         }
     }
+    if (type == WS_EVT_DISCONNECT) {
+        Serial.printf("[WebComm] Client #%u disconnected\n", client->id());
+    }
     if (type == WS_EVT_DATA) {
-        AwsFrameInfo *info = (AwsFrameInfo*)arg;
+        AwsFrameInfo* info = (AwsFrameInfo*)arg;
         if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
             handleWebSocketMessage(arg, data, len);
         }
     }
 }
 
-void WebComm::handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
+// =============================================================================
+//  MESSAGE HANDLER
+// =============================================================================
+
+void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
     data[len] = 0;
-    String message = (char *)data;
+    String message = (char*)data;
     if (!_servoCtrl) return;
+
+    // --- ADD START: log every incoming message for debugging ---
+    Serial.printf("[WebComm] Received: %s\n", message.c_str());
+    // --- ADD END ---
 
     if (message.startsWith("CMD:")) {
         String cmd = message.substring(4);
-        
-        // --- COMMANDS ---
+
         if (cmd == "RESETP") {
-            Serial.println("CMD: Reset Neutral");
+            Serial.println("[WebComm] CMD: Reset Neutral");
             for (int i = 0; i < NUM_SERVOS; i++) {
                 _servoCtrl->setTargetAngle(i, JOINT_MAP[i].neutralAngle);
                 _servoCtrl->setGaitOffset(i, 0.0f);
             }
             broadcastState();
-        } 
+        }
         else if (cmd == "SQUAT_DOWN") {
             if (_squatGait) _squatGait->squatDown();
         }
@@ -88,23 +136,63 @@ void WebComm::handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
             if (_squatGait) _squatGait->standUp();
         }
         else if (cmd.startsWith("LOAD:")) {
-            String poseName = cmd.substring(5);
-            _servoCtrl->loadPose(poseName);
+            _servoCtrl->loadPose(cmd.substring(5));
             broadcastState();
         }
-    } 
+        // Named movement — BUG FIX: magnitude parsed as float, not int
+        // Protocol: CMD:MOVE_NAMED:<channel>:<movement>:<magnitude>
+        // Example:  CMD:MOVE_NAMED:2:flex:45.5
+        else if (cmd.startsWith("MOVE_NAMED:")) {
+            String params = cmd.substring(11);           // "2:flex:45.5"
+            int sep1 = params.indexOf(':');
+            int sep2 = params.indexOf(':', sep1 + 1);
+            if (sep1 != -1 && sep2 != -1) {
+                uint8_t ch  = (uint8_t)params.substring(0, sep1).toInt();
+                String  mv  = params.substring(sep1 + 1, sep2);
+                // --- FIX: was .toInt() — truncated float magnitude to int, losing precision ---
+                float   mag = params.substring(sep2 + 1).toFloat();
+
+                // --- ADD START: debug log parsed magnitude before applying ---
+                Serial.printf("[WebComm] MOVE_NAMED: ch=%d  move=%s  magnitude=%.2f\n",
+                              ch, mv.c_str(), mag);
+                // --- ADD END ---
+
+                _servoCtrl->applyNamedMovement(ch, mv.c_str(), mag, false);
+                broadcastState();
+            } else {
+                Serial.printf("[WebComm] MOVE_NAMED parse error: params='%s'\n", params.c_str());
+            }
+        }
+        // --- ADD START: Emergency Stop ---
+        // CMD:ESTOP — immediately disables both PCA9685 boards via OE pin
+        else if (cmd == "ESTOP") {
+            oe_estop();
+            // Broadcast state so UI reflects E-stop immediately
+            broadcastState();
+            ws.textAll("ESTOP:ACTIVE");
+            Serial.println("[WebComm] CMD: ESTOP received — outputs disabled");
+        }
+        // CMD:CLEAR_ESTOP — re-enables outputs after user confirmation
+        else if (cmd == "CLEAR_ESTOP") {
+            oe_clear();
+            broadcastState();
+            ws.textAll("ESTOP:CLEAR");
+            Serial.println("[WebComm] CMD: CLEAR_ESTOP received — outputs enabled");
+        }
+        // --- ADD END ---
+    }
     else if (message.startsWith("SAVE:")) {
-        String poseName = message.substring(5);
-        _servoCtrl->saveCurrentPose(poseName);
-        ws.textAll(_servoCtrl->listPoses()); 
+        _servoCtrl->saveCurrentPose(message.substring(5));
+        ws.textAll(_servoCtrl->listPoses());
     }
     else {
-        // Slider Control
-        int separatorIndex = message.indexOf(':');
-        if (separatorIndex != -1) {
-            uint8_t channel = message.substring(0, separatorIndex).toInt();
-            float angle = message.substring(separatorIndex + 1).toFloat();
-            _servoCtrl->setTargetAngle(channel, angle);
+        // Slider control: "<channel>:<angle_degrees>" (existing protocol unchanged)
+        int sep = message.indexOf(':');
+        if (sep != -1) {
+            uint8_t ch    = (uint8_t)message.substring(0, sep).toInt();
+            float   angle = message.substring(sep + 1).toFloat();
+            _servoCtrl->setTargetAngle(ch, angle);
+            broadcastState();
         }
     }
 }

@@ -49,7 +49,7 @@ void StateEstimator::_scaleRaw(const RawIMUData& raw,
     // Step 1: subtract bias (in raw LSB).
     // Step 2: divide by scale to get deg/s.
     // Step 3: multiply by PI/180 to get rad/s.
-    const float DEG_TO_RAD = 0.017453293f;  // PI / 180
+    // DEG_TO_RAD is defined in Arduino.h — no local declaration needed.
     gx_rs = ((float)raw.gyro_x - _cfg.gyro_bias_x) / _cfg.gyro_scale * DEG_TO_RAD;
     gy_rs = ((float)raw.gyro_y - _cfg.gyro_bias_y) / _cfg.gyro_scale * DEG_TO_RAD;
     gz_rs = ((float)raw.gyro_z - _cfg.gyro_bias_z) / _cfg.gyro_scale * DEG_TO_RAD;

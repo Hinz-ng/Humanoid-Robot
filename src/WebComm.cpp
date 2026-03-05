@@ -56,7 +56,7 @@ void WebComm::broadcastState() {
         msg += String(i) + "=" + String(p) + ":" + String(d, 1);
         if (i < NUM_SERVOS - 1) msg += ",";
     }
-    // --- ADD: append E-stop flag so UI always knows current safety state ---
+    // Append E-stop flag so UI always knows current safety state
     msg += ";ESTOP=" + String(oe_is_estopped() ? "1" : "0");
     ws.textAll(msg);
 }
@@ -70,14 +70,38 @@ void WebComm::broadcastJointInfo() {
     String msg = "JOINTS:";
     for (int i = 0; i < NUM_SERVOS; i++) {
         const JointDef& j = JOINT_MAP[i];
-        msg += String(j.channel)      + "|"
-             + String(j.name)         + "|"
-             + String(j.neutral_pulse)+ "|"
+        msg += String(j.channel)        + "|"
+             + String(j.name)           + "|"
+             + String(j.neutral_pulse)  + "|"
              + String(j.neutral_deg, 1) + "|"
              + String(j.ui_direction_hint);
         if (i < NUM_SERVOS - 1) msg += ",";
     }
     ws.textAll(msg);
+}
+
+// =============================================================================
+//  IMU BROADCAST                                                   --- ADD ---
+//  Protocol: "IMU:ax=X,ay=Y,az=Z,gx=X,gy=Y,gz=Z"
+//  Rate-limited to 20 Hz internally. Skips silently if no clients
+//  are connected or the data struct is marked invalid.
+// =============================================================================
+
+void WebComm::broadcastIMU(RawIMUData data) {
+    if (!data.valid || ws.count() == 0) return;
+
+    const uint32_t IMU_BROADCAST_INTERVAL_US = 50000; // 20 Hz
+    uint32_t now = micros();
+    if ((now - _lastIMUBroadcast_us) < IMU_BROADCAST_INTERVAL_US) return;
+    _lastIMUBroadcast_us = now;
+
+    char buf[64];
+    snprintf(buf, sizeof(buf),
+        "IMU:ax=%d,ay=%d,az=%d,gx=%d,gy=%d,gz=%d",
+        data.accel_x, data.accel_y, data.accel_z,
+        data.gyro_x,  data.gyro_y,  data.gyro_z
+    );
+    ws.textAll(buf);
 }
 
 // =============================================================================
@@ -114,9 +138,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
     String message = (char*)data;
     if (!_servoCtrl) return;
 
-    // --- ADD START: log every incoming message for debugging ---
     Serial.printf("[WebComm] Received: %s\n", message.c_str());
-    // --- ADD END ---
 
     if (message.startsWith("CMD:")) {
         String cmd = message.substring(4);
@@ -139,23 +161,20 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             _servoCtrl->loadPose(cmd.substring(5));
             broadcastState();
         }
-        // Named movement — BUG FIX: magnitude parsed as float, not int
+        // Named movement
         // Protocol: CMD:MOVE_NAMED:<channel>:<movement>:<magnitude>
         // Example:  CMD:MOVE_NAMED:2:flex:45.5
         else if (cmd.startsWith("MOVE_NAMED:")) {
-            String params = cmd.substring(11);           // "2:flex:45.5"
+            String params = cmd.substring(11);
             int sep1 = params.indexOf(':');
             int sep2 = params.indexOf(':', sep1 + 1);
             if (sep1 != -1 && sep2 != -1) {
                 uint8_t ch  = (uint8_t)params.substring(0, sep1).toInt();
                 String  mv  = params.substring(sep1 + 1, sep2);
-                // --- FIX: was .toInt() — truncated float magnitude to int, losing precision ---
                 float   mag = params.substring(sep2 + 1).toFloat();
 
-                // --- ADD START: debug log parsed magnitude before applying ---
                 Serial.printf("[WebComm] MOVE_NAMED: ch=%d  move=%s  magnitude=%.2f\n",
                               ch, mv.c_str(), mag);
-                // --- ADD END ---
 
                 _servoCtrl->applyNamedMovement(ch, mv.c_str(), mag, false);
                 broadcastState();
@@ -163,23 +182,19 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                 Serial.printf("[WebComm] MOVE_NAMED parse error: params='%s'\n", params.c_str());
             }
         }
-        // --- ADD START: Emergency Stop ---
-        // CMD:ESTOP — immediately disables both PCA9685 boards via OE pin
+        // Emergency Stop
         else if (cmd == "ESTOP") {
             oe_estop();
-            // Broadcast state so UI reflects E-stop immediately
             broadcastState();
             ws.textAll("ESTOP:ACTIVE");
             Serial.println("[WebComm] CMD: ESTOP received — outputs disabled");
         }
-        // CMD:CLEAR_ESTOP — re-enables outputs after user confirmation
         else if (cmd == "CLEAR_ESTOP") {
             oe_clear();
             broadcastState();
             ws.textAll("ESTOP:CLEAR");
             Serial.println("[WebComm] CMD: CLEAR_ESTOP received — outputs enabled");
         }
-        // --- ADD END ---
     }
     else if (message.startsWith("SAVE:")) {
         _servoCtrl->saveCurrentPose(message.substring(5));

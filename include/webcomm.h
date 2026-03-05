@@ -6,7 +6,7 @@
 #include <ESPAsyncWebServer.h>
 #include "servo_control.h"
 #include "gait_squat.h"
-#include "oe_control.h"    // --- ADD: OE pin control (estop/clear) ---
+#include "imu.h"                // --- ADD: needed for RawIMUData parameter type
 
 class WebComm {
 public:
@@ -14,18 +14,18 @@ public:
     void init();
     void cleanupClients();
     void broadcastState();
+    void broadcastJointInfo();
+    void broadcastIMU(RawIMUData data); // --- ADD: sends raw IMU values to UI panel
 
 private:
     AsyncWebServer server;
     AsyncWebSocket ws;
-    ServoControl*  _servoCtrl;
-    SquatGait*     _squatGait;
+    ServoControl* _servoCtrl;
+    SquatGait*    _squatGait;
+    uint32_t _lastIMUBroadcast_us = 0;  // --- ADD: rate-limit timestamp for IMU broadcast
 
-    void broadcastJointInfo();
-
-    void onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
-                 AwsEventType type, void* arg, uint8_t* data, size_t len);
-    void handleWebSocketMessage(void* arg, uint8_t* data, size_t len);
+    void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
+    void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
 };
 
 #endif

@@ -89,4 +89,5 @@ void loop() {
     oe_loop();              // --- ADD: non-blocking boot hold release ---
     servoController.update();
     squatGait.update();
+    webComm.broadcastIMU(IMU_update());
 }

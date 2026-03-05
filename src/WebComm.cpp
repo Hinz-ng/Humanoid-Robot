@@ -1,5 +1,6 @@
 #include "WebComm.h"
 #include <LittleFS.h>
+#include "oe_control.h"
 
 WebComm::WebComm(ServoControl* servoCtrl, SquatGait* squatGait)
     : server(80), ws("/ws"), _servoCtrl(servoCtrl), _squatGait(squatGait) {}

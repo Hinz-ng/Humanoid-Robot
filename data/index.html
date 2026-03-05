@@ -118,6 +118,20 @@
                 <div class="imu-row"><span class="imu-axis">Z</span><span class="imu-value" id="imu-gz">—</span></div>
             </div>
         </div>
+        <!-- Complementary filter output -->
+        <div class="imu-group-label" style="margin-top:12px;">Orientation Estimate</div>
+        <div class="imu-grid" style="margin-top:6px;">
+            <div class="imu-group">
+                <div class="imu-group-label">Angle (rad)</div>
+                <div class="imu-row"><span class="imu-axis">P</span><span class="imu-value" id="est-pitch">—</span></div>
+                <div class="imu-row"><span class="imu-axis">R</span><span class="imu-value" id="est-roll">—</span></div>
+            </div>
+            <div class="imu-group">
+                <div class="imu-group-label">Rate (rad/s)</div>
+                <div class="imu-row"><span class="imu-axis">P</span><span class="imu-value" id="est-pitchRate">—</span></div>
+                <div class="imu-row"><span class="imu-axis">R</span><span class="imu-value" id="est-rollRate">—</span></div>
+            </div>
+        </div>
         <div class="imu-status" id="imu-status">Waiting for data...</div>
     </div>
     <div class="preset-box">
@@ -380,6 +394,17 @@ function initWebSocket() {
             const status = document.getElementById("imu-status");
             status.textContent = "Last update: " + new Date().toLocaleTimeString("en-GB", {hour12: false});
             status.className = "imu-status live";
+        }
+        else if (msg.startsWith("ESTIMATE:")) {
+            const values = {};
+            msg.substring(9).split(",").forEach(pair => {
+                const [k, v] = pair.split("=");
+                values[k] = parseFloat(v).toFixed(4);
+            });
+            document.getElementById("est-pitch").textContent     = values["pitch"]     ?? "—";
+            document.getElementById("est-roll").textContent      = values["roll"]      ?? "—";
+            document.getElementById("est-pitchRate").textContent = values["pitchRate"] ?? "—";
+            document.getElementById("est-rollRate").textContent  = values["rollRate"]  ?? "—";
         }
         // --- ADD END ---
     };

@@ -3,7 +3,9 @@
 #include "servo_control.h"
 #include "WebComm.h"
 #include "gait_squat.h"
-#include "oe_control.h"   // --- ADD ---
+#include "oe_control.h"
+#include "state_estimator.h"    // --- ADD: complementary filter
+
 
 // =============================================================================
 //  GLOBAL OBJECTS
@@ -12,6 +14,7 @@
 ServoControl servoController;
 SquatGait    squatGait(&servoController);
 WebComm      webComm(&servoController, &squatGait);
+StateEstimator stateEstimator;   // default FilterConfig (alpha=0.995)
 
 // =============================================================================
 //  --- ADD START: OE CONTROL IMPLEMENTATION ---
@@ -91,5 +94,18 @@ void loop() {
     oe_loop();              // --- ADD: non-blocking boot hold release ---
     servoController.update();
     squatGait.update();
-    webComm.broadcastIMU(IMU_update());
+// Balance loop: runs every iteration, dt measured in seconds.
+// Target: 200-400 Hz. ServoControl.update() self-limits to 50 Hz internally.
+{
+    static uint32_t _lastEstimatorMicros = micros();
+    uint32_t _now = micros();
+    float dt = (_now - _lastEstimatorMicros) * 1e-6f;
+    _lastEstimatorMicros = _now;
+
+    RawIMUData raw = IMU_update();
+    IMUState   state = stateEstimator.update(raw, dt);
+
+    webComm.broadcastIMU(raw);        // raw values → UI IMU panel
+    webComm.broadcastEstimate(state); // filtered angles → UI IMU panel
+}
 }

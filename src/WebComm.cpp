@@ -104,7 +104,27 @@ void WebComm::broadcastIMU(RawIMUData data) {
     );
     ws.textAll(buf);
 }
+// =============================================================================
+//  ESTIMATE BROADCAST                                              --- ADD ---
+//  Protocol: "ESTIMATE:pitch=X,roll=X,pitchRate=X,rollRate=X"
+//  Values: pitch/roll in radians (4 decimal places), rates in rad/s.
+//  Rate-limited to 20 Hz — same cadence as raw IMU broadcast.
+// =============================================================================
+void WebComm::broadcastEstimate(IMUState state) {
+    if (!state.valid || ws.count() == 0) return;
 
+    const uint32_t INTERVAL_US = 50000; // 20 Hz
+    uint32_t now = micros();
+    if ((now - _lastEstimateBroadcast_us) < INTERVAL_US) return;
+    _lastEstimateBroadcast_us = now;
+
+    char buf[96];
+    snprintf(buf, sizeof(buf),
+        "ESTIMATE:pitch=%.4f,roll=%.4f,pitchRate=%.4f,rollRate=%.4f",
+        state.pitch, state.roll, state.pitchRate, state.rollRate
+    );
+    ws.textAll(buf);
+}
 // =============================================================================
 //  EVENT HANDLER
 // =============================================================================

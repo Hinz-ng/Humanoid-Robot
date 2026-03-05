@@ -6,7 +6,8 @@
 #include <ESPAsyncWebServer.h>
 #include "servo_control.h"
 #include "gait_squat.h"
-#include "imu.h"                // --- ADD: needed for RawIMUData parameter type
+#include "imu.h" 
+#include "state_estimator.h"    // --- ADD: for IMUState parameter
 
 class WebComm {
 public:
@@ -16,6 +17,7 @@ public:
     void broadcastState();
     void broadcastJointInfo();
     void broadcastIMU(RawIMUData data); // --- ADD: sends raw IMU values to UI panel
+    void broadcastEstimate(IMUState state); // --- ADD: sends pitch/roll/rates to UI
 
 private:
     AsyncWebServer server;
@@ -23,6 +25,7 @@ private:
     ServoControl* _servoCtrl;
     SquatGait*    _squatGait;
     uint32_t _lastIMUBroadcast_us = 0;  // --- ADD: rate-limit timestamp for IMU broadcast
+    uint32_t _lastEstimateBroadcast_us = 0; // --- ADD: rate-limit for estimate broadcast
 
     void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
     void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);

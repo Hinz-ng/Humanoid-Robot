@@ -62,6 +62,21 @@
         .input-group input[type=number] { width: 58px; text-align: center; padding: 5px; }
 
         #ws-status { font-size: 12px; }
+        /* --- IMU Panel --- */
+        .imu-panel { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 8px;
+                     padding: 16px; margin-bottom: 20px; }
+        .imu-panel h3 { margin: 0 0 14px 0; font-size: 13px; text-transform: uppercase;
+                        letter-spacing: 1px; color: #7c83fd; }
+        .imu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .imu-group { background: #12122a; border-radius: 6px; padding: 10px 14px; }
+        .imu-group-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+                           color: #888; margin-bottom: 8px; }
+        .imu-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+        .imu-axis { font-size: 11px; color: #888; width: 20px; }
+        .imu-value { font-size: 15px; font-family: 'Courier New', monospace; font-weight: bold;
+                     color: #e0e0ff; text-align: right; min-width: 70px; }
+        .imu-status { font-size: 10px; color: #555; text-align: right; margin-top: 8px; }
+        .imu-status.live { color: #4caf50; }
     </style>
 </head>
 <body>
@@ -86,7 +101,25 @@
         ⚠️ EMERGENCY STOP ACTIVE — Servo outputs are DISABLED
     </div>
     <!-- ADD END -->
-
+<!-- IMU Panel -->
+    <div class="imu-panel">
+        <h3>&#9650; IMU &mdash; BMI160 Raw Values</h3>
+        <div class="imu-grid">
+            <div class="imu-group">
+                <div class="imu-group-label">Accelerometer (LSB)</div>
+                <div class="imu-row"><span class="imu-axis">X</span><span class="imu-value" id="imu-ax">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Y</span><span class="imu-value" id="imu-ay">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Z</span><span class="imu-value" id="imu-az">—</span></div>
+            </div>
+            <div class="imu-group">
+                <div class="imu-group-label">Gyroscope (LSB)</div>
+                <div class="imu-row"><span class="imu-axis">X</span><span class="imu-value" id="imu-gx">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Y</span><span class="imu-value" id="imu-gy">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Z</span><span class="imu-value" id="imu-gz">—</span></div>
+            </div>
+        </div>
+        <div class="imu-status" id="imu-status">Waiting for data...</div>
+    </div>
     <div class="preset-box">
         <span style="color:#aaa;font-size:12px;">Saved Presets:</span><br>
         <div id="presetList" style="margin-top:10px;"></div>
@@ -330,6 +363,23 @@ function initWebSocket() {
         }
         else if (msg === "ESTOP:CLEAR") {
             setEstopUI(false);
+        }
+        else if (msg.startsWith("IMU:")) {
+            // Format: "IMU:ax=X,ay=Y,az=Z,gx=X,gy=Y,gz=Z"
+            const values = {};
+            msg.substring(4).split(",").forEach(pair => {
+                const [k, v] = pair.split("=");
+                values[k] = v;
+            });
+            document.getElementById("imu-ax").textContent = values["ax"] ?? "—";
+            document.getElementById("imu-ay").textContent = values["ay"] ?? "—";
+            document.getElementById("imu-az").textContent = values["az"] ?? "—";
+            document.getElementById("imu-gx").textContent = values["gx"] ?? "—";
+            document.getElementById("imu-gy").textContent = values["gy"] ?? "—";
+            document.getElementById("imu-gz").textContent = values["gz"] ?? "—";
+            const status = document.getElementById("imu-status");
+            status.textContent = "Last update: " + new Date().toLocaleTimeString("en-GB", {hour12: false});
+            status.className = "imu-status live";
         }
         // --- ADD END ---
     };

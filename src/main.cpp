@@ -77,10 +77,12 @@ void setup() {
     Serial.begin(115200);
     Serial.println("Booting Robot...");
 
-    oe_begin();             // --- ADD: pull OE HIGH before anything else ---
-    servoController.init();
+    oe_begin();
+    servoController.init();   // <-- Wire.begin(8, 9) happens here
+    if (!IMU_init()) {        // <-- safe to call now; Wire is already up
+        Serial.println("[WARN] Continuing without IMU.");
+    }
     webComm.init();
-
     Serial.println("System Ready.");
 }
 

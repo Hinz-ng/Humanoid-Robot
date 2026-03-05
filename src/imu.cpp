@@ -14,8 +14,8 @@
 #include "imu.h"
 #include <BMI160Gen.h>
 
-static const int     IMU_SDA_PIN      = 17;
-static const int     IMU_SCL_PIN      = 18;  // documented; library infers it
+static const int IMU_SDA_PIN = 8;   // shared I2C bus with PCA9685
+static const int IMU_SCL_PIN = 9;   // servoController.init() calls Wire.begin(8,9)
 static const uint8_t BMI160_I2C_ADDR  = 0x68;
 
 static bool       _initialized = false;
@@ -27,8 +27,9 @@ static RawIMUData _latestData  = {};
 // matter — this library manages its own Wire bus using the SDA pin number.
 // ---------------------------------------------------------------------------
 bool IMU_init() {
+    // Wire.begin(8, 9) is already called by servoController.init() before
+    // IMU_init(). The library reuses that bus via the SDA pin number arg.
     bool ok = BMI160.begin(BMI160GenClass::I2C_MODE, BMI160_I2C_ADDR, IMU_SDA_PIN);
-
     if (!ok) {
         Serial.println("[IMU] ERROR: BMI160 not found. Check wiring and SA0 pin.");
         Serial.printf("[IMU]   SDA: GPIO %d  SCL: GPIO %d\n", IMU_SDA_PIN, IMU_SCL_PIN);

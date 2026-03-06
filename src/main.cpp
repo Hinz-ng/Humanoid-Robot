@@ -2,7 +2,6 @@
 #include "project_wide_defs.h"
 #include "servo_control.h"
 #include "WebComm.h"
-#include "gait_squat.h"
 #include "oe_control.h"
 #include "state_estimator.h"    // --- ADD: complementary filter
 
@@ -12,8 +11,8 @@
 // =============================================================================
 
 ServoControl servoController;
-SquatGait    squatGait(&servoController);
-WebComm      webComm(&servoController, &squatGait);
+// legacy gait pointer removed; WebComm now only needs the servo controller.
+WebComm      webComm(&servoController);
 StateEstimator stateEstimator;   // default FilterConfig (alpha=0.995)
 
 // =============================================================================
@@ -93,7 +92,6 @@ void loop() {
     webComm.cleanupClients();
     oe_loop();              // --- ADD: non-blocking boot hold release ---
     servoController.update();
-    squatGait.update();
 // Balance loop: runs every iteration, dt measured in seconds.
 // Target: 200-400 Hz. ServoControl.update() self-limits to 50 Hz internally.
 {

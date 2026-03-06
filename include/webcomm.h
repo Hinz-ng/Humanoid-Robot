@@ -5,13 +5,13 @@
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include "servo_control.h"
-#include "gait_squat.h"
 #include "imu.h" 
 #include "state_estimator.h"    // --- ADD: for IMUState parameter
 
 class WebComm {
-public:
-    WebComm(ServoControl* servoCtrl, SquatGait* squatGait);
+public:    // ctor can be invoked at global scope; it simply stores the servo pointer.
+    // legacy users passed a gait object as second argument, which is now ignored.
+    WebComm(ServoControl* servo = nullptr);
     void init();
     void cleanupClients();
     void broadcastState();
@@ -23,7 +23,6 @@ private:
     AsyncWebServer server;
     AsyncWebSocket ws;
     ServoControl* _servoCtrl;
-    SquatGait*    _squatGait;
     uint32_t _lastIMUBroadcast_us = 0;  // --- ADD: rate-limit timestamp for IMU broadcast
     uint32_t _lastEstimateBroadcast_us = 0; // --- ADD: rate-limit for estimate broadcast
 

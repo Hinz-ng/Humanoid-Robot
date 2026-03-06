@@ -98,6 +98,43 @@ IMUState StateEstimator::update(const RawIMUData& raw, float dt) {
     float ax_g, ay_g, az_g, gx_rs, gy_rs, gz_rs;
     _scaleRaw(raw, ax_g, ay_g, az_g, gx_rs, gy_rs, gz_rs);
 
+    // ---------------------------------------------------------------------------
+// Sensor frame → Robot frame transform
+//
+// Sensor mounting:
+//   Zs → forward
+//   Xs → up
+//   Ys → left
+//
+// Robot frame expected by filter:
+//   Xr → forward
+//   Yr → left
+//   Zr → up
+//
+// Mapping:
+//   Xr = Zs
+//   Yr = Ys
+//   Zr = Xs
+// ---------------------------------------------------------------------------
+
+// Save original sensor-frame values
+float ax_s = ax_g;
+float ay_s = ay_g;
+float az_s = az_g;
+
+float gx_s = gx_rs;
+float gy_s = gy_rs;
+float gz_s = gz_rs;
+
+// Transform to robot frame
+ax_g = az_s;   // forward
+ay_g = ay_s;   // left
+az_g = ax_s;   // up
+
+gx_rs = gz_s;  // rotation about forward axis
+gy_rs = gy_s;  // rotation about left axis
+gz_rs = gx_s;  // rotation about up axis
+
     // --- Stage 2: Accel angles ---
     float accelPitch, accelRoll;
     _accelAngles(ax_g, ay_g, az_g, accelPitch, accelRoll);

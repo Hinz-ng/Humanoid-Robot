@@ -1,9 +1,16 @@
 #include "WebComm.h"
 #include <LittleFS.h>
 #include "oe_control.h"
+#include "joint_config.h"
+#include "servo_driver.h"
 
-WebComm::WebComm(ServoControl* servoCtrl, SquatGait* squatGait)
-    : server(80), ws("/ws"), _servoCtrl(servoCtrl), _squatGait(squatGait) {}
+// Constructor ---------------------------------------------------------------
+WebComm::WebComm(ServoControl* servo)
+    : server(80), ws("/ws"), _servoCtrl(servo) {
+    // older versions accepted a second pointer to a SquatGait object;
+    // the argument has been dropped. nothing else to do here.
+}
+
 
 // ---------------------------------------------------------------------------
 
@@ -68,15 +75,18 @@ void WebComm::broadcastState() {
 // =============================================================================
 
 void WebComm::broadcastJointInfo() {
+    // Now reads from JOINT_CONFIG (the canonical config table in joint_config.h).
+    // neutral_pulse is computed on the fly from neutralDeg — no separate field needed.
     String msg = "JOINTS:";
-    for (int i = 0; i < NUM_SERVOS; i++) {
-        const JointDef& j = JOINT_MAP[i];
-        msg += String(j.channel)        + "|"
-             + String(j.name)           + "|"
-             + String(j.neutral_pulse)  + "|"
-             + String(j.neutral_deg, 1) + "|"
-             + String(j.ui_direction_hint);
-        if (i < NUM_SERVOS - 1) msg += ",";
+    for (int i = 0; i < NUM_JOINTS; i++) {
+        const JointConfig& j = JOINT_CONFIG[i];
+        int neutral_pulse = ServoDriver::degToPulse(j.neutralDeg);
+        msg += String(j.channel)           + "|"
+             + String(j.name)              + "|"
+             + String(neutral_pulse)       + "|"
+             + String(j.neutralDeg, 1)     + "|"
+             + String(j.direction);        // direction replaces ui_direction_hint
+        if (i < NUM_JOINTS - 1) msg += ",";
     }
     ws.textAll(msg);
 }
@@ -166,17 +176,12 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
 
         if (cmd == "RESETP") {
             Serial.println("[WebComm] CMD: Reset Neutral");
-            for (int i = 0; i < NUM_SERVOS; i++) {
-                _servoCtrl->setTargetAngle(i, JOINT_MAP[i].neutralAngle);
+            for (int i = 0; i < NUM_JOINTS; i++) {
+                // Use JOINT_CONFIG (new SSOT) instead of legacy JOINT_MAP.
+                // setGaitOffset(ch, 0) moves to neutral with zero offset.
                 _servoCtrl->setGaitOffset(i, 0.0f);
             }
             broadcastState();
-        }
-        else if (cmd == "SQUAT_DOWN") {
-            if (_squatGait) _squatGait->squatDown();
-        }
-        else if (cmd == "STAND_UP") {
-            if (_squatGait) _squatGait->standUp();
         }
         else if (cmd.startsWith("LOAD:")) {
             _servoCtrl->loadPose(cmd.substring(5));

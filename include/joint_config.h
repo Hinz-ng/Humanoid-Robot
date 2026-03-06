@@ -79,4 +79,20 @@ struct JointConfig {
 // errors when this header is included by multiple translation units.
 extern const JointConfig JOINT_CONFIG[NUM_JOINTS];
 
+// Channel index aliases — use these instead of raw channel numbers in motion code.
+// Example: setJointAngle(IDX_R_KNEE_PITCH, 30.0f)
+#define IDX_R_ANKLE_ROLL   0
+#define IDX_R_ANKLE_PITCH  1
+#define IDX_R_KNEE_PITCH   2
+#define IDX_R_HIP_ROLL     3
+#define IDX_R_HIP_YAW      4
+#define IDX_R_HIP_PITCH    5
+// channels 6–9: unused stubs
+#define IDX_L_HIP_PITCH   10
+#define IDX_L_HIP_YAW     11
+#define IDX_L_HIP_ROLL    12
+#define IDX_L_KNEE_PITCH  13
+#define IDX_L_ANKLE_PITCH 14
+#define IDX_L_ANKLE_ROLL  15
+
 #endif // JOINT_CONFIG_H

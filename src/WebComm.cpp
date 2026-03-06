@@ -58,11 +58,11 @@ void WebComm::cleanupClients() { ws.cleanupClients(); }
 void WebComm::broadcastState() {
     if (!_servoCtrl) return;
     String msg = "STATE:";
-    for (int i = 0; i < NUM_SERVOS; i++) {
+    for (int i = 0; i < NUM_JOINTS; i++) {
         int   p = _servoCtrl->getTargetPulse(i);
         float d = _servoCtrl->getTargetAngle(i);
         msg += String(i) + "=" + String(p) + ":" + String(d, 1);
-        if (i < NUM_SERVOS - 1) msg += ",";
+        if (i < NUM_JOINTS - 1) msg += ",";
     }
     // Append E-stop flag so UI always knows current safety state
     msg += ";ESTOP=" + String(oe_is_estopped() ? "1" : "0");

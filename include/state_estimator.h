@@ -151,4 +151,4 @@ private:
     float _accelSanityWeight(float ax_g, float ay_g, float az_g) const;
 };
 
-#endif // STATE_ESTIMATOR_H
+#endif // STATE_ESTIMATOR_H 

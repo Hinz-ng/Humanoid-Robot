@@ -127,14 +127,14 @@ float gy_s = gy_rs;
 float gz_s = gz_rs;
 
 // Transform to robot frame
-ax_g = az_s;   // forward
-ay_g = ay_s;   // left
-az_g = ax_s;   // up
 
-gx_rs = gz_s;  // rotation about forward axis
-gy_rs = gy_s;  // rotation about left axis
-gz_rs = gx_s;  // rotation about up axis
+ax_g = az_s;     // forward
+ay_g = -ay_s;    // left (sign flipped)
+az_g = ax_s;     // up
 
+gx_rs = gz_s;
+gy_rs = -gy_s;
+gz_rs = gx_s;
     // --- Stage 2: Accel angles ---
     float accelPitch, accelRoll;
     _accelAngles(ax_g, ay_g, az_g, accelPitch, accelRoll);

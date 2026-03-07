@@ -23,10 +23,10 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
 // │
 // ▼  RIGHT LEG  ───────────────────────────────────────────────────────
 
-    {  0,  "right_ankle_roll",    131.0f,   +1,   -25.0f,  +25.0f  },  // TUNE
-    {  1,  "right_ankle_pitch",   125.0f,   +1,   -30.0f,  +30.0f  },  // TUNE
-    {  2,  "right_knee_pitch",    133.0f,   -1,     0.0f,  +60.0f  },  // TUNE — knee only flexes one way
-    {  3,  "right_hip_roll",      130.0f,   +1,   -20.0f,  +20.0f  },  // TUNE
+    {  0,  "right_ankle_roll",    121.0f,   +1,   -30.0f,  +30.0f  },  // TUNE
+    {  1,  "right_ankle_pitch",   125.0f,   +1,   -60.0f,  +60.0f  },  // TUNE
+    {  2,  "right_knee_pitch",    123.0f,   -1,     0.0f,  +100.0f  },  // TUNE — knee only flexes one way
+    {  3,  "right_hip_roll",      125.0f,   +1,   -20.0f,  +20.0f  },  // TUNE
     {  4,  "right_hip_yaw",       130.0f,   +1,   -20.0f,  +20.0f  },  // TUNE
     {  5,  "right_hip_pitch",     145.0f,   +1,   -30.0f,  +45.0f  },  // TUNE
 
@@ -43,9 +43,9 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
 
     { 10,  "left_hip_pitch",      145.0f,   -1,   -30.0f,  +45.0f  },  // TUNE
     { 11,  "left_hip_yaw",        130.0f,   -1,   -20.0f,  +20.0f  },  // TUNE
-    { 12,  "left_hip_roll",       134.0f,   -1,   -20.0f,  +20.0f  },  // TUNE
-    { 13,  "left_knee_pitch",     128.0f,   +1,     0.0f,  +60.0f  },  // TUNE — knee only flexes one way
-    { 14,  "left_ankle_pitch",    125.0f,   -1,   -30.0f,  +30.0f  },  // TUNE
-    { 15,  "left_ankle_roll",     127.0f,   -1,   -25.0f,  +25.0f  },  // TUNE
+    { 12,  "left_hip_roll",       130.0f,   -1,   -20.0f,  +20.0f  },  // TUNE
+    { 13,  "left_knee_pitch",     125.0f,   +1,     0.0f,  +100.0f  },  // TUNE — knee only flexes one way
+    { 14,  "left_ankle_pitch",    120.0f,   -1,   -60.0f,  +60.0f  },  // TUNE
+    { 15,  "left_ankle_roll",     122.0f,   -1,   -30.0f,  +30.0f  },  // TUNE
 
 };

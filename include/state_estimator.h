@@ -29,88 +29,126 @@ struct IMUState {
     float roll;       // Body tilt left/right  (rad). Positive = leaning right.
     float pitchRate;  // Angular velocity about pitch axis (rad/s).
     float rollRate;   // Angular velocity about roll  axis (rad/s).
-    bool  valid;      // false if the estimator has not been seeded yet (first tick).
+    bool  valid;      // false until calibration finishes + first valid tick.
 };
 
 // ---------------------------------------------------------------------------
 // FilterConfig — all tuneable parameters in one place.
-// Change alpha here; change bias offsets after a calibration run.
 // ---------------------------------------------------------------------------
 struct FilterConfig {
-    // Complementary filter blend coefficient.
+    // --- Complementary filter blend ---
     //   α = 0.995 → recommended starting point at 400 Hz.
-    //   Increase toward 1.0 → trust gyro more (smoother, drifts more).
-    //   Decrease toward 0.9 → trust accel more (less drift, noisier).
-    //   Rule of thumb: τ = α·dt / (1-α).  At 400Hz, α=0.995 → τ ≈ 0.5 s.
+    //   τ = α·dt / (1-α). At 400 Hz, α=0.995 → τ ≈ 0.5 s.
     float alpha = 0.995f;
 
-    // Gyroscope bias offsets in raw LSB counts.
-    // Measure by averaging 1000 samples while the robot is perfectly still.
-    // Default 0 = no correction. Tune these before relying on pitchRate.
-    float gyro_bias_x = 0.0f;  // raw LSB
-    float gyro_bias_y = 0.0f;  // raw LSB
-    float gyro_bias_z = 0.0f;  // raw LSB
+    // --- Gyro bias (raw LSB). Auto-filled by calibrate(). ---
+    // Leave at 0 if you want to skip calibration (not recommended).
+    float gyro_bias_x = 0.0f;
+    float gyro_bias_y = 0.0f;
+    float gyro_bias_z = 0.0f;
 
-    // Sensor scaling — must match BMI160 range configuration.
-    // Default ranges (set by BMI160Gen library on init):
+    // --- Sensor scaling (must match BMI160 range config) ---
     //   Accel ±2g    → 16384.0 LSB/g
     //   Gyro  ±2000°/s → 16.4  LSB/°/s
-    // If you change the range via BMI160.setGyroRange() etc., update these.
-    float accel_scale = 16384.0f;  // LSB per g
-    float gyro_scale  = 16.4f;     // LSB per deg/s
+    float accel_scale = 16384.0f;
+    float gyro_scale  = 16.4f;
+
+    // --- Gyro deadband (rad/s after bias subtraction) ---
+    // Signals below this are clamped to zero.
+    // Default 0.01 rad/s ≈ 0.57 deg/s — below BMI160 noise floor at ±2000°/s.
+    // Increase if you see slow angle creep at rest; decrease if fast moves feel sluggish.
+    float gyro_deadband_rs = 0.01f;
+
+    // --- Accelerometer IIR low-pass filter coefficient ---
+    //   filtered = accel_lpf_beta * filtered + (1 - accel_lpf_beta) * raw
+    //   0.85 at 400 Hz → time constant ≈ 2 ms.
+    //   Increase toward 0.95 for noisier/vibration-heavy setups.
+    float accel_lpf_beta = 0.85f;
+
+    // --- Accelerometer sanity band (g-units) ---
+    // Accel is only trusted for tilt correction when its magnitude is within
+    // [1g - margin, 1g + margin]. Outside this band (e.g. footstrike impulse),
+    // the accel blend weight drops to zero and the gyro integrates alone.
+    float accel_sanity_margin = 0.15f;  // ±0.15g → ~±8.6°
+
+    // --- Calibration sample count ---
+    // Samples collected at boot before integration starts.
+    // At 400 Hz: 500 samples ≈ 1.25 s. Increase to 1000 for 2.5 s.
+    static const int CALIB_SAMPLES = 500;
 };
 
 // ---------------------------------------------------------------------------
-// StateEstimator — owns the filter state and config.
-// Usage:
-//   StateEstimator estimator;                // uses default FilterConfig
-//   estimator.reset();                       // call once after IMU_init()
-//   IMUState s = estimator.update(raw, dt);  // call every loop tick
+// CalibState — tracks where we are in the boot calibration sequence.
+// Readable via getCalibState() for UI status display.
+// ---------------------------------------------------------------------------
+enum CalibState {
+    CALIB_COLLECTING,  // Still accumulating samples — integration blocked.
+    CALIB_DONE         // Bias computed — estimator is live.
+};
+
+// ---------------------------------------------------------------------------
+// StateEstimator
 // ---------------------------------------------------------------------------
 class StateEstimator {
 public:
-    // Construct with optional custom config.
     explicit StateEstimator(FilterConfig cfg = FilterConfig());
 
-    // Reset internal state to zero. Call once in setup() after IMU_init().
+    // Call once in setup() after IMU_init(). Resets filter + restarts calibration.
     void reset();
 
-    // Update the filter with one new IMU sample.
-    //   raw : output of IMU_update()
-    //   dt  : elapsed time since last call, in SECONDS (compute from micros())
-    // Returns the latest estimated orientation.
-    // If raw.valid is false, returns the last known state with valid=false.
+    // Feed one raw sample. Returns valid=false while calibrating.
+    // dt: seconds since last call (compute from micros() in the caller).
     IMUState update(const RawIMUData& raw, float dt);
 
-    // Read the last computed state without triggering a new update.
-    IMUState getState() const { return _state; }
+    IMUState          getState()     const { return _state; }
+    CalibState        getCalibState()const { return _calibState; }
+    bool              isCalibrated() const { return _calibState == CALIB_DONE; }
 
-    // Allow runtime config changes (e.g., alpha tuning from UI later).
-    void setConfig(const FilterConfig& cfg) { _cfg = cfg; }
-    const FilterConfig& getConfig() const   { return _cfg; }
+    // Returns 0.0 → 1.0 progress through the calibration window.
+    float             getCalibProgress() const {
+        if (_calibState == CALIB_DONE) return 1.0f;
+        return (float)_calibCount / (float)FilterConfig::CALIB_SAMPLES;
+    }
+
+    void              setConfig(const FilterConfig& cfg) { _cfg = cfg; }
+    const FilterConfig& getConfig() const { return _cfg; }
 
 private:
     FilterConfig _cfg;
 
-    // Internal filter state (radians)
-    float _pitch = 0.0f;
-    float _roll  = 0.0f;
-    bool  _seeded = false;   // false until first valid sample arrives
+    // --- Filter state ---
+    float _pitch   = 0.0f;
+    float _roll    = 0.0f;
+    bool  _seeded  = false;
+
+    // --- Accel IIR state (seeded on first sample) ---
+    float _ax_filt = 0.0f;
+    float _ay_filt = 0.0f;
+    float _az_filt = 0.0f;
+    bool  _accelSeeded = false;
+
+    // --- Calibration state ---
+    CalibState _calibState = CALIB_COLLECTING;
+    int        _calibCount = 0;
+    int32_t    _gyroSumX   = 0;  // int32_t: safe for 500 * int16_t without overflow
+    int32_t    _gyroSumY   = 0;
+    int32_t    _gyroSumZ   = 0;
 
     IMUState _state = {};
 
-    // --- Stage 1: Scale raw LSB counts to physical units ---
-    // ax_g, ay_g, az_g  → units of g  (1g = 9.81 m/s²)
-    // gx_rs, gy_rs, gz_rs → rad/s
-    void _scaleRaw(const RawIMUData& raw,
-                   float& ax_g,  float& ay_g,  float& az_g,
-                   float& gx_rs, float& gy_rs, float& gz_rs) const;
+    // Pipeline stages — each does exactly one job.
+    void _scaleRaw   (const RawIMUData& raw,
+                      float& ax_g,  float& ay_g,  float& az_g,
+                      float& gx_rs, float& gy_rs, float& gz_rs) const;
 
-    // --- Stage 2: Compute tilt angle from accelerometer alone ---
-    // Valid only when robot is in quasi-static motion (no large linear accel).
-    // Used as the long-term correction reference.
+    void _applyAccelLPF (float ax_g,  float ay_g,  float az_g,
+                         float& ax_f, float& ay_f, float& az_f);
+
     void _accelAngles(float ax_g, float ay_g, float az_g,
                       float& accelPitch, float& accelRoll) const;
+
+    // Returns the blend weight for accel correction: 0.0 if sanity fails, 1.0 if ok.
+    float _accelSanityWeight(float ax_g, float ay_g, float az_g) const;
 };
 
 #endif // STATE_ESTIMATOR_H

@@ -2,166 +2,204 @@
 // state_estimator.cpp
 // Purpose : Complementary filter implementation.
 //
-// AXIS CONVENTION (BMI160 mounted flat, Z pointing up, X pointing forward):
-//   Pitch  : rotation about Y axis. Leaning forward → positive pitch.
-//            Gyro axis: gy. Accel formula: atan2(-ax, az).
-//   Roll   : rotation about X axis. Leaning right  → positive roll.
-//            Gyro axis: gx. Accel formula: atan2(ay,  az).
+// AXIS CONVENTION (sensor frame → robot frame transform applied in update()):
+//   Pitch  : forward/back tilt. Positive = leaning forward.
+//   Roll   : left/right tilt.   Positive = leaning right.
 //
-// If your IMU is mounted differently (rotated or flipped), adjust the signs
-// in _accelAngles() and the gyro assignments in update(). The filter math
-// itself does not change — only the axis mapping.
+// PIPELINE (one call to update()):
+//   RawIMUData
+//     → [Calibration accumulate / block]
+//     → _scaleRaw()       : LSB → g and rad/s, bias subtract, deadband
+//     → _applyAccelLPF()  : IIR smooth accel before tilt estimate
+//     → _accelAngles()    : atan2 tilt reference
+//     → _accelSanityWeight(): disable accel during high-g events
+//     → Complementary blend
+//     → IMUState
 //
 // COMMON MISTAKES:
 //   1. Passing raw LSB directly to atan2 — must divide by accel_scale first.
 //   2. Forgetting to convert gyro from deg/s to rad/s before integrating.
-//   3. dt in milliseconds instead of seconds — angles grow 1000x too fast.
-//   4. Wrong axis for pitch vs roll (swap gx/gy if pitch and roll are inverted).
-//   5. Not subtracting gyro bias — causes slow angle drift even when still.
+//   3. dt in milliseconds instead of seconds — angles grow 1000× too fast.
+//   4. Wrong axis for pitch vs roll — swap gx_rs/gy_rs in blend if needed.
+//   5. Skipping bias calibration — causes slow drift even at rest.
 // =============================================================================
 
 #include "state_estimator.h"
-#include <math.h>   // atan2f, sqrtf
+#include <math.h>   // atan2f, sqrtf, fabsf
 
-// ---------------------------------------------------------------------------
 StateEstimator::StateEstimator(FilterConfig cfg) : _cfg(cfg) {}
 
 // ---------------------------------------------------------------------------
 void StateEstimator::reset() {
-    _pitch   = 0.0f;
-    _roll    = 0.0f;
-    _seeded  = false;
-    _state   = {};
+    _pitch        = 0.0f;
+    _roll         = 0.0f;
+    _seeded       = false;
+    _accelSeeded  = false;
+    _ax_filt = _ay_filt = _az_filt = 0.0f;
+    _calibState   = CALIB_COLLECTING;
+    _calibCount   = 0;
+    _gyroSumX = _gyroSumY = _gyroSumZ = 0;
+    _state        = {};
 }
 
 // ---------------------------------------------------------------------------
-// Stage 1 — Scale raw LSB → physical units
+// Stage 1 — Scale raw LSB → physical units + bias subtract + deadband
 // ---------------------------------------------------------------------------
 void StateEstimator::_scaleRaw(const RawIMUData& raw,
                                 float& ax_g,  float& ay_g,  float& az_g,
                                 float& gx_rs, float& gy_rs, float& gz_rs) const {
-    // Convert accelerometer counts to g-units.
-    ax_g = (float)(raw.accel_x - 0) / _cfg.accel_scale;   // bias handled in FilterConfig
-    ay_g = (float)(raw.accel_y - 0) / _cfg.accel_scale;
-    az_g = (float)(raw.accel_z - 0) / _cfg.accel_scale;
+    // Accelerometer: counts → g
+    ax_g = (float)raw.accel_x / _cfg.accel_scale;
+    ay_g = (float)raw.accel_y / _cfg.accel_scale;
+    az_g = (float)raw.accel_z / _cfg.accel_scale;
 
-    // Convert gyroscope counts to rad/s.
-    // Step 1: subtract bias (in raw LSB).
-    // Step 2: divide by scale to get deg/s.
-    // Step 3: multiply by PI/180 to get rad/s.
-    // DEG_TO_RAD is defined in Arduino.h — no local declaration needed.
+    // Gyroscope: counts → deg/s → rad/s, with bias subtraction
+    // DEG_TO_RAD is defined in Arduino.h
     gx_rs = ((float)raw.gyro_x - _cfg.gyro_bias_x) / _cfg.gyro_scale * DEG_TO_RAD;
     gy_rs = ((float)raw.gyro_y - _cfg.gyro_bias_y) / _cfg.gyro_scale * DEG_TO_RAD;
     gz_rs = ((float)raw.gyro_z - _cfg.gyro_bias_z) / _cfg.gyro_scale * DEG_TO_RAD;
+
+    // Deadband: clamp near-zero gyro noise to exactly zero.
+    // This prevents the integrator from accumulating sub-threshold jitter at rest.
+    const float db = _cfg.gyro_deadband_rs;
+    if (fabsf(gx_rs) < db) gx_rs = 0.0f;
+    if (fabsf(gy_rs) < db) gy_rs = 0.0f;
+    if (fabsf(gz_rs) < db) gz_rs = 0.0f;
 }
 
 // ---------------------------------------------------------------------------
-// Stage 2 — Accelerometer-only tilt estimate
+// Stage 2a — Accelerometer IIR low-pass filter
+// Smooths accel before it feeds atan2. Suppresses servo/footstrike vibration.
+// _accelSeeded ensures the first sample doesn't get blended with a zero state.
+// ---------------------------------------------------------------------------
+void StateEstimator::_applyAccelLPF(float ax_g,  float ay_g,  float az_g,
+                                     float& ax_f, float& ay_f, float& az_f) {
+    if (!_accelSeeded) {
+        // First call: seed with raw value to avoid startup transient.
+        _ax_filt = ax_g;
+        _ay_filt = ay_g;
+        _az_filt = az_g;
+        _accelSeeded = true;
+    } else {
+        const float b = _cfg.accel_lpf_beta;
+        _ax_filt = b * _ax_filt + (1.0f - b) * ax_g;
+        _ay_filt = b * _ay_filt + (1.0f - b) * ay_g;
+        _az_filt = b * _az_filt + (1.0f - b) * az_g;
+    }
+    ax_f = _ax_filt;
+    ay_f = _ay_filt;
+    az_f = _az_filt;
+}
+
+// ---------------------------------------------------------------------------
+// Stage 2b — Accel-only tilt estimate (long-term correction reference)
 // ---------------------------------------------------------------------------
 void StateEstimator::_accelAngles(float ax_g, float ay_g, float az_g,
                                    float& accelPitch, float& accelRoll) const {
-    // atan2 is used (not atan) so the result is correct in all quadrants.
-    //
-    // Pitch: tilt about Y axis.
-    //   When robot leans forward, ax becomes more negative (gravity pulls back).
-    //   atan2(-ax, az) gives positive angle for forward lean.
-    //   If your robot pitches the wrong direction, negate ax here.
     accelPitch = atan2f(-ax_g, sqrtf(ay_g * ay_g + az_g * az_g));
-
-    // Roll: tilt about X axis.
-    //   When robot leans right, ay becomes positive.
-    //   atan2(ay, az) gives positive angle for right lean.
-    //   If your robot rolls the wrong direction, negate ay here.
     accelRoll  = atan2f( ay_g, az_g);
 }
 
 // ---------------------------------------------------------------------------
-// Stage 3 — Complementary filter blend
+// Stage 2c — Accel sanity weight
+// Returns 1.0 if accel magnitude is close to 1g (robot quasi-static).
+// Returns 0.0 if magnitude deviates beyond margin (footstrike, jump, etc.).
+// During rejection the complementary filter runs as a pure gyro integrator.
+// ---------------------------------------------------------------------------
+float StateEstimator::_accelSanityWeight(float ax_g, float ay_g, float az_g) const {
+    float mag = sqrtf(ax_g * ax_g + ay_g * ay_g + az_g * az_g);
+    float deviation = fabsf(mag - 1.0f);
+    return (deviation < _cfg.accel_sanity_margin) ? 1.0f : 0.0f;
+}
+
+// ---------------------------------------------------------------------------
+// update() — main entry point, called every loop tick
 // ---------------------------------------------------------------------------
 IMUState StateEstimator::update(const RawIMUData& raw, float dt) {
 
-    // Guard: propagate invalid data cleanly without corrupting state.
     if (!raw.valid) {
         _state.valid = false;
         return _state;
     }
 
-    // Guard: clamp dt to a sane range.
-    // If loop stalls (e.g. I2C blocking) dt could be huge → angle jumps.
-    // 0.05s cap means even at 20 Hz the filter won't blow up.
+    // -----------------------------------------------------------------------
+    // CALIBRATION PHASE
+    // Accumulate raw gyro LSB counts into integer sums (no float error).
+    // Integration is blocked until CALIB_SAMPLES are collected.
+    // -----------------------------------------------------------------------
+    if (_calibState == CALIB_COLLECTING) {
+        _gyroSumX += raw.gyro_x;
+        _gyroSumY += raw.gyro_y;
+        _gyroSumZ += raw.gyro_z;
+        _calibCount++;
+
+        if (_calibCount >= FilterConfig::CALIB_SAMPLES) {
+            // Compute mean bias in raw LSB and store into config.
+            _cfg.gyro_bias_x = (float)_gyroSumX / (float)FilterConfig::CALIB_SAMPLES;
+            _cfg.gyro_bias_y = (float)_gyroSumY / (float)FilterConfig::CALIB_SAMPLES;
+            _cfg.gyro_bias_z = (float)_gyroSumZ / (float)FilterConfig::CALIB_SAMPLES;
+            _calibState = CALIB_DONE;
+            // Note: Serial.printf intentionally not called here.
+            // Caller can check isCalibrated() and log if desired.
+        }
+
+        // Return invalid state — do not feed un-calibrated data to the filter.
+        _state.valid = false;
+        return _state;
+    }
+
+    // -----------------------------------------------------------------------
+    // ESTIMATION PHASE
+    // -----------------------------------------------------------------------
+
+    // dt sanity guard: reject stale or implausible timesteps.
     if (dt <= 0.0f || dt > 0.05f) {
         _state.valid = false;
         return _state;
     }
 
-    // --- Stage 1: Scale ---
+    // --- Stage 1: Scale + bias subtract + deadband ---
     float ax_g, ay_g, az_g, gx_rs, gy_rs, gz_rs;
     _scaleRaw(raw, ax_g, ay_g, az_g, gx_rs, gy_rs, gz_rs);
 
-    // ---------------------------------------------------------------------------
-// Sensor frame → Robot frame transform
-//
-// Sensor mounting:
-//   Zs → forward
-//   Xs → up
-//   Ys → left
-//
-// Robot frame expected by filter:
-//   Xr → forward
-//   Yr → left
-//   Zr → up
-//
-// Mapping:
-//   Xr = Zs
-//   Yr = Ys
-//   Zr = Xs
-// ---------------------------------------------------------------------------
+    // --- Sensor frame → Robot frame ---
+    // Mounting: Zs→forward, Xs→up, Ys→left. Robot needs Xr→forward, Zr→up.
+    {
+        float ax_s=ax_g, ay_s=ay_g, az_s=az_g;
+        float gx_s=gx_rs, gy_s=gy_rs, gz_s=gz_rs;
+        ax_g=az_s; ay_g=ay_s; az_g=ax_s;
+        gx_rs=gz_s; gy_rs=gy_s; gz_rs=gx_s;
+    }
 
-// Save original sensor-frame values
-float ax_s = ax_g;
-float ay_s = ay_g;
-float az_s = az_g;
+    // --- Stage 2a: Accel IIR low-pass ---
+    float ax_f, ay_f, az_f;
+    _applyAccelLPF(ax_g, ay_g, az_g, ax_f, ay_f, az_f);
 
-float gx_s = gx_rs;
-float gy_s = gy_rs;
-float gz_s = gz_rs;
-
-// Transform to robot frame
-
-ax_g = az_s;     // forward
-ay_g = -ay_s;    // left (sign flipped)
-az_g = ax_s;     // up
-
-gx_rs = gz_s;
-gy_rs = -gy_s;
-gz_rs = gx_s;
-    // --- Stage 2: Accel angles ---
+    // --- Stage 2b: Accel tilt angles ---
     float accelPitch, accelRoll;
-    _accelAngles(ax_g, ay_g, az_g, accelPitch, accelRoll);
+    _accelAngles(ax_f, ay_f, az_f, accelPitch, accelRoll);
+
+    // --- Stage 2c: Sanity weight (0.0 or 1.0) ---
+    float w = _accelSanityWeight(ax_f, ay_f, az_f);
+    // Scale the accel correction term by the sanity weight.
+    // w=1: normal blend. w=0: pure gyro, no accel correction this tick.
+    float accelBlend = (1.0f - _cfg.alpha) * w;
 
     // --- Stage 3: Complementary blend ---
     if (!_seeded) {
-        // First valid sample — seed the filter with accel angle so it
-        // doesn't start at zero and take many seconds to converge.
         _pitch  = accelPitch;
         _roll   = accelRoll;
         _seeded = true;
     } else {
-        // Gyro integration: extrapolate angle forward in time.
-        // gy drives pitch (forward/back). gx drives roll (left/right).
-        // If pitch and roll appear swapped, exchange gx_rs and gy_rs here.
         float gyroPitch = _pitch + gy_rs * dt;
         float gyroRoll  = _roll  + gx_rs * dt;
-
-        // Blend: trust gyro for fast dynamics, trust accel for slow correction.
-        _pitch = _cfg.alpha * gyroPitch + (1.0f - _cfg.alpha) * accelPitch;
-        _roll  = _cfg.alpha * gyroRoll  + (1.0f - _cfg.alpha) * accelRoll;
+        _pitch = _cfg.alpha * gyroPitch + accelBlend * accelPitch;
+        _roll  = _cfg.alpha * gyroRoll  + accelBlend * accelRoll;
     }
 
-    // --- Populate output struct ---
     _state.pitch     = _pitch;
     _state.roll      = _roll;
-    _state.pitchRate = gy_rs;   // already in rad/s, bias corrected
+    _state.pitchRate = gy_rs;
     _state.rollRate  = gx_rs;
     _state.valid     = true;
 

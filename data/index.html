@@ -77,6 +77,19 @@
                      color: #e0e0ff; text-align: right; min-width: 70px; }
         .imu-status { font-size: 10px; color: #555; text-align: right; margin-top: 8px; }
         .imu-status.live { color: #4caf50; }
+        /* Calibration status bar */
+        .calib-bar-wrap { margin-top: 10px; }
+        .calib-bar-bg   { background: #1e1e1e; border-radius: 4px; height: 8px;
+                          overflow: hidden; border: 1px solid #333; }
+        .calib-bar-fill { height: 100%; width: 0%; background: #ff9800;
+                          transition: width 0.1s linear; border-radius: 4px; }
+        .calib-label    { font-size: 10px; margin-top: 5px; color: #ff9800; }
+        .calib-label.done { color: #4caf50; }
+        .calib-warning  { display: none; background: #e65100; color: white;
+                          font-size: 12px; font-weight: bold; text-align: center;
+                          padding: 6px; border-radius: 4px; margin-top: 8px;
+                          letter-spacing: 0.5px; }
+        .calib-warning.visible { display: block; }
     </style>
 </head>
 <body>
@@ -101,6 +114,18 @@
     <!-- ADD END -->
 <!-- IMU Panel -->
     <div class="imu-panel">
+        <!-- Gyro calibration status — visible only during boot window -->
+        <div id="calibSection">
+            <div class="calib-warning" id="calibWarning">
+                ⚠️ KEEP ROBOT STILL — Gyro calibrating...
+            </div>
+            <div class="calib-bar-wrap">
+                <div class="calib-bar-bg">
+                    <div class="calib-bar-fill" id="calibBarFill"></div>
+                </div>
+                <div class="calib-label" id="calibLabel">Calibrating gyro bias... 0%</div>
+            </div>
+        </div>
         <h3>&#9650; IMU &mdash; BMI160 Raw Values</h3>
         <div class="imu-grid">
             <div class="imu-group">
@@ -120,7 +145,7 @@
         <div class="imu-group-label" style="margin-top:12px;">Orientation Estimate</div>
         <div class="imu-grid" style="margin-top:6px;">
             <div class="imu-group">
-                <div class="imu-group-label">Angle (rad)</div>
+                <div class="imu-group-label">Angle (deg)</div>
                 <div class="imu-row"><span class="imu-axis">P</span><span class="imu-value" id="est-pitch">—</span></div>
                 <div class="imu-row"><span class="imu-axis">R</span><span class="imu-value" id="est-roll">—</span></div>
             </div>
@@ -399,10 +424,34 @@ function initWebSocket() {
                 const [k, v] = pair.split("=");
                 values[k] = parseFloat(v).toFixed(4);
             });
-            document.getElementById("est-pitch").textContent     = values["pitch"]     ?? "—";
-            document.getElementById("est-roll").textContent      = values["roll"]      ?? "—";
+            const toDeg = r => (parseFloat(r) * 180 / Math.PI).toFixed(2) + "°";
+            document.getElementById("est-pitch").textContent     = values["pitch"] != null ? toDeg(values["pitch"]) : "—";
+            document.getElementById("est-roll").textContent      = values["roll"]  != null ? toDeg(values["roll"])  : "—";
             document.getElementById("est-pitchRate").textContent = values["pitchRate"] ?? "—";
             document.getElementById("est-rollRate").textContent  = values["rollRate"]  ?? "—";
+        }
+        else if (msg.startsWith("CALIB:")) {
+            const values = {};
+            msg.substring(6).split(",").forEach(pair => {
+                const [k, v] = pair.split("=");
+                values[k] = v;
+            });
+            const pct  = Math.round(parseFloat(values["progress"]) * 100);
+            const done = values["state"] === "done";
+
+            document.getElementById("calibBarFill").style.width = pct + "%";
+            document.getElementById("calibBarFill").style.background = done ? "#4caf50" : "#ff9800";
+
+            const label = document.getElementById("calibLabel");
+            label.textContent = done ? "✔ Gyro calibration complete" : `Calibrating gyro bias... ${pct}%`;
+            label.className   = "calib-label" + (done ? " done" : "");
+
+            document.getElementById("calibWarning").classList.toggle("visible", !done);
+
+            // Hide the whole section 3 seconds after calibration completes.
+            if (done) setTimeout(() => {
+                document.getElementById("calibSection").style.display = "none";
+            }, 3000);
         }
         // --- ADD END ---
     };

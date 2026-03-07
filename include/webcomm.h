@@ -18,6 +18,7 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     void broadcastJointInfo();
     void broadcastIMU(RawIMUData data); // --- ADD: sends raw IMU values to UI panel
     void broadcastEstimate(IMUState state); // --- ADD: sends pitch/roll/rates to UI
+    void broadcastCalibStatus(CalibState state, float progress); // --- ADD
 
 private:
     AsyncWebServer server;

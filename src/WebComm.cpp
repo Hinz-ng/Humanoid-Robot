@@ -136,6 +136,21 @@ void WebComm::broadcastEstimate(IMUState state) {
     ws.textAll(buf);
 }
 // =============================================================================
+//  CALIBRATION STATUS BROADCAST                                   --- ADD ---
+//  Protocol: "CALIB:state=collecting|done,progress=0.00"
+//  Broadcast on every loop tick while collecting, once on completion.
+// =============================================================================
+void WebComm::broadcastCalibStatus(CalibState state, float progress) {
+    if (ws.count() == 0) return;
+    char buf[64];
+    snprintf(buf, sizeof(buf),
+        "CALIB:state=%s,progress=%.2f",
+        (state == CALIB_DONE) ? "done" : "collecting",
+        progress
+    );
+    ws.textAll(buf);
+}
+// =============================================================================
 //  EVENT HANDLER
 // =============================================================================
 

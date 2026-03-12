@@ -85,27 +85,34 @@ void loop() {
     oe_loop();
     servoController.update();
 
-    // Balance loop — target 200-400 Hz, dt measured in seconds.
+    // AFTER — 400 Hz gate: only reads IMU and runs estimator every 2500 µs.
+    // WebSocket/servo tasks above still run every loop() iteration (no rate limit).
     {
+        // 2500 µs = 400 Hz. Must match BMI160 ODR set in IMU_init().
+        static const uint32_t ESTIMATOR_INTERVAL_US = 2500;
         static uint32_t _lastEstimatorMicros = micros();
+
         uint32_t _now = micros();
-        float dt = (_now - _lastEstimatorMicros) * 1e-6f;
-        _lastEstimatorMicros = _now;
+        if ((_now - _lastEstimatorMicros) >= ESTIMATOR_INTERVAL_US) {
+            float dt = (_now - _lastEstimatorMicros) * 1e-6f;
+            _lastEstimatorMicros = _now;
 
-        RawIMUData raw   = IMU_update();
-        IMUState   state = stateEstimator.update(raw, dt);
+            RawIMUData raw   = IMU_update();
+            IMUState   state = stateEstimator.update(raw, dt);
 
-        webComm.broadcastIMU(raw);
-        webComm.broadcastEstimate(state);
+            webComm.broadcastIMU(raw);
+            webComm.broadcastEstimate(state);
 
-        // Broadcast calibration progress until done (one final "done" packet included).
-        static bool _calibDoneAnnounced = false;
-        if (!_calibDoneAnnounced) {
-            webComm.broadcastCalibStatus(
-                stateEstimator.getCalibState(),
-                stateEstimator.getCalibProgress()
-            );
-            if (stateEstimator.isCalibrated()) _calibDoneAnnounced = true;
+            // Broadcast calibration progress at 10 Hz (rate-limited inside broadcastCalibStatus).
+            // _calibDoneAnnounced ensures one final "done" packet is sent, then stops.
+            static bool _calibDoneAnnounced = false;
+            if (!_calibDoneAnnounced) {
+                webComm.broadcastCalibStatus(
+                    stateEstimator.getCalibState(),
+                    stateEstimator.getCalibProgress()
+                );
+                if (stateEstimator.isCalibrated()) _calibDoneAnnounced = true;
+            }
         }
     }
 }

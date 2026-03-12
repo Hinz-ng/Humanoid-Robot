@@ -38,12 +38,22 @@ bool IMU_init() {
         return false;
     }
 
+    // AFTER:
+    // Configure sensor ODR and range explicitly.
+    // BMI160 default after begin() is 100 Hz — we need 400 Hz.
+    // Range defaults match FilterConfig: ±2g / ±2000 deg/s.
+    BMI160.setFullScaleAccelRange(BMI160_ACCEL_RANGE_2G);    // 16384 LSB/g
+    BMI160.setFullScaleGyroRange(BMI160_GYRO_RANGE_2000);    // 16.4 LSB/(deg/s)
+    BMI160.setAccelRate(BMI160_ACCEL_RATE_400HZ);            // 400 Hz ODR
+    BMI160.setGyroRate(BMI160_GYRO_RATE_400HZ);              // 400 Hz ODR
+
     _initialized = true;
     _latestData.valid = false;
 
     Serial.println("[IMU] BMI160 initialized successfully.");
     Serial.printf("[IMU]   SDA: GPIO %d  SCL: GPIO %d  Addr: 0x%02X\n",
                   IMU_SDA_PIN, IMU_SCL_PIN, BMI160_I2C_ADDR);
+    Serial.println("[IMU]   ODR: 400 Hz | Accel: +-2g | Gyro: +-2000 deg/s");
     return true;
 }
 
@@ -58,16 +68,16 @@ RawIMUData IMU_update() {
         return _latestData;
     }
 
-    int ax, ay, az, gx, gy, gz;
-    BMI160.readAccelerometer(ax, ay, az);
-    BMI160.readGyro(gx, gy, gz);
+    // AFTER — single I2C burst, halves bus traffic vs two separate reads:
+    int16_t ax, ay, az, gx, gy, gz;
+    BMI160.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
 
-    _latestData.accel_x = (int16_t)ax;
-    _latestData.accel_y = (int16_t)ay;
-    _latestData.accel_z = (int16_t)az;
-    _latestData.gyro_x  = (int16_t)gx;
-    _latestData.gyro_y  = (int16_t)gy;
-    _latestData.gyro_z  = (int16_t)gz;
+    _latestData.accel_x = ax;
+    _latestData.accel_y = ay;
+    _latestData.accel_z = az;
+    _latestData.gyro_x  = gx;
+    _latestData.gyro_y  = gy;
+    _latestData.gyro_z  = gz;
     _latestData.valid   = true;
 
     return _latestData;

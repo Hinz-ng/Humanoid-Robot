@@ -430,25 +430,34 @@ function initWebSocket() {
             document.getElementById("est-pitchRate").textContent = values["pitchRate"] ?? "—";
             document.getElementById("est-rollRate").textContent  = values["rollRate"]  ?? "—";
         }
+        // AFTER:
         else if (msg.startsWith("CALIB:")) {
             const values = {};
             msg.substring(6).split(",").forEach(pair => {
                 const [k, v] = pair.split("=");
                 values[k] = v;
             });
-            const pct  = Math.round(parseFloat(values["progress"]) * 100);
-            const done = values["state"] === "done";
+            const pct       = Math.round(parseFloat(values["progress"]) * 100);
+            const done      = values["state"] === "done";
+            const remaining = parseFloat(values["remaining"] || "0");
 
-            document.getElementById("calibBarFill").style.width = pct + "%";
+            document.getElementById("calibBarFill").style.width      = pct + "%";
             document.getElementById("calibBarFill").style.background = done ? "#4caf50" : "#ff9800";
 
             const label = document.getElementById("calibLabel");
-            label.textContent = done ? "✔ Gyro calibration complete" : `Calibrating gyro bias... ${pct}%`;
-            label.className   = "calib-label" + (done ? " done" : "");
+            if (done) {
+                label.textContent = "✔ Gyro calibration complete — filter is live";
+                label.className   = "calib-label done";
+            } else {
+                // Show percentage and countdown: "Calibrating gyro bias... 63% (1.9s remaining)"
+                const countdown = remaining > 0 ? ` (${remaining.toFixed(1)}s remaining)` : "";
+                label.textContent = `Calibrating gyro bias... ${pct}%${countdown}`;
+                label.className   = "calib-label";
+            }
 
             document.getElementById("calibWarning").classList.toggle("visible", !done);
 
-            // Hide the whole section 3 seconds after calibration completes.
+            // Hide the calibration section 3 seconds after completion.
             if (done) setTimeout(() => {
                 document.getElementById("calibSection").style.display = "none";
             }, 3000);

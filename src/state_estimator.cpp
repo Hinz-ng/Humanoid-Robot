@@ -182,23 +182,16 @@ IMUState StateEstimator::update(const RawIMUData& raw, float dt) {
     // Axis rename: sensor (Zs=fwd, Xs=up, Ys=left) → robot (Xr=fwd, Zr=up, Yr=left).
     // Sign corrections applied here — do NOT move them into _scaleRaw() because
     // that would also flip the reported rates in IMUState (balance controller uses them).
-    {
-        float ax_s=ax_g, ay_s=ay_g, az_s=az_g;
-        float gx_s=gx_rs, gy_s=gy_rs, gz_s=gz_rs;
-
-        // Accel remap
-        ax_g = az_s;   // robot forward = sensor forward (Z)
-        ay_g = ay_s;   // robot lateral = sensor lateral (Y) — unchanged
-        az_g = ax_s;   // robot up      = sensor up      (X)
-
-        // Gyro remap + sign correction
-        // pitch_gyro_sign / roll_gyro_sign: flip if the axis reports wrong
-        // polarity relative to the accel angle convention (see FilterConfig).
-        gx_rs = _cfg.roll_gyro_sign  * gz_s;  // roll rate: rotation about robot X (fwd)
-        gy_rs = _cfg.pitch_gyro_sign * gy_s;  // pitch rate: rotation about robot Y (lat)
-        gz_rs = gx_s;                          // yaw rate: not used in filter
-    }
-
+    // AFTER — standard Z=up, X=forward: no axis permutation, sign correction only.
+    // IMU mounted with Z=up, X=forward (standard orientation).
+    // Accel: az≈+1g upright — sanity check and atan2 formulas are correct as-is.
+    // Gyro:  gx = roll rate (rotation about X), gy = pitch rate (rotation about Y).
+    // If the estimate overshoots/inverts, flip the corresponding sign in FilterConfig.
+    gx_rs *= _cfg.roll_gyro_sign;    // ±1: rotation about forward(X) → roll
+    gy_rs *= _cfg.pitch_gyro_sign;   // ±1: rotation about lateral(Y) → pitch
+    // gz_rs (yaw rate) is not used by this filter.
+   
+   
     // --- Stage 2a: Accel IIR low-pass ---
     float ax_f, ay_f, az_f;
     _applyAccelLPF(ax_g, ay_g, az_g, ax_f, ay_f, az_f);

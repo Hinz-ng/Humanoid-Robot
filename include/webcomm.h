@@ -25,8 +25,8 @@ private:
     AsyncWebSocket ws;
     ServoControl* _servoCtrl;
     uint32_t _lastIMUBroadcast_us = 0;  // --- ADD: rate-limit timestamp for IMU broadcast
-    uint32_t _lastEstimateBroadcast_us = 0; // --- ADD: rate-limit for estimate broadcast
-
+    uint32_t _lastEstimateBroadcast_us  = 0;
+    uint32_t _lastCalibBroadcast_us     = 0;   // rate-limits calib status to 10 Hz
     void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
     void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
 };

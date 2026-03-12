@@ -135,18 +135,30 @@ void WebComm::broadcastEstimate(IMUState state) {
     );
     ws.textAll(buf);
 }
+
 // =============================================================================
 //  CALIBRATION STATUS BROADCAST                                   --- ADD ---
-//  Protocol: "CALIB:state=collecting|done,progress=0.00"
-//  Broadcast on every loop tick while collecting, once on completion.
-// =============================================================================
 void WebComm::broadcastCalibStatus(CalibState state, float progress) {
     if (ws.count() == 0) return;
-    char buf[64];
+
+    // Rate-limit to 10 Hz — prevents WS send-queue overflow at 400 Hz loop rate.
+    // Exception: always send the final "done" packet immediately.
+    const uint32_t INTERVAL_US = 100000; // 10 Hz
+    uint32_t now = micros();
+    if (state != CALIB_DONE && (now - _lastCalibBroadcast_us) < INTERVAL_US) return;
+    _lastCalibBroadcast_us = now;
+
+    // Remaining time estimate: 2000 samples / 400 Hz = 5.0s total.
+    // Progress is 0.0→1.0 so remaining = total * (1 - progress).
+    const float CALIB_TOTAL_S = FilterConfig::CALIB_SAMPLES / 400.0f;
+    float remaining_s = (state == CALIB_DONE) ? 0.0f : CALIB_TOTAL_S * (1.0f - progress);
+
+    char buf[80];
     snprintf(buf, sizeof(buf),
-        "CALIB:state=%s,progress=%.2f",
+        "CALIB:state=%s,progress=%.2f,remaining=%.1f",
         (state == CALIB_DONE) ? "done" : "collecting",
-        progress
+        progress,
+        remaining_s
     );
     ws.textAll(buf);
 }

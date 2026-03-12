@@ -60,16 +60,7 @@ struct FilterConfig {
     float gyro_deadband_rs = 0.01f;
 
     // --- Gyro axis signs ---
-    // Set to -1.0f if the corresponding angle spikes in the WRONG direction
-    // before settling to the correct value. This indicates the physical sensor
-    // axis is oriented opposite to the assumed convention.
-    //
-    // How to diagnose: tilt forward slowly. If pitch goes negative when it
-    // should go positive, set pitch_gyro_sign = -1.0f.
-    //
-    // Default: pitch = -1.0f is empirically correct for the current mounting
-    // (sensor Zs→forward, Xs→up, Ys→left). Verify roll similarly.
-    float pitch_gyro_sign = -1.0f;
+    float pitch_gyro_sign = 1.0f;
     float roll_gyro_sign  =  1.0f;
 
     // --- Accelerometer IIR low-pass filter coefficient ---
@@ -86,8 +77,7 @@ struct FilterConfig {
 
     // --- Calibration sample count ---
     // Samples collected at boot before integration starts.
-    // At 400 Hz: 500 samples ≈ 1.25 s. Increase to 1000 for 2.5 s.
-    static const int CALIB_SAMPLES = 1000;
+    static const int CALIB_SAMPLES = 2000;
 };
 
 // ---------------------------------------------------------------------------
@@ -143,7 +133,7 @@ private:
     // --- Calibration state ---
     CalibState _calibState = CALIB_COLLECTING;
     int        _calibCount = 0;
-    int32_t    _gyroSumX   = 0;  // int32_t: safe for 500 * int16_t without overflow
+    int32_t    _gyroSumX   = 0;  // int32_t: safe for 2000 * int16_t without overflow
     int32_t    _gyroSumY   = 0;
     int32_t    _gyroSumZ   = 0;
 

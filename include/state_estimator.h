@@ -39,7 +39,7 @@ struct FilterConfig {
     // --- Complementary filter blend ---
     //   α = 0.995 → recommended starting point at 400 Hz.
     //   τ = α·dt / (1-α). At 400 Hz, α=0.995 → τ ≈ 0.5 s.
-    float alpha = 0.995f;
+    float alpha = 0.990f;
 
     // --- Gyro bias (raw LSB). Auto-filled by calibrate(). ---
     // Leave at 0 if you want to skip calibration (not recommended).
@@ -59,22 +59,35 @@ struct FilterConfig {
     // Increase if you see slow angle creep at rest; decrease if fast moves feel sluggish.
     float gyro_deadband_rs = 0.01f;
 
+    // --- Gyro axis signs ---
+    // Set to -1.0f if the corresponding angle spikes in the WRONG direction
+    // before settling to the correct value. This indicates the physical sensor
+    // axis is oriented opposite to the assumed convention.
+    //
+    // How to diagnose: tilt forward slowly. If pitch goes negative when it
+    // should go positive, set pitch_gyro_sign = -1.0f.
+    //
+    // Default: pitch = -1.0f is empirically correct for the current mounting
+    // (sensor Zs→forward, Xs→up, Ys→left). Verify roll similarly.
+    float pitch_gyro_sign = -1.0f;
+    float roll_gyro_sign  =  1.0f;
+
     // --- Accelerometer IIR low-pass filter coefficient ---
     //   filtered = accel_lpf_beta * filtered + (1 - accel_lpf_beta) * raw
     //   0.85 at 400 Hz → time constant ≈ 2 ms.
     //   Increase toward 0.95 for noisier/vibration-heavy setups.
-    float accel_lpf_beta = 0.85f;
+    float accel_lpf_beta = 0.70f;
 
     // --- Accelerometer sanity band (g-units) ---
     // Accel is only trusted for tilt correction when its magnitude is within
     // [1g - margin, 1g + margin]. Outside this band (e.g. footstrike impulse),
     // the accel blend weight drops to zero and the gyro integrates alone.
-    float accel_sanity_margin = 0.15f;  // ±0.15g → ~±8.6°
+    float accel_sanity_margin = 0.20f;  // ±0.20g → ~±11.4°
 
     // --- Calibration sample count ---
     // Samples collected at boot before integration starts.
     // At 400 Hz: 500 samples ≈ 1.25 s. Increase to 1000 for 2.5 s.
-    static const int CALIB_SAMPLES = 500;
+    static const int CALIB_SAMPLES = 1000;
 };
 
 // ---------------------------------------------------------------------------

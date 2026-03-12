@@ -101,15 +101,31 @@ void StateEstimator::_accelAngles(float ax_g, float ay_g, float az_g,
 }
 
 // ---------------------------------------------------------------------------
-// Stage 2c — Accel sanity weight
-// Returns 1.0 if accel magnitude is close to 1g (robot quasi-static).
-// Returns 0.0 if magnitude deviates beyond margin (footstrike, jump, etc.).
-// During rejection the complementary filter runs as a pure gyro integrator.
+// ---------------------------------------------------------------------------
+// Stage 2c — Accel sanity weight (soft)
+//
+// Returns 1.0 when accel magnitude is within the inner trust band (quasi-static).
+// Linearly decreases to 0.0 at the outer rejection band (high-g event).
+// This prevents the sharp transition that allowed wrong-sign gyro to integrate
+// unchecked when the binary version dropped weight to 0.0 instantly.
+//
+//   |weight
+// 1 |------\
+//   |       \
+// 0 |________\___  → deviation from 1g
+//   0  inner outer
 // ---------------------------------------------------------------------------
 float StateEstimator::_accelSanityWeight(float ax_g, float ay_g, float az_g) const {
-    float mag = sqrtf(ax_g * ax_g + ay_g * ay_g + az_g * az_g);
+    float mag       = sqrtf(ax_g * ax_g + ay_g * ay_g + az_g * az_g);
     float deviation = fabsf(mag - 1.0f);
-    return (deviation < _cfg.accel_sanity_margin) ? 1.0f : 0.0f;
+
+    // inner: full trust. outer: zero trust. Linear ramp between.
+    const float inner = _cfg.accel_sanity_margin * 0.5f;  // 0.075g by default
+    const float outer = _cfg.accel_sanity_margin;          // 0.150g by default
+
+    if (deviation <= inner) return 1.0f;
+    if (deviation >= outer) return 0.0f;
+    return 1.0f - (deviation - inner) / (outer - inner);
 }
 
 // ---------------------------------------------------------------------------
@@ -163,12 +179,24 @@ IMUState StateEstimator::update(const RawIMUData& raw, float dt) {
     _scaleRaw(raw, ax_g, ay_g, az_g, gx_rs, gy_rs, gz_rs);
 
     // --- Sensor frame → Robot frame ---
-    // Mounting: Zs→forward, Xs→up, Ys→left. Robot needs Xr→forward, Zr→up.
+    // Axis rename: sensor (Zs=fwd, Xs=up, Ys=left) → robot (Xr=fwd, Zr=up, Yr=left).
+    // Sign corrections applied here — do NOT move them into _scaleRaw() because
+    // that would also flip the reported rates in IMUState (balance controller uses them).
     {
         float ax_s=ax_g, ay_s=ay_g, az_s=az_g;
         float gx_s=gx_rs, gy_s=gy_rs, gz_s=gz_rs;
-        ax_g=az_s; ay_g=ay_s; az_g=ax_s;
-        gx_rs=gz_s; gy_rs=gy_s; gz_rs=gx_s;
+
+        // Accel remap
+        ax_g = az_s;   // robot forward = sensor forward (Z)
+        ay_g = ay_s;   // robot lateral = sensor lateral (Y) — unchanged
+        az_g = ax_s;   // robot up      = sensor up      (X)
+
+        // Gyro remap + sign correction
+        // pitch_gyro_sign / roll_gyro_sign: flip if the axis reports wrong
+        // polarity relative to the accel angle convention (see FilterConfig).
+        gx_rs = _cfg.roll_gyro_sign  * gz_s;  // roll rate: rotation about robot X (fwd)
+        gy_rs = _cfg.pitch_gyro_sign * gy_s;  // pitch rate: rotation about robot Y (lat)
+        gz_rs = gx_s;                          // yaw rate: not used in filter
     }
 
     // --- Stage 2a: Accel IIR low-pass ---

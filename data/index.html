@@ -444,17 +444,24 @@ function initWebSocket() {
             document.getElementById("calibBarFill").style.width      = pct + "%";
             document.getElementById("calibBarFill").style.background = done ? "#4caf50" : "#ff9800";
 
+            // AFTER:
+            const waiting = values["state"] === "waiting";
+
             const label = document.getElementById("calibLabel");
             if (done) {
                 label.textContent = "✔ Gyro calibration complete — filter is live";
                 label.className   = "calib-label done";
+            } else if (waiting) {
+                label.textContent = "⏸ Waiting for robot to be still...";
+                label.className   = "calib-label";
             } else {
-                // Show percentage and countdown: "Calibrating gyro bias... 63% (1.9s remaining)"
+                // collecting — show progress + countdown
                 const countdown = remaining > 0 ? ` (${remaining.toFixed(1)}s remaining)` : "";
                 label.textContent = `Calibrating gyro bias... ${pct}%${countdown}`;
                 label.className   = "calib-label";
             }
 
+            // Warning banner: visible whenever NOT done
             document.getElementById("calibWarning").classList.toggle("visible", !done);
 
             // Hide the calibration section 3 seconds after completion.

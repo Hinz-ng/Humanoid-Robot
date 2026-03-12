@@ -10,9 +10,8 @@
 // =============================================================================
 
 ServoControl   servoController;
-WebComm        webComm(&servoController);
+WebComm        webComm(&servoController);   // stateEstimator wired in setup()
 StateEstimator stateEstimator;
-
 // =============================================================================
 //  OE CONTROL IMPLEMENTATION
 //  Declared extern in oe_control.h so WebComm.cpp can call oe_estop/oe_clear.
@@ -72,6 +71,7 @@ void setup() {
         Serial.println("[WARN] Continuing without IMU.");
     }
     stateEstimator.reset();       // starts calibration countdown
+    webComm.setStateEstimator(&stateEstimator);
     webComm.init();
     Serial.println("System Ready.");
 }

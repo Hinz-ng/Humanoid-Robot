@@ -5,12 +5,15 @@
 #include "servo_driver.h"
 
 // Constructor ---------------------------------------------------------------
+// AFTER:
+// AFTER:
 WebComm::WebComm(ServoControl* servo)
-    : server(80), ws("/ws"), _servoCtrl(servo) {
-    // older versions accepted a second pointer to a SquatGait object;
-    // the argument has been dropped. nothing else to do here.
+    : server(80), ws("/ws"), _servoCtrl(servo), _stateEst(nullptr) {
 }
-
+// ADD this function after the constructor closing brace:
+void WebComm::setStateEstimator(StateEstimator* stateEst) {
+    _stateEst = stateEst;
+}
 
 // ---------------------------------------------------------------------------
 
@@ -138,27 +141,37 @@ void WebComm::broadcastEstimate(IMUState state) {
 
 // =============================================================================
 //  CALIBRATION STATUS BROADCAST                                   --- ADD ---
+// AFTER:
 void WebComm::broadcastCalibStatus(CalibState state, float progress) {
     if (ws.count() == 0) return;
 
-    // Rate-limit to 10 Hz — prevents WS send-queue overflow at 400 Hz loop rate.
-    // Exception: always send the final "done" packet immediately.
+    // Rate-limit to 10 Hz. Always let CALIB_DONE through immediately (final packet).
     const uint32_t INTERVAL_US = 100000; // 10 Hz
     uint32_t now = micros();
     if (state != CALIB_DONE && (now - _lastCalibBroadcast_us) < INTERVAL_US) return;
     _lastCalibBroadcast_us = now;
 
-    // Remaining time estimate: 2000 samples / 400 Hz = 5.0s total.
-    // Progress is 0.0→1.0 so remaining = total * (1 - progress).
-    const float CALIB_TOTAL_S = FilterConfig::CALIB_SAMPLES / 400.0f;
-    float remaining_s = (state == CALIB_DONE) ? 0.0f : CALIB_TOTAL_S * (1.0f - progress);
+    // remaining_s is only meaningful during COLLECTING (known sample count / rate).
+    // During WAITING, remaining is undefined — send -1 so the UI can show "waiting" text.
+    const float CALIB_TOTAL_S = (float)FilterConfig::CALIB_SAMPLES / 400.0f;
+    float remaining_s;
+    const char* stateStr;
+    if (state == CALIB_DONE) {
+        stateStr    = "done";
+        remaining_s = 0.0f;
+    } else if (state == CALIB_COLLECTING) {
+        stateStr    = "collecting";
+        remaining_s = CALIB_TOTAL_S * (1.0f - progress);
+    } else {
+        // CALIB_WAITING — robot is moving, unknown duration
+        stateStr    = "waiting";
+        remaining_s = CALIB_TOTAL_S;   // show full duration as "will take ~Xs once still"
+    }
 
     char buf[80];
     snprintf(buf, sizeof(buf),
         "CALIB:state=%s,progress=%.2f,remaining=%.1f",
-        (state == CALIB_DONE) ? "done" : "collecting",
-        progress,
-        remaining_s
+        stateStr, progress, remaining_s
     );
     ws.textAll(buf);
 }
@@ -168,12 +181,31 @@ void WebComm::broadcastCalibStatus(CalibState state, float progress) {
 
 void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
                       AwsEventType type, void* arg, uint8_t* data, size_t len) {
+    // AFTER:
     if (type == WS_EVT_CONNECT) {
         Serial.printf("[WebComm] Client #%u connected\n", client->id());
         if (_servoCtrl) {
             client->text(_servoCtrl->listPoses());
             broadcastJointInfo();
             broadcastState();
+        }
+        // Push current calibration state immediately to the new client.
+        // Without this, any client that connects after calibration finishes
+        // would never receive a CALIB packet and the bar stays at 0%.
+        if (_stateEst) {
+            char buf[80];
+            CalibState cs  = _stateEst->getCalibState();
+            float      prog = _stateEst->getCalibProgress();
+            const float CALIB_TOTAL_S = (float)FilterConfig::CALIB_SAMPLES / 400.0f;
+            float remaining_s = (cs == CALIB_DONE) ? 0.0f : CALIB_TOTAL_S * (1.0f - prog);
+            const char* stateStr = (cs == CALIB_DONE)       ? "done"
+                                 : (cs == CALIB_COLLECTING) ? "collecting"
+                                                             : "waiting";
+            snprintf(buf, sizeof(buf),
+                "CALIB:state=%s,progress=%.2f,remaining=%.1f",
+                stateStr, prog, remaining_s
+            );
+            client->text(buf);
         }
     }
     if (type == WS_EVT_DISCONNECT) {

@@ -75,6 +75,14 @@ struct FilterConfig {
     // the accel blend weight drops to zero and the gyro integrates alone.
     float accel_sanity_margin = 0.20f;  // ±0.20g → ~±11.4°
 
+    // --- Still detection (calibration gate) ---
+    // Calibration only starts once ALL three gyro axes are below this raw-LSB
+    // threshold for STILL_WINDOW_SAMPLES consecutive samples.
+    // At ±2000°/s range: 100 LSB ≈ 6 deg/s — clearly "not being carried/shaken".
+    // Increase if calibration never starts on a noisy bench; decrease for faster gate.
+    static const int16_t STILL_THRESHOLD_LSB   = 100;   // per axis, absolute
+    static const int     STILL_WINDOW_SAMPLES  = 50;    // 50 * 2.5ms = 125ms quiet window
+    
     // --- Calibration sample count ---
     // Samples collected at boot before integration starts.
     static const int CALIB_SAMPLES = 2000;
@@ -85,7 +93,8 @@ struct FilterConfig {
 // Readable via getCalibState() for UI status display.
 // ---------------------------------------------------------------------------
 enum CalibState {
-    CALIB_COLLECTING,  // Still accumulating samples — integration blocked.
+    CALIB_WAITING,     // Waiting for robot to be still before accumulating.
+    CALIB_COLLECTING,  // Accumulating gyro samples for bias estimation.
     CALIB_DONE         // Bias computed — estimator is live.
 };
 
@@ -132,6 +141,7 @@ private:
 
     // --- Calibration state ---
     CalibState _calibState = CALIB_COLLECTING;
+    int        _stillCount = 0;   // consecutive still samples seen; resets on motion
     int        _calibCount = 0;
     int32_t    _gyroSumX   = 0;  // int32_t: safe for 2000 * int16_t without overflow
     int32_t    _gyroSumY   = 0;

@@ -2,6 +2,7 @@
 #define PROJECT_WIDE_DEFS_H
 
 #include <Arduino.h>
+#include "state_estimator.h"
 
 // =============================================================================
 //  PROJECT-WIDE DEFINITIONS

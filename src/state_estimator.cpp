@@ -36,7 +36,8 @@ void StateEstimator::reset() {
     _seeded       = false;
     _accelSeeded  = false;
     _ax_filt = _ay_filt = _az_filt = 0.0f;
-    _calibState   = CALIB_COLLECTING;
+    _calibState   = CALIB_WAITING;   // waits for stillness before accumulating
+    _stillCount   = 0;
     _calibCount   = 0;
     _gyroSumX = _gyroSumY = _gyroSumZ = 0;
     _state        = {};
@@ -143,6 +144,33 @@ IMUState StateEstimator::update(const RawIMUData& raw, float dt) {
     // Accumulate raw gyro LSB counts into integer sums (no float error).
     // Integration is blocked until CALIB_SAMPLES are collected.
     // -----------------------------------------------------------------------
+    // INSERT this entire block BEFORE the existing "if (_calibState == CALIB_COLLECTING)" block:
+
+    // -----------------------------------------------------------------------
+    // WAITING PHASE — hold until the robot is stationary.
+    // Checks raw gyro LSB directly (no bias subtraction needed for this gate).
+    // All three axes must be below STILL_THRESHOLD_LSB for STILL_WINDOW_SAMPLES
+    // consecutive ticks. Any motion resets the window counter.
+    // -----------------------------------------------------------------------
+    if (_calibState == CALIB_WAITING) {
+        bool still = (abs(raw.gyro_x) < FilterConfig::STILL_THRESHOLD_LSB) &&
+                     (abs(raw.gyro_y) < FilterConfig::STILL_THRESHOLD_LSB) &&
+                     (abs(raw.gyro_z) < FilterConfig::STILL_THRESHOLD_LSB);
+
+        if (still) {
+            _stillCount++;
+        } else {
+            _stillCount = 0;  // motion detected — restart the quiet window
+        }
+
+        if (_stillCount >= FilterConfig::STILL_WINDOW_SAMPLES) {
+            _calibState = CALIB_COLLECTING;  // robot is still — begin bias accumulation
+        }
+
+        _state.valid = false;
+        return _state;
+    }
+    
     if (_calibState == CALIB_COLLECTING) {
         _gyroSumX += raw.gyro_x;
         _gyroSumY += raw.gyro_y;

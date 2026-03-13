@@ -15,6 +15,10 @@ void WebComm::setStateEstimator(StateEstimator* stateEst) {
     _stateEst = stateEst;
 }
 
+void WebComm::setBalanceController(BalanceController* bal) {
+    _balCtrl = bal;
+}
+
 // ---------------------------------------------------------------------------
 
 void listFiles() {
@@ -175,6 +179,30 @@ void WebComm::broadcastCalibStatus(CalibState state, float progress) {
     );
     ws.textAll(buf);
 }
+
+void WebComm::broadcastBalanceState(const BalanceState& state) {
+    if (ws.count() == 0 || _balCtrl == nullptr) return;
+
+    const uint32_t INTERVAL_US = 50000;  // 20 Hz
+    uint32_t now = micros();
+    if ((now - _lastBalanceBroadcast_us) < INTERVAL_US) return;
+    _lastBalanceBroadcast_us = now;
+
+    const BalanceConfig& cfg = _balCtrl->getConfig();
+    char buf[128];
+    snprintf(buf, sizeof(buf),
+        "BALANCE:enabled=%d,err=%.4f,u=%.3f,ankle=%.2f,hip=%.2f,Kp=%.3f,Kd=%.3f,sp=%.4f",
+        (int)state.enabled,
+        state.pitch_err_rad,
+        state.u_clamped,
+        state.ankle_cmd_deg,
+        state.hip_cmd_deg,
+        cfg.Kp, cfg.Kd,
+        cfg.setpoint_rad
+    );
+    ws.textAll(buf);
+}
+
 // =============================================================================
 //  EVENT HANDLER
 // =============================================================================
@@ -273,6 +301,41 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             broadcastState();
             ws.textAll("ESTOP:ACTIVE");
             Serial.println("[WebComm] CMD: ESTOP received — outputs disabled");
+        }
+        else if (cmd == "BALANCE_ON") {
+            if (_balCtrl) _balCtrl->setEnabled(true);
+            Serial.println("[WebComm] CMD: BALANCE_ON");
+        }
+        else if (cmd == "BALANCE_OFF") {
+            if (_balCtrl) _balCtrl->setEnabled(false);
+            Serial.println("[WebComm] CMD: BALANCE_OFF");
+        }
+        else if (cmd.startsWith("BALANCE_TUNE:")) {
+            if (_balCtrl) {
+                BalanceConfig cfg = _balCtrl->getConfig();
+                String params = cmd.substring(13);
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    String pair = (comma == -1) ? params.substring(start)
+                                                : params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq != -1) {
+                        String key = pair.substring(0, eq);
+                        float  val = pair.substring(eq + 1).toFloat();
+                        if      (key == "Kp")       cfg.Kp                 = val;
+                        else if (key == "Kd")       cfg.Kd                 = val;
+                        else if (key == "setpoint") cfg.setpoint_rad       = val;
+                        else if (key == "ankle")    cfg.ankle_gain         = val;
+                        else if (key == "hip")      cfg.hip_gain           = val;
+                        else if (key == "max")      cfg.max_correction_deg = val;
+                    }
+                    start = (comma == -1) ? params.length() : comma + 1;
+                }
+                _balCtrl->setConfig(cfg);
+                Serial.printf("[WebComm] BALANCE_TUNE: Kp=%.3f Kd=%.3f sp=%.4f\n",
+                               cfg.Kp, cfg.Kd, cfg.setpoint_rad);
+            }
         }
         else if (cmd == "CLEAR_ESTOP") {
             oe_clear();

@@ -4,6 +4,7 @@
 #include "WebComm.h"
 #include "oe_control.h"
 #include "state_estimator.h"
+#include "balance_controller.h"
 
 // =============================================================================
 //  GLOBAL OBJECTS
@@ -12,6 +13,7 @@
 ServoControl   servoController;
 WebComm        webComm(&servoController);   // stateEstimator wired in setup()
 StateEstimator stateEstimator;
+BalanceController balanceController;
 // =============================================================================
 //  OE CONTROL IMPLEMENTATION
 //  Declared extern in oe_control.h so WebComm.cpp can call oe_estop/oe_clear.
@@ -72,6 +74,8 @@ void setup() {
     }
     stateEstimator.reset();       // starts calibration countdown
     webComm.setStateEstimator(&stateEstimator);
+    balanceController.init(&servoController);
+    webComm.setBalanceController(&balanceController);
     webComm.init();
     Serial.println("System Ready.");
 }
@@ -100,8 +104,11 @@ void loop() {
             RawIMUData raw   = IMU_update();
             IMUState   state = stateEstimator.update(raw, dt);
 
+            BalanceState balState = balanceController.update(state, dt);
+
             webComm.broadcastIMU(raw);
             webComm.broadcastEstimate(state);
+            webComm.broadcastBalanceState(balState);
 
             // Broadcast calibration progress at 10 Hz (rate-limited inside broadcastCalibStatus).
             // _calibDoneAnnounced ensures one final "done" packet is sent, then stops.

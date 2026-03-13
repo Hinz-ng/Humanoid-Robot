@@ -65,6 +65,12 @@ float ServoControl::getTargetAngle(uint8_t channel) {
     return _model.getAbsoluteAngle(channel);
 }
 
+void ServoControl::setJointAngleDirect(uint8_t channel, float angleDeg) {
+    // immediate=true skips the smooth-stepping queue.
+    // Joint limits are still enforced inside JointModel::setJointAngle().
+    _model.setJointAngle(channel, angleDeg, /*immediate=*/true);
+}
+
 void ServoControl::setTargetPulse(uint8_t channel, int pulse_us, bool immediate) {
     // Convert pulse → absolute angle → joint model (which enforces limits).
     float absoluteDeg = ServoDriver::pulseToDeg(pulse_us);

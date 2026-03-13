@@ -26,24 +26,25 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
     {  0,  "right_ankle_roll",    121.0f,   +1,   -30.0f,  +30.0f  },  // TUNE
     {  1,  "right_ankle_pitch",   125.0f,   +1,   -60.0f,  +60.0f  },  // TUNE
     {  2,  "right_knee_pitch",    123.0f,   -1,     0.0f,  +100.0f  },  // TUNE — knee only flexes one way
-    {  3,  "right_hip_roll",      125.0f,   +1,   -20.0f,  +20.0f  },  // TUNE
-    {  4,  "right_hip_yaw",       130.0f,   +1,   -20.0f,  +20.0f  },  // TUNE
-    {  5,  "right_hip_pitch",     145.0f,   +1,   -30.0f,  +45.0f  },  // TUNE
+    {  3,  "right_hip_roll",      125.0f,   +1,   -20.0f,  +80.0f  },  // TUNE
+    {  4,  "right_hip_yaw",       130.0f,   +1,   -50.0f,  +50.0f  },  // TUNE
+    {  5,  "right_hip_pitch",     145.0f,   +1,   -25.0f,  +90.0f  },  // TUNE
 
 // ▼  UNUSED CHANNELS  ─────────────────────────────────────────────────
 //    Zero limits prevent any movement on stub channels.
 
-    {  6,  "unused_6",            135.0f,   +1,     0.0f,   0.0f   },
-    {  7,  "unused_7",            135.0f,   +1,     0.0f,   0.0f   },
+// ▼  LEFT LEG  ────────────────────────────────────────────────────────
+    { 6,  "left_hip_pitch",      145.0f,   -1,   -25.0f,  +90.0f  },  // TUNE
+    { 7,  "left_hip_yaw",        130.0f,   -1,   -50.0f,  +50.0f  },  // TUNE
+   
     {  8,  "unused_8",            135.0f,   +1,     0.0f,   0.0f   },
     {  9,  "unused_9",            135.0f,   +1,     0.0f,   0.0f   },
+    {  10,  "unused_6",            135.0f,   +1,     0.0f,   0.0f   },
+    {  11,  "unused_7",            135.0f,   +1,     0.0f,   0.0f   },
 
 // ▼  LEFT LEG  ────────────────────────────────────────────────────────
 //    Note direction = −1 for mirrored joints.
-
-    { 10,  "left_hip_pitch",      145.0f,   -1,   -30.0f,  +45.0f  },  // TUNE
-    { 11,  "left_hip_yaw",        130.0f,   -1,   -20.0f,  +20.0f  },  // TUNE
-    { 12,  "left_hip_roll",       130.0f,   -1,   -20.0f,  +20.0f  },  // TUNE
+    { 12,  "left_hip_roll",       130.0f,   -1,   -20.0f,  +80.0f  },  // TUNE
     { 13,  "left_knee_pitch",     125.0f,   +1,     0.0f,  +100.0f  },  // TUNE — knee only flexes one way
     { 14,  "left_ankle_pitch",    120.0f,   -1,   -60.0f,  +60.0f  },  // TUNE
     { 15,  "left_ankle_roll",     122.0f,   -1,   -30.0f,  +30.0f  },  // TUNE

@@ -63,6 +63,11 @@ public:
     void  setTargetAngle(uint8_t channel, float absoluteDeg, bool immediate = false);
     float getTargetAngle(uint8_t channel);
 
+    // Immediate joint-relative write — bypasses smooth stepping.
+    // Use ONLY from real-time control loops (balance controller).
+    // angleDeg: degrees FROM neutral, same frame as setJointAngle().
+    void setJointAngleDirect(uint8_t channel, float angleDeg);
+    
     // Set a joint by raw pulse width (µs). Limits are still enforced.
     void setTargetPulse(uint8_t channel, int pulse_us, bool immediate = false);
     int  getTargetPulse(uint8_t channel);

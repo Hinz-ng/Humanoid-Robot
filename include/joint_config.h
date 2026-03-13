@@ -87,9 +87,9 @@ extern const JointConfig JOINT_CONFIG[NUM_JOINTS];
 #define IDX_R_HIP_ROLL     3
 #define IDX_R_HIP_YAW      4
 #define IDX_R_HIP_PITCH    5
-// channels 6–9: unused stubs
-#define IDX_L_HIP_PITCH   10
-#define IDX_L_HIP_YAW     11
+// channels 8,9,10,11: unused stubs
+#define IDX_L_HIP_PITCH   6
+#define IDX_L_HIP_YAW     7
 #define IDX_L_HIP_ROLL    12
 #define IDX_L_KNEE_PITCH  13
 #define IDX_L_ANKLE_PITCH 14

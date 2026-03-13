@@ -7,6 +7,7 @@
 #include "servo_control.h"
 #include "imu.h" 
 #include "state_estimator.h"
+#include "balance_controller.h"
 
 class WebComm {
 public:    // ctor can be invoked at global scope; it simply stores the servo pointer.
@@ -21,6 +22,8 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     void broadcastIMU(RawIMUData data); // --- ADD: sends raw IMU values to UI panel
     void broadcastEstimate(IMUState state); // --- ADD: sends pitch/roll/rates to UI
     void broadcastCalibStatus(CalibState state, float progress); // --- ADD
+    void broadcastBalanceState(const BalanceState& state);
+    void setBalanceController(BalanceController* bal);
 
 private:
     AsyncWebServer server;
@@ -30,6 +33,9 @@ private:
     uint32_t _lastIMUBroadcast_us = 0;  // --- ADD: rate-limit timestamp for IMU broadcast
     uint32_t _lastEstimateBroadcast_us  = 0;
     uint32_t _lastCalibBroadcast_us     = 0;   // rate-limits calib status to 10 Hz
+    BalanceController* _balCtrl = nullptr;
+    uint32_t _lastBalanceBroadcast_us = 0;
+    
     void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
     void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
 };

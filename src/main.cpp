@@ -13,7 +13,8 @@
 ServoControl   servoController;
 WebComm        webComm(&servoController);   // stateEstimator wired in setup()
 StateEstimator stateEstimator;
-BalanceController balanceController;
+// servoController is declared on the line above, so its address is valid here.
+BalanceController balanceController(&servoController);
 // =============================================================================
 //  OE CONTROL IMPLEMENTATION
 //  Declared extern in oe_control.h so WebComm.cpp can call oe_estop/oe_clear.
@@ -74,7 +75,7 @@ void setup() {
     }
     stateEstimator.reset();       // starts calibration countdown
     webComm.setStateEstimator(&stateEstimator);
-    balanceController.init(&servoController);
+    balanceController.init();
     webComm.setBalanceController(&balanceController);
     webComm.init();
     Serial.println("System Ready.");
@@ -104,7 +105,7 @@ void loop() {
             RawIMUData raw   = IMU_update();
             IMUState   state = stateEstimator.update(raw, dt);
 
-            BalanceState balState = balanceController.update(state, dt);
+            BalanceState balState = balanceController.update(state);
 
             webComm.broadcastIMU(raw);
             webComm.broadcastEstimate(state);

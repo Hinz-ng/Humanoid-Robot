@@ -131,13 +131,10 @@ void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg) {
 
     // Ankle pitch joints — primary correction authority.
     // Both sides receive the same joint-relative angle; direction is handled internally.
-    _servo->applyBalanceOffset(IDX_R_ANKLE_PITCH, ankle_deg);
-    _servo->applyBalanceOffset(IDX_L_ANKLE_PITCH, ankle_deg);
-
-    // Hip pitch joints — secondary correction, only active when hip_ratio > 0.
-    // Small dead-zone (0.01°) avoids unnecessary writes when hip_ratio = 0.
+    _servo->setJointAngleDirect(IDX_R_ANKLE_PITCH, ankle_deg);
+    _servo->setJointAngleDirect(IDX_L_ANKLE_PITCH, ankle_deg);
     if (fabsf(hip_deg) > 0.01f) {
-        _servo->applyBalanceOffset(IDX_R_HIP_PITCH, hip_deg);
-        _servo->applyBalanceOffset(IDX_L_HIP_PITCH, hip_deg);
+        _servo->setJointAngleDirect(IDX_R_HIP_PITCH, hip_deg);
+        _servo->setJointAngleDirect(IDX_L_HIP_PITCH, hip_deg);
     }
 }

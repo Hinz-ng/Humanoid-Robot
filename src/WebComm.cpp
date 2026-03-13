@@ -190,15 +190,16 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
 
     const BalanceConfig& cfg = _balCtrl->getConfig();
     char buf[128];
+    // AFTER:
     snprintf(buf, sizeof(buf),
         "BALANCE:enabled=%d,err=%.4f,u=%.3f,ankle=%.2f,hip=%.2f,Kp=%.3f,Kd=%.3f,sp=%.4f",
-        (int)state.enabled,
-        state.pitch_err_rad,
+        (int)state.active,
+        state.pitch_error,
         state.u_clamped,
         state.ankle_cmd_deg,
         state.hip_cmd_deg,
         cfg.Kp, cfg.Kd,
-        cfg.setpoint_rad
+        cfg.pitch_setpoint_rad
     );
     ws.textAll(buf);
 }
@@ -302,14 +303,24 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             ws.textAll("ESTOP:ACTIVE");
             Serial.println("[WebComm] CMD: ESTOP received — outputs disabled");
         }
+        // AFTER:
         else if (cmd == "BALANCE_ON") {
-            if (_balCtrl) _balCtrl->setEnabled(true);
+            if (_balCtrl) {
+                BalanceConfig cfg = _balCtrl->getConfig();
+                cfg.enabled = true;
+                _balCtrl->setConfig(cfg);
+            }
             Serial.println("[WebComm] CMD: BALANCE_ON");
         }
         else if (cmd == "BALANCE_OFF") {
-            if (_balCtrl) _balCtrl->setEnabled(false);
+            if (_balCtrl) {
+                BalanceConfig cfg = _balCtrl->getConfig();
+                cfg.enabled = false;
+                _balCtrl->setConfig(cfg);
+            }
             Serial.println("[WebComm] CMD: BALANCE_OFF");
         }
+        // AFTER (complete replacement — all braces balanced):
         else if (cmd.startsWith("BALANCE_TUNE:")) {
             if (_balCtrl) {
                 BalanceConfig cfg = _balCtrl->getConfig();
@@ -323,18 +334,18 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     if (eq != -1) {
                         String key = pair.substring(0, eq);
                         float  val = pair.substring(eq + 1).toFloat();
-                        if      (key == "Kp")       cfg.Kp                 = val;
-                        else if (key == "Kd")       cfg.Kd                 = val;
-                        else if (key == "setpoint") cfg.setpoint_rad       = val;
-                        else if (key == "ankle")    cfg.ankle_gain         = val;
-                        else if (key == "hip")      cfg.hip_gain           = val;
-                        else if (key == "max")      cfg.max_correction_deg = val;
+                        if      (key == "Kp")       cfg.Kp                    = val;
+                        else if (key == "Kd")       cfg.Kd                    = val;
+                        else if (key == "setpoint") cfg.pitch_setpoint_rad    = val;
+                        else if (key == "ankle")    cfg.ankle_ratio           = val;
+                        else if (key == "hip")      cfg.hip_ratio             = val;
+                        else if (key == "max")      cfg.max_correction_deg    = val;
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
                 _balCtrl->setConfig(cfg);
                 Serial.printf("[WebComm] BALANCE_TUNE: Kp=%.3f Kd=%.3f sp=%.4f\n",
-                               cfg.Kp, cfg.Kd, cfg.setpoint_rad);
+                               cfg.Kp, cfg.Kd, cfg.pitch_setpoint_rad);
             }
         }
         else if (cmd == "CLEAR_ESTOP") {

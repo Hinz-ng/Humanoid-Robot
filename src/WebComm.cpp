@@ -3,6 +3,7 @@
 #include "oe_control.h"
 #include "joint_config.h"
 #include "servo_driver.h"
+#include "motion_manager.h"    // MotionSource, MotionManager::submit()
 
 // Constructor ---------------------------------------------------------------
 // AFTER:
@@ -17,6 +18,9 @@ void WebComm::setStateEstimator(StateEstimator* stateEst) {
 
 void WebComm::setBalanceController(BalanceController* bal) {
     _balCtrl = bal;
+}
+void WebComm::setMotionManager(MotionManager* mm) {
+    _motionManager = mm;
 }
 
 // ---------------------------------------------------------------------------
@@ -253,8 +257,8 @@ void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
 // =============================================================================
 
 void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
-    data[len] = 0;
-    String message = (char*)data;
+    // Build String from explicit length to avoid buffer overrun or missing null terminator.
+    String message((const char*)data, len);
     if (!_servoCtrl) return;
 
     Serial.printf("[WebComm] Received: %s\n", message.c_str());
@@ -358,14 +362,25 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
     else if (message.startsWith("SAVE:")) {
         _servoCtrl->saveCurrentPose(message.substring(5));
         ws.textAll(_servoCtrl->listPoses());
-    }
-    else {
-        // Slider control: "<channel>:<angle_degrees>" (existing protocol unchanged)
+    } else {
+        // Slider control: "<channel>:<angle_degrees>" (existing protocol unchanged).
+        // Route through MotionManager when wired so UI authority is explicitly
+        // declared at SOURCE_UI priority. Any active controller (BALANCE, GAIT)
+        // will silently override shared joints — no code change needed in either
+        // controller to suppress UI when active.
         int sep = message.indexOf(':');
         if (sep != -1) {
             uint8_t ch    = (uint8_t)message.substring(0, sep).toInt();
             float   angle = message.substring(sep + 1).toFloat();
-            _servoCtrl->setTargetAngle(ch, angle);
+
+            if (_motionManager) {
+                // Preferred path: submit as SOURCE_UI. flush() dispatches via
+                // setTargetAngle() which preserves smooth-stepping behaviour.
+                _motionManager->submit(SOURCE_UI, ch, angle);
+            } else {
+                // Fallback: direct write (pre-MotionManager behaviour preserved).
+                _servoCtrl->setTargetAngle(ch, angle);
+            }
             broadcastState();
         }
     }

@@ -19,8 +19,8 @@
 //   7. Only after ankle is stable: enable hip_ratio=0.2 and tune from there.
 //
 // RUNTIME TUNING (no reflash needed):
-//   Send via WebSocket: CMD:BAL_CONFIG:Kp=12.0,Kd=0.6,setpoint=0.0,max_corr=15.0
-//   Toggle:             CMD:BAL_ENABLE  /  CMD:BAL_DISABLE
+//   Send via WebSocket: CMD:BALANCE_TUNE:Kp=12.0,Kd=0.6,setpoint=0.0,ankle=1.0,hip=0.0,max=15.0
+//   Toggle:             CMD:BALANCE_ON  /  CMD:BALANCE_OFF
 //
 // JOINT CHANNELS USED:
 //   IDX_R_ANKLE_PITCH (ch 1,  dir +1)
@@ -36,6 +36,9 @@
 #include "state_estimator.h"   // IMUState
 #include "servo_control.h"     // ServoControl, IDX_* constants
 #include "joint_config.h"      // IDX_R_ANKLE_PITCH, etc.
+
+// Forward declaration — we only need a pointer; the full type is in motion_manager.h.
+class MotionManager;
 
 // ---------------------------------------------------------------------------
 // BalanceConfig — all tuning parameters in one struct.
@@ -124,17 +127,20 @@ public:
     const BalanceConfig& getConfig() const                   { return _cfg; }
     BalanceState         getLastState() const                { return _lastState; }
 
-private:
-    ServoControl* _servo;
-    BalanceConfig _cfg;
-    BalanceState  _lastState;
+    // Wire the joint authority layer. Call once in setup() after motionManager.init().
+    // Optional: if not called, _applyPitchCorrection() falls back to direct writes.
+    void setMotionManager(MotionManager* mm)                { _motionManager = mm; }
 
-    // Applies computed ankle/hip corrections to hardware immediately.
-    // Uses applyBalanceOffset() which bypasses smooth stepping (immediate=true).
-    //
-    // FUTURE: when the MotionArbiter pattern is implemented (Phase 3, walking),
-    // this call will be replaced with arbiter->setBalanceDelta(ch, deg) so the
-    // gait generator and balance controller can coexist on the same joints.
+private:
+    ServoControl*  _servo;
+    MotionManager* _motionManager = nullptr;  // joint authority layer — wired in setup()
+    BalanceConfig  _cfg;
+    BalanceState   _lastState;
+
+    // Applies computed ankle/hip corrections.
+    // Routes through MotionManager when wired (priority arbitration).
+    // Falls back to direct ServoControl writes when MotionManager is absent
+    // (preserves the pre-MotionManager behaviour for compatibility/testing).
     void _applyPitchCorrection(float ankle_deg, float hip_deg);
 };
 

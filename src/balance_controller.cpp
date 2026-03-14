@@ -29,6 +29,7 @@
 #include "balance_controller.h"
 #include "oe_control.h"   // oe_is_estopped(), oe_estop()
 #include <math.h>         // fabsf
+#include "motion_manager.h"    // MotionSource, MotionManager::submit()
 
 // ---------------------------------------------------------------------------
 BalanceController::BalanceController(ServoControl* servo)
@@ -127,10 +128,27 @@ BalanceState BalanceController::update(const IMUState& state) {
 
 // ---------------------------------------------------------------------------
 void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg) {
-    if (!_servo) return;
+    // ── Path A: MotionManager is wired (normal runtime path) ─────────────────
+    // submit() registers intent; main.cpp calls motionManager.flush() to
+    // dispatch. This means BALANCE authority is explicitly declared and can
+    // be overridden only by a higher-priority source (there is none currently).
+    if (_motionManager) {
+        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_PITCH, ankle_deg);
+        _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_PITCH, ankle_deg);
+        if (fabsf(hip_deg) > 0.01f) {
+            _motionManager->submit(SOURCE_BALANCE, IDX_R_HIP_PITCH, hip_deg);
+            _motionManager->submit(SOURCE_BALANCE, IDX_L_HIP_PITCH, hip_deg);
+        }
+        return;
+    }
 
-    // Ankle pitch joints — primary correction authority.
-    // Both sides receive the same joint-relative angle; direction is handled internally.
+    // ── Path B: MotionManager absent — direct write fallback ─────────────────
+    // Preserved for unit tests or bring-up scenarios where MotionManager is
+    // intentionally not wired. Behaviour is identical to the pre-MotionManager
+    // implementation. This path should not appear in normal production builds.
+    if (!_servo) return;
+    Serial.println("[BalanceController] WARNING: MotionManager not wired — "
+                   "using direct servo write. Wire setMotionManager() in setup().");
     _servo->setJointAngleDirect(IDX_R_ANKLE_PITCH, ankle_deg);
     _servo->setJointAngleDirect(IDX_L_ANKLE_PITCH, ankle_deg);
     if (fabsf(hip_deg) > 0.01f) {

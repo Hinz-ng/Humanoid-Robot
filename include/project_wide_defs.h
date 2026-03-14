@@ -8,8 +8,8 @@
 //  PROJECT-WIDE DEFINITIONS
 // =============================================================================
 //
-//  NUM_SERVOS, USMIN, USMAX, ANGLE_RANGE, SERVO_FREQ are defined in joint_map.h.
-//  This file re-exports them via the include below for backward compatibility.
+//  Joint metadata and limits live in joint_config.h.
+//  Servo hardware limits live in servo_driver.h.
 // =============================================================================
 
 // --- Hardware pins ---
@@ -20,7 +20,6 @@
 #define AP_SSID "HumanoidRobot"
 #define AP_PASS "robot1234"
 
-// --- Single source of truth for joint metadata, pulse math, and movement API ---
-// --- All existing references to JOINT_MAP[i].neutralAngle continue to work  ---
+// --- Single source of truth for joint metadata is joint_config.h ---
 
 #endif // PROJECT_WIDE_DEFS_H

@@ -90,6 +90,53 @@
                           padding: 6px; border-radius: 4px; margin-top: 8px;
                           letter-spacing: 0.5px; }
         .calib-warning.visible { display: block; }
+    /* ── Balance Controller Panel ─────────────────────────────────────── */
+.bal-panel { background: #1a2a1a; border: 1px solid #2e4a2e;
+             border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
+
+.bal-header { display: flex; justify-content: space-between; align-items: center;
+              padding: 12px 16px; cursor: pointer; user-select: none; }
+.bal-header h3 { margin: 0; font-size: 13px; text-transform: uppercase;
+                 letter-spacing: 1px; color: #66bb6a; }
+.bal-chevron { font-size: 11px; color: #888; transition: transform 0.2s; }
+.bal-chevron.open { transform: rotate(180deg); }
+
+.bal-body { padding: 0 16px 16px; }
+
+/* Status badge */
+.bal-status { display: inline-block; padding: 3px 10px; border-radius: 3px;
+              font-size: 11px; font-weight: bold; letter-spacing: 0.5px; margin-bottom: 12px; }
+.bal-status.active   { background: #1b3a1b; color: #66bb6a; }
+.bal-status.disabled { background: #2a2a2a; color: #777; }
+.bal-status.fell     { background: #4a0000; color: #ff6b6b; }
+
+/* Formula display */
+.bal-formula { font-family: 'Courier New', monospace; font-size: 12px;
+               background: #111; border: 1px solid #333; border-radius: 4px;
+               padding: 8px 12px; margin-bottom: 12px; color: #ccc; line-height: 1.7; }
+.bal-formula .lbl  { color: #888; }
+.bal-formula .val  { color: #e0e0ff; font-weight: bold; }
+.bal-formula .hi   { color: #66bb6a; font-weight: bold; }
+
+/* Live outputs row */
+.bal-outputs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 14px; }
+.bal-out-cell { background: #111; border-radius: 4px; padding: 6px 10px; }
+.bal-out-lbl  { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+.bal-out-val  { font-size: 15px; font-family: 'Courier New', monospace;
+                font-weight: bold; color: #e0e0ff; }
+
+/* Tuning sliders */
+.bal-tune-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+.bal-tune-row  { display: flex; flex-direction: column; font-size: 11px; color: #aaa; }
+.bal-tune-row .tune-header { display: flex; justify-content: space-between; margin-bottom: 3px; }
+.bal-tune-row .tune-val    { color: #66bb6a; font-weight: bold; font-family: monospace; }
+.bal-tune-row input[type=range] { width: 100%; margin: 0; }
+
+/* Enable / Disable buttons */
+.btn-bal-on  { background: #1e5c1e; color: #fff; border: none; padding: 5px 14px;
+               border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; }
+.btn-bal-off { background: #5c1e1e; color: #fff; border: none; padding: 5px 14px;
+               border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -157,6 +204,100 @@
         </div>
         <div class="imu-status" id="imu-status">Waiting for data...</div>
     </div>
+    <!-- ── Balance Controller Panel ──────────────────────────────────────── -->
+<div class="bal-panel">
+
+    <!-- Clickable header toggles body visibility -->
+    <div class="bal-header" onclick="toggleBalPanel()">
+        <h3>⚖ Balance Controller</h3>
+        <span class="bal-chevron" id="balChevron">▼</span>
+    </div>
+
+    <div class="bal-body" id="balBody" style="display:none;">
+
+        <!-- Status row: badge + enable/disable buttons -->
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+            <span class="bal-status disabled" id="balStatus">DISABLED</span>
+            <button class="btn-bal-on"  id="balOnBtn"  onclick="sendCmd('BALANCE_ON')">Enable</button>
+            <button class="btn-bal-off" id="balOffBtn" onclick="sendCmd('BALANCE_OFF')" style="display:none;">Disable</button>
+        </div>
+
+        <!--
+            Correction formula — live values substituted each BALANCE: packet.
+            Shows the actual math the controller ran on the last tick.
+            u = (Kp × error + Kd × pitchRate) × correction_sign  →  clamped  →  joints
+        -->
+        <div class="bal-formula">
+            <div><span class="lbl">error    = </span><span class="val" id="bfErr">—</span><span class="lbl"> rad  (pitch − setpoint)</span></div>
+            <div><span class="lbl">u_raw    = Kp×err + Kd×rate = </span><span class="val" id="bfKp">—</span><span class="lbl">×</span><span class="val" id="bfErr2">—</span><span class="lbl"> + </span><span class="val" id="bfKd">—</span><span class="lbl">×rate</span></div>
+            <div><span class="lbl">u_clamp  = </span><span class="hi"  id="bfU">—</span><span class="lbl"> °  (clamped to ±<span id="bfMax">15</span>°)</span></div>
+            <div><span class="lbl">ankle    = u × ankle_ratio = </span><span class="hi" id="bfAnkle">—</span><span class="lbl"> °</span></div>
+            <div><span class="lbl">hip      = u × hip_ratio   = </span><span class="hi" id="bfHip">—</span><span class="lbl"> °</span></div>
+        </div>
+
+        <!-- Live output cells -->
+        <div class="bal-outputs">
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Pitch error</div>
+                <div class="bal-out-val" id="bErr">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">u (clamped °)</div>
+                <div class="bal-out-val" id="bU">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Ankle cmd (°)</div>
+                <div class="bal-out-val" id="bAnkle">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Hip cmd (°)</div>
+                <div class="bal-out-val" id="bHip">—</div>
+            </div>
+        </div>
+
+        <!-- Tuning sliders — each sends CMD:BALANCE_TUNE on change (debounced) -->
+        <div class="bal-tune-grid">
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Kp</span><span class="tune-val" id="tvKp">10.00</span></div>
+                <input type="range" id="slKp" min="0" max="30" step="0.5" value="10"
+                       oninput="updateTuneLabel('Kp',this.value); sendTune()">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Kd</span><span class="tune-val" id="tvKd">0.50</span></div>
+                <input type="range" id="slKd" min="0" max="3" step="0.05" value="0.5"
+                       oninput="updateTuneLabel('Kd',this.value); sendTune()">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Setpoint (°)</span><span class="tune-val" id="tvSp">0.0</span></div>
+                <input type="range" id="slSp" min="-15" max="15" step="0.5" value="0"
+                       oninput="updateTuneLabel('setpoint',this.value); sendTune()">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Max correction (°)</span><span class="tune-val" id="tvMax">15</span></div>
+                <input type="range" id="slMax" min="1" max="30" step="1" value="15"
+                       oninput="updateTuneLabel('max',this.value); sendTune()">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Ankle ratio</span><span class="tune-val" id="tvAnkle">1.00</span></div>
+                <input type="range" id="slAnkle" min="0" max="1" step="0.05" value="1"
+                       oninput="updateTuneLabel('ankle',this.value); sendTune()">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Hip ratio</span><span class="tune-val" id="tvHip">0.00</span></div>
+                <input type="range" id="slHip" min="0" max="1" step="0.05" value="0"
+                       oninput="updateTuneLabel('hip',this.value); sendTune()">
+            </div>
+
+        </div><!-- /.bal-tune-grid -->
+
+    </div><!-- /.bal-body -->
+</div><!-- /.bal-panel -->
     <div class="preset-box">
         <span style="color:#aaa;font-size:12px;">Saved Presets:</span><br>
         <div id="presetList" style="margin-top:10px;"></div>
@@ -188,7 +329,7 @@
 
 <script>
 // =============================================================================
-//  CONSTANTS  (must match firmware joint_map.h)
+//  CONSTANTS  (must match firmware joint_config.h / servo_driver.h)
 // =============================================================================
 const USMIN  = 500;
 const USMAX  = 2500;
@@ -469,6 +610,68 @@ function initWebSocket() {
                 document.getElementById("calibSection").style.display = "none";
             }, 3000);
         }
+        else if (msg.startsWith("BALANCE:")) {
+            // Parse key=value pairs from: "BALANCE:enabled=1,err=X,u=X,ankle=X,hip=X,Kp=X,Kd=X,sp=X"
+            const v = {};
+            msg.substring(8).split(",").forEach(pair => {
+                const eq = pair.indexOf("=");
+                if (eq !== -1) v[pair.substring(0, eq)] = pair.substring(eq + 1);
+            });
+
+            const active = v["enabled"] === "1";
+            const fell   = v["fell"]    === "1";
+
+            // ── Status badge ──────────────────────────────────────────────
+            const badge = document.getElementById("balStatus");
+            if (fell) {
+                badge.textContent = "⚠ FELL — ESTOP";
+                badge.className   = "bal-status fell";
+            } else if (active) {
+                badge.textContent = "ACTIVE";
+                badge.className   = "bal-status active";
+            } else {
+                badge.textContent = "DISABLED";
+                badge.className   = "bal-status disabled";
+            }
+
+            // Toggle enable / disable button visibility
+            document.getElementById("balOnBtn").style.display  = active ? "none"         : "inline-block";
+            document.getElementById("balOffBtn").style.display = active ? "inline-block" : "none";
+
+            // ── Formula display (live values) ─────────────────────────────
+            // Convert error from rad → deg for readability
+            const errRad  = parseFloat(v["err"]  || "0");
+            const errDeg  = (errRad * 180 / Math.PI).toFixed(3);
+            const uClamp  = parseFloat(v["u"]     || "0").toFixed(3);
+            const ankle   = parseFloat(v["ankle"] || "0").toFixed(2);
+            const hip     = parseFloat(v["hip"]   || "0").toFixed(2);
+            const Kp      = parseFloat(v["Kp"]    || "0");
+            const Kd      = parseFloat(v["Kd"]    || "0");
+            const spRad   = parseFloat(v["sp"]    || "0");
+
+            document.getElementById("bfErr").textContent  = errRad.toFixed(4);
+            document.getElementById("bfErr2").textContent = errRad.toFixed(4);
+            document.getElementById("bfKp").textContent   = Kp.toFixed(2);
+            document.getElementById("bfKd").textContent   = Kd.toFixed(2);
+            document.getElementById("bfU").textContent    = uClamp;
+            document.getElementById("bfAnkle").textContent = ankle;
+            document.getElementById("bfHip").textContent   = hip;
+
+            // ── Live output cells ─────────────────────────────────────────
+            document.getElementById("bErr").textContent   = errDeg + "°";
+            document.getElementById("bU").textContent     = uClamp;
+            document.getElementById("bAnkle").textContent = ankle;
+            document.getElementById("bHip").textContent   = hip;
+
+            // ── Sync sliders to firmware state (handles page reload / reconnect) ──
+            // Only sync if value differs by more than slider step to avoid feedback loop
+            _syncSlider("slKp",    "tvKp",    Kp,                           2);
+            _syncSlider("slKd",    "tvKd",    Kd,                           2);
+            _syncSlider("slSp",    "tvSp",    spRad * 180 / Math.PI,        1);
+            _syncSlider("slMax",   "tvMax",   parseFloat(v["max"] || "15"), 0);
+            _syncSlider("slAnkle", "tvAnkle", parseFloat(v["ankle_r"] || document.getElementById("slAnkle").value), 2);
+            _syncSlider("slHip",   "tvHip",   parseFloat(v["hip_r"]   || document.getElementById("slHip").value),   2);
+        }
         // --- ADD END ---
     };
 }
@@ -517,6 +720,63 @@ function updatePoseList(csv) {
         btn.onclick   = () => sendCmd("LOAD:" + pose);
         list.appendChild(btn);
     });
+}
+
+// ── Balance panel collapse toggle ────────────────────────────────────────────
+function toggleBalPanel() {
+    const body    = document.getElementById("balBody");
+    const chevron = document.getElementById("balChevron");
+    const open    = body.style.display !== "none";
+    body.style.display   = open ? "none"  : "block";
+    chevron.classList.toggle("open", !open);
+}
+
+// ── Tune label helper — updates the displayed value next to each slider ───────
+// id: one of "Kp" | "Kd" | "setpoint" | "max" | "ankle" | "hip"
+function updateTuneLabel(id, rawVal) {
+    const map = {
+        Kp:       { el: "tvKp",    decimals: 2 },
+        Kd:       { el: "tvKd",    decimals: 2 },
+        setpoint: { el: "tvSp",    decimals: 1 },
+        max:      { el: "tvMax",   decimals: 0 },
+        ankle:    { el: "tvAnkle", decimals: 2 },
+        hip:      { el: "tvHip",   decimals: 2 },
+    };
+    const m = map[id];
+    if (m) document.getElementById(m.el).textContent = parseFloat(rawVal).toFixed(m.decimals);
+}
+
+// ── Send tuning params to firmware (80ms debounce) ───────────────────────────
+// Converts setpoint from degrees (slider) → radians (firmware expectation).
+function sendTune() {
+    clearTimeout(sendTune._t);
+    sendTune._t = setTimeout(() => {
+        const Kp    = document.getElementById("slKp").value;
+        const Kd    = document.getElementById("slKd").value;
+        const spDeg = parseFloat(document.getElementById("slSp").value);
+        const spRad = (spDeg * Math.PI / 180).toFixed(5);
+        const ankle = document.getElementById("slAnkle").value;
+        const hip   = document.getElementById("slHip").value;
+        const max   = document.getElementById("slMax").value;
+        // Update the formula's max clamp display immediately
+        document.getElementById("bfMax").textContent = max;
+        const msg = `CMD:BALANCE_TUNE:Kp=${Kp},Kd=${Kd},setpoint=${spRad},ankle=${ankle},hip=${hip},max=${max}`;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(msg);
+            console.log("[WS TX]", msg);
+        }
+    }, 80);
+}
+
+// ── Sync a slider to firmware state without triggering sendTune() ─────────────
+// Only updates if the difference exceeds the slider's own step size.
+function _syncSlider(sliderId, labelId, newVal, decimals) {
+    const sl   = document.getElementById(sliderId);
+    const step = parseFloat(sl.step) || 0.05;
+    if (Math.abs(parseFloat(sl.value) - newVal) > step * 0.5) {
+        sl.value = newVal;
+        document.getElementById(labelId).textContent = newVal.toFixed(decimals);
+    }
 }
 
 window.onload = () => { buildUI(); initWebSocket(); };

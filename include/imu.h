@@ -32,7 +32,7 @@ struct RawIMUData {
 // ---------------------------------------------------------------------------
 // IMU_init()
 // Call once in setup(). Order relative to servoController.init() does not
-// matter — the IMU uses Wire1 (GPIO 17/18), which is a completely separate
+// matter — the IMU uses Wire1 (GPIO 8/9), which is a completely separate
 // I2C peripheral from Wire (GPIO 8/9) used by the PCA9685.
 // IMU_init() calls Wire1.begin() internally.
 //

@@ -5,16 +5,22 @@
 #include "oe_control.h"
 #include "state_estimator.h"
 #include "balance_controller.h"
+#include "motion_manager.h"        // joint authority layer
 
 // =============================================================================
 //  GLOBAL OBJECTS
+//
+//  Construction order note:
+//  MotionManager is constructed before setup() runs — this is safe because
+//  its constructor only zero-initialises an array (no hardware access).
+//  The ServoControl pointer is wired in setup() via motionManager.init().
 // =============================================================================
 
-ServoControl   servoController;
-WebComm        webComm(&servoController);   // stateEstimator wired in setup()
-StateEstimator stateEstimator;
-// servoController is declared on the line above, so its address is valid here.
+ServoControl      servoController;
+WebComm           webComm(&servoController);
+StateEstimator    stateEstimator;
 BalanceController balanceController(&servoController);
+MotionManager     motionManager;   // joint authority layer — wired in setup()
 // =============================================================================
 //  OE CONTROL IMPLEMENTATION
 //  Declared extern in oe_control.h so WebComm.cpp can call oe_estop/oe_clear.
@@ -76,7 +82,12 @@ void setup() {
     stateEstimator.reset();       // starts calibration countdown
     webComm.setStateEstimator(&stateEstimator);
     balanceController.init();
+    // Wire MotionManager — must come after servoController.init() because
+    // init() stores a pointer to servoController (no hardware calls yet).
+    motionManager.init(&servoController);
+    balanceController.setMotionManager(&motionManager);
     webComm.setBalanceController(&balanceController);
+    webComm.setMotionManager(&motionManager);
     webComm.init();
     Serial.println("System Ready.");
 }
@@ -106,6 +117,11 @@ void loop() {
             IMUState   state = stateEstimator.update(raw, dt);
 
             BalanceState balState = balanceController.update(state);
+            // Flush after ALL sources have submitted for this tick:
+            //   balanceController.update() → submit(SOURCE_BALANCE, ...)
+            //   WebSocket slider events   → submit(SOURCE_UI, ...)  [already queued]
+            // flush() dispatches the highest-priority command per joint, then clears slots.
+            motionManager.flush();
 
             webComm.broadcastIMU(raw);
             webComm.broadcastEstimate(state);

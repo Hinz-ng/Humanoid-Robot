@@ -137,6 +137,9 @@
                border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; }
 .btn-bal-off { background: #5c1e1e; color: #fff; border: none; padding: 5px 14px;
                border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; }
+.btn-sign        { background: #2a2a2a; color: #aaa; border: 1px solid #444;
+                   padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+.btn-sign-active { background: #1a3a4a; color: #64b5f6; border-color: #64b5f6; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -260,13 +263,13 @@
 
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Kp</span><span class="tune-val" id="tvKp">10.00</span></div>
-                <input type="range" id="slKp" min="0" max="30" step="0.5" value="10"
+                <input type="range" id="slKp" min="0" max="150" step="1" value="10"
                        oninput="updateTuneLabel('Kp',this.value); sendTune()">
             </div>
 
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Kd</span><span class="tune-val" id="tvKd">0.50</span></div>
-                <input type="range" id="slKd" min="0" max="3" step="0.05" value="0.5"
+                <input type="range" id="slKd" min="0" max="5" step="0.05" value="0.5"
                        oninput="updateTuneLabel('Kd',this.value); sendTune()">
             </div>
 
@@ -293,6 +296,21 @@
                 <input type="range" id="slHip" min="0" max="1" step="0.05" value="0"
                        oninput="updateTuneLabel('hip',this.value); sendTune()">
             </div>
+
+            <!-- ADD: correction_sign toggle — must verify on first enable -->
+<div class="bal-tune-row" style="grid-column: span 2; margin-top: 4px;">
+    <div class="tune-header">
+        <span>Correction sign</span>
+        <span class="tune-val" id="tvSign">+1</span>
+    </div>
+    <div style="display:flex; gap:8px; margin-top:4px;">
+        <button id="btnSignPos" class="btn-sign btn-sign-active" onclick="setSign(1)">+1 — fwd lean corrects</button>
+        <button id="btnSignNeg" class="btn-sign"                 onclick="setSign(-1)">−1 — flip direction</button>
+    </div>
+    <div style="font-size:10px; color:#666; margin-top:4px;">
+        Tilt forward: if ankle cmd goes negative, flip to −1.
+    </div>
+</div>
 
         </div><!-- /.bal-tune-grid -->
 
@@ -663,14 +681,23 @@ function initWebSocket() {
             document.getElementById("bAnkle").textContent = ankle;
             document.getElementById("bHip").textContent   = hip;
 
-            // ── Sync sliders to firmware state (handles page reload / reconnect) ──
-            // Only sync if value differs by more than slider step to avoid feedback loop
-            _syncSlider("slKp",    "tvKp",    Kp,                           2);
-            _syncSlider("slKd",    "tvKd",    Kd,                           2);
-            _syncSlider("slSp",    "tvSp",    spRad * 180 / Math.PI,        1);
-            _syncSlider("slMax",   "tvMax",   parseFloat(v["max"] || "15"), 0);
-            _syncSlider("slAnkle", "tvAnkle", parseFloat(v["ankle_r"] || document.getElementById("slAnkle").value), 2);
-            _syncSlider("slHip",   "tvHip",   parseFloat(v["hip_r"]   || document.getElementById("slHip").value),   2);
+            // ── Sync sliders to firmware state on reconnect ───────────────────
+            // Guarded by _tuneActive: if user is dragging, skip sync entirely.
+            // ankle_r / hip_r / sign now present in the broadcast packet.
+            if (!_tuneActive) {
+                _syncSlider("slKp",    "tvKp",    Kp,                                    2);
+                _syncSlider("slKd",    "tvKd",    Kd,                                    2);
+                _syncSlider("slSp",    "tvSp",    spRad * 180 / Math.PI,                1);
+                _syncSlider("slMax",   "tvMax",   parseFloat(v["max"]     || "15"),      0);
+                _syncSlider("slAnkle", "tvAnkle", parseFloat(v["ankle_r"] || "1"),       2);
+                _syncSlider("slHip",   "tvHip",   parseFloat(v["hip_r"]   || "0"),       2);
+
+                // Sync correction sign toggle button state
+                const sign = parseFloat(v["sign"] || "1");
+                document.getElementById("tvSign").textContent = sign >= 0 ? "+1" : "−1";
+                document.getElementById("btnSignPos").className = "btn-sign" + (sign >= 0 ? " btn-sign-active" : "");
+                document.getElementById("btnSignNeg").className = "btn-sign" + (sign <  0 ? " btn-sign-active" : "");
+            }
         }
         // --- ADD END ---
     };
@@ -733,7 +760,20 @@ function toggleBalPanel() {
 
 // ── Tune label helper — updates the displayed value next to each slider ───────
 // id: one of "Kp" | "Kd" | "setpoint" | "max" | "ankle" | "hip"
+
+// Prevent incoming BALANCE: packets from resetting sliders while the user is dragging.
+// Set true on any slider interaction; cleared 1500ms after last interaction.
+// sendTune() debounces at 80ms, so this window comfortably covers the round-trip.
+let _tuneActive = false;
+let _tuneActiveTimer = null;
+function _setTuneActive() {
+    _tuneActive = true;
+    clearTimeout(_tuneActiveTimer);
+    _tuneActiveTimer = setTimeout(() => { _tuneActive = false; }, 1500);
+}
+
 function updateTuneLabel(id, rawVal) {
+    _setTuneActive();   // mark user as actively tuning — suppresses _syncSlider
     const map = {
         Kp:       { el: "tvKp",    decimals: 2 },
         Kd:       { el: "tvKd",    decimals: 2 },
@@ -744,6 +784,18 @@ function updateTuneLabel(id, rawVal) {
     };
     const m = map[id];
     if (m) document.getElementById(m.el).textContent = parseFloat(rawVal).toFixed(m.decimals);
+}
+
+// Correction sign toggle — sends immediately (not batched with sendTune)
+function setSign(val) {
+    _setTuneActive();
+    document.getElementById("tvSign").textContent = val > 0 ? "+1" : "−1";
+    document.getElementById("btnSignPos").className = "btn-sign" + (val > 0 ? " btn-sign-active" : "");
+    document.getElementById("btnSignNeg").className = "btn-sign" + (val < 0 ? " btn-sign-active" : "");
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send("CMD:BALANCE_TUNE:sign=" + val);
+        console.log("[WS TX] CMD:BALANCE_TUNE:sign=" + val);
+    }
 }
 
 // ── Send tuning params to firmware (80ms debounce) ───────────────────────────

@@ -193,17 +193,20 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
     _lastBalanceBroadcast_us = now;
 
     const BalanceConfig& cfg = _balCtrl->getConfig();
-    char buf[128];
     // AFTER:
+    char buf[192];   // expanded: 8 → 11 fields
     snprintf(buf, sizeof(buf),
-        "BALANCE:enabled=%d,err=%.4f,u=%.3f,ankle=%.2f,hip=%.2f,Kp=%.3f,Kd=%.3f,sp=%.4f",
+        "BALANCE:enabled=%d,err=%.4f,u=%.3f,ankle=%.2f,hip=%.2f,Kp=%.3f,Kd=%.3f,sp=%.4f,ankle_r=%.2f,hip_r=%.2f,sign=%.1f",
         (int)state.active,
         state.pitch_error,
         state.u_clamped,
         state.ankle_cmd_deg,
         state.hip_cmd_deg,
         cfg.Kp, cfg.Kd,
-        cfg.pitch_setpoint_rad
+        cfg.pitch_setpoint_rad,
+        cfg.ankle_ratio,          // now in packet — UI slider can sync on reconnect
+        cfg.hip_ratio,
+        cfg.correction_sign
     );
     ws.textAll(buf);
 }
@@ -344,6 +347,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         else if (key == "ankle")    cfg.ankle_ratio           = val;
                         else if (key == "hip")      cfg.hip_ratio             = val;
                         else if (key == "max")      cfg.max_correction_deg    = val;
+                        else if (key == "sign")     cfg.correction_sign       = val;
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }

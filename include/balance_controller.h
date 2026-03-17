@@ -58,12 +58,14 @@ struct BalanceConfig {
     float pitch_setpoint_rad   = 0.0f;
 
     // --- PD gains ---
-    // Kp: how strongly to react to position error. Too high → oscillates.
-    // Kd: how strongly to react to rate (velocity). Too high → high-freq chatter.
-    // Start with Kd=0 to find Kp first, then add Kd to damp.
-    float Kp                   = 10.0f;
-    float Kd                   = 0.5f;
-
+    // Units: Kp is deg/rad, Kd is deg/(rad/s).
+    // Because error is in radians (small numbers), Kp must be large to produce
+    // visible corrections. At 10° lean (0.175 rad), Kp=10 gives only 1.75° output.
+    // Useful range for this robot: Kp=50–120, Kd=0.5–3.0.
+    // Tuning order: set Kd=0, increase Kp to edge of oscillation, then add Kd to damp.
+    float Kp                   = 10.0f;   // deg/rad
+    float Kd                   = 0.5f;    // deg/(rad/s)
+   
     // --- Joint distribution ---
     // ankle_ratio: fraction of the control output applied to ankle pitch joints.
     //              Start at 1.0 (full authority to ankles). Tune this first.

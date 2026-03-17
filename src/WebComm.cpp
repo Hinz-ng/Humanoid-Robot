@@ -193,10 +193,10 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
     _lastBalanceBroadcast_us = now;
 
     const BalanceConfig& cfg = _balCtrl->getConfig();
-    // AFTER:
-    char buf[192];   // expanded: 8 → 11 fields
+    // buf grows to 224 — add max and fell
+    char buf[224];
     snprintf(buf, sizeof(buf),
-        "BALANCE:enabled=%d,err=%.4f,u=%.3f,ankle=%.2f,hip=%.2f,Kp=%.3f,Kd=%.3f,sp=%.4f,ankle_r=%.2f,hip_r=%.2f,sign=%.1f",
+        "BALANCE:enabled=%d,err=%.4f,u=%.3f,ankle=%.2f,hip=%.2f,Kp=%.3f,Kd=%.3f,sp=%.4f,ankle_r=%.2f,hip_r=%.2f,sign=%.1f,max=%.1f,fell=%d",
         (int)state.active,
         state.pitch_error,
         state.u_clamped,
@@ -204,9 +204,11 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         state.hip_cmd_deg,
         cfg.Kp, cfg.Kd,
         cfg.pitch_setpoint_rad,
-        cfg.ankle_ratio,          // now in packet — UI slider can sync on reconnect
+        cfg.ankle_ratio,
         cfg.hip_ratio,
-        cfg.correction_sign
+        cfg.correction_sign,
+        cfg.max_correction_deg,   // now broadcast — UI can sync max slider on reconnect
+        (int)state.fell            // now broadcast — UI can show fell state
     );
     ws.textAll(buf);
 }

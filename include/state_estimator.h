@@ -57,6 +57,11 @@ struct FilterConfig {
     // Signals below this are clamped to zero.
     // Default 0.01 rad/s ≈ 0.57 deg/s — below BMI160 noise floor at ±2000°/s.
     // Increase if you see slow angle creep at rest; decrease if fast moves feel sluggish.
+    //
+    // TUNING NOTE: pitchRate in IMUState is assigned from gy_rs AFTER deadband.
+    // This means Kd has no effect when |pitchRate| < deadband (near equilibrium).
+    // If you observe oscillation that Kd doesn't damp, try reducing deadband to 0.005.
+    // If you see high-frequency chatter, increase it toward 0.02.
     float gyro_deadband_rs = 0.01f;
 
     // --- Gyro axis signs ---

@@ -232,7 +232,17 @@ IMUState StateEstimator::update(const RawIMUData& raw, float dt) {
     float w = _accelSanityWeight(ax_f, ay_f, az_f);
     // Scale the accel correction term by the sanity weight.
     // w=1: normal blend. w=0: pure gyro, no accel correction this tick.
+    
+    // accelBlend: how much weight the accel reference gets this tick.
+    // gyroBlend:  the remainder — always sums to 1.0 regardless of w.
+    //
+    // Without renormalization, when w < 1 (high-g event), the total blend
+    // drops below 1.0 and the angle slowly decays toward zero each tick.
+    // This introduces a transient bias that the controller would fight with
+    // a setpoint trim. With renormalization, the gyro absorbs whatever trust
+    // is removed from the accel — total blend is always exactly 1.0.
     float accelBlend = (1.0f - _cfg.alpha) * w;
+    float gyroBlend  = 1.0f - accelBlend;   // = alpha + (1-alpha)*(1-w)
 
     // --- Stage 3: Complementary blend ---
     if (!_seeded) {
@@ -242,8 +252,8 @@ IMUState StateEstimator::update(const RawIMUData& raw, float dt) {
     } else {
         float gyroPitch = _pitch + gy_rs * dt;
         float gyroRoll  = _roll  + gx_rs * dt;
-        _pitch = _cfg.alpha * gyroPitch + accelBlend * accelPitch;
-        _roll  = _cfg.alpha * gyroRoll  + accelBlend * accelRoll;
+        _pitch = gyroBlend * gyroPitch + accelBlend * accelPitch;
+        _roll  = gyroBlend * gyroRoll  + accelBlend * accelRoll;
     }
 
     _state.pitch     = _pitch;

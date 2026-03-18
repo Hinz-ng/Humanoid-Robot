@@ -63,7 +63,21 @@ void JointModel::setJointAngle(uint8_t jointId, float angleDeg, bool immediate) 
 
 void JointModel::moveToNeutral(bool immediate) {
     // Joint angle 0 = neutral by definition — no math needed.
+    //
+    // Channels in SKIP_BOOT_NEUTRAL_CHANNELS (joint_config.h) are intentionally
+    // skipped here. Their mounting orientation has not been confirmed; sending
+    // them to a "neutral" pulse before verification risks mechanical damage.
+    // Remove a channel from that list once its neutral position is physically
+    // verified.
     for (int i = 0; i < NUM_JOINTS; i++) {
+        bool skip = false;
+        for (uint8_t k = 0; k < SKIP_BOOT_NEUTRAL_COUNT; k++) {
+            if ((uint8_t)i == SKIP_BOOT_NEUTRAL_CHANNELS[k]) {
+                skip = true;
+                break;
+            }
+        }
+        if (skip) continue;
         setJointAngle(i, 0.0f, immediate);
     }
 }

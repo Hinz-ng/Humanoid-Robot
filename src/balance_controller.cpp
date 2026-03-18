@@ -102,16 +102,14 @@ BalanceState BalanceController::update(const IMUState& state) {
     float u_clamped = constrain(u_raw, -_cfg.max_correction_deg, _cfg.max_correction_deg);
 
     // --- Distribute to joints ---
-    // ankle_cmd: joint-relative degrees sent to both ankle pitch joints.
-    // hip_cmd:   joint-relative degrees sent to both hip pitch joints.
-    //
     // JointModel::setJointAngle handles the direction field for each joint,
     // so the same signed value correctly mirrors left and right joints.
     float ankle_cmd = u_clamped * _cfg.ankle_ratio;
     float hip_cmd   = u_clamped * _cfg.hip_ratio;
+    float torso_cmd = u_clamped * _cfg.torso_ratio;
 
     // --- Write to hardware ---
-    _applyPitchCorrection(ankle_cmd, hip_cmd);
+    _applyPitchCorrection(ankle_cmd, hip_cmd, torso_cmd);
 
     // --- Fill output state for telemetry ---
     out.active        = true;
@@ -120,6 +118,7 @@ BalanceState BalanceController::update(const IMUState& state) {
     out.u_clamped     = u_clamped;
     out.ankle_cmd_deg = ankle_cmd;
     out.hip_cmd_deg   = hip_cmd;
+    out.torso_cmd_deg = torso_cmd;
     out.fell          = false;
 
     _lastState = out;
@@ -127,11 +126,8 @@ BalanceState BalanceController::update(const IMUState& state) {
 }
 
 // ---------------------------------------------------------------------------
-void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg) {
+void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg, float torso_deg) {
     // ── Path A: MotionManager is wired (normal runtime path) ─────────────────
-    // submit() registers intent; main.cpp calls motionManager.flush() to
-    // dispatch. This means BALANCE authority is explicitly declared and can
-    // be overridden only by a higher-priority source (there is none currently).
     if (_motionManager) {
         _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_PITCH, ankle_deg);
         _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_PITCH, ankle_deg);
@@ -139,13 +135,16 @@ void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg) {
             _motionManager->submit(SOURCE_BALANCE, IDX_R_HIP_PITCH, hip_deg);
             _motionManager->submit(SOURCE_BALANCE, IDX_L_HIP_PITCH, hip_deg);
         }
+        // Torso pitch is a single joint (not bilateral like ankle/hip).
+        // Guard: skip the submit entirely when the ratio is zero to avoid
+        // pointlessly overwriting the torso joint target every tick.
+        if (fabsf(torso_deg) > 0.01f) {
+            _motionManager->submit(SOURCE_BALANCE, IDX_TORSO_PITCH, torso_deg);
+        }
         return;
     }
 
     // ── Path B: MotionManager absent — direct write fallback ─────────────────
-    // Preserved for unit tests or bring-up scenarios where MotionManager is
-    // intentionally not wired. Behaviour is identical to the pre-MotionManager
-    // implementation. This path should not appear in normal production builds.
     if (!_servo) return;
     Serial.println("[BalanceController] WARNING: MotionManager not wired — "
                    "using direct servo write. Wire setMotionManager() in setup().");
@@ -154,5 +153,8 @@ void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg) {
     if (fabsf(hip_deg) > 0.01f) {
         _servo->setJointAngleDirect(IDX_R_HIP_PITCH, hip_deg);
         _servo->setJointAngleDirect(IDX_L_HIP_PITCH, hip_deg);
+    }
+    if (fabsf(torso_deg) > 0.01f) {
+        _servo->setJointAngleDirect(IDX_TORSO_PITCH, torso_deg);
     }
 }

@@ -37,10 +37,16 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
     { 6,  "left_hip_pitch",      145.0f,   -1,   -25.0f,  +90.0f  },  // TUNE
     { 7,  "left_hip_yaw",        130.0f,   -1,   -50.0f,  +50.0f  },  // TUNE
    
-    {  8,  "unused_8",            135.0f,   +1,     0.0f,   0.0f   },
-    {  9,  "unused_9",            135.0f,   +1,     0.0f,   0.0f   },
-    {  10,  "unused_6",            135.0f,   +1,     0.0f,   0.0f   },
-    {  11,  "unused_7",            135.0f,   +1,     0.0f,   0.0f   },
+// ▼  TORSO  ────────────────────────────────────────────────────────────────
+//    Limits set to ±100° until mechanical end stops are measured.
+//    Direction = +1 for all three — UNVERIFIED. Confirm before enabling
+//    active balance control on IDX_TORSO_PITCH.
+//    These joints are excluded from boot-to-neutral (see SKIP_BOOT_NEUTRAL_CHANNELS).
+
+    {  8,  "torso_roll",          135.0f,   +1,  -100.0f, +100.0f  },  // TUNE — dir unverified
+    {  9,  "unused_9",            135.0f,   +1,     0.0f,   0.0f   },  // not yet assigned
+    { 10,  "torso_pitch",         135.0f,   +1,  -100.0f, +100.0f  },  // TUNE — dir unverified
+    { 11,  "torso_rotation",      135.0f,   +1,  -100.0f, +100.0f  },  // TUNE — dir unverified
 
 // ▼  LEFT LEG  ────────────────────────────────────────────────────────
 //    Note direction = −1 for mirrored joints.

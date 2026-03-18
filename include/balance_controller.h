@@ -19,14 +19,17 @@
 //   7. Only after ankle is stable: enable hip_ratio=0.2 and tune from there.
 //
 // RUNTIME TUNING (no reflash needed):
-//   Send via WebSocket: CMD:BALANCE_TUNE:Kp=12.0,Kd=0.6,setpoint=0.0,ankle=1.0,hip=0.0,max=15.0
+//   Send via WebSocket: CMD:BALANCE_TUNE:Kp=12.0,Kd=0.6,setpoint=0.0,ankle=0.8,hip=0.1,torso=0.1,max=15.0
+//   NOTE: ankle + hip + torso must sum to 1.0. Firmware normalises automatically.
 //   Toggle:             CMD:BALANCE_ON  /  CMD:BALANCE_OFF
 //
+
 // JOINT CHANNELS USED:
-//   IDX_R_ANKLE_PITCH (ch 1,  dir +1)
-//   IDX_L_ANKLE_PITCH (ch 14, dir -1)
-//   IDX_R_HIP_PITCH   (ch 5,  dir +1)   — only if hip_ratio > 0
-//   IDX_L_HIP_PITCH   (ch 10, dir -1)   — only if hip_ratio > 0
+//   IDX_R_ANKLE_PITCH  (ch 1,  dir +1)
+//   IDX_L_ANKLE_PITCH  (ch 14, dir -1)
+//   IDX_R_HIP_PITCH    (ch 5,  dir +1)  — only if hip_ratio > 0
+//   IDX_L_HIP_PITCH    (ch 6,  dir -1)  — only if hip_ratio > 0
+//   IDX_TORSO_PITCH    (ch 10, dir +1)  — only if torso_ratio > 0 (direction UNVERIFIED)
 //
 //   Direction is handled by JointModel — passing the same jointDeg value to
 //   both left and right joints moves them anatomically symmetrically.
@@ -67,13 +70,16 @@ struct BalanceConfig {
     float Kd                   = 0.5f;    // deg/(rad/s)
    
     // --- Joint distribution ---
-    // ankle_ratio: fraction of the control output applied to ankle pitch joints.
-    //              Start at 1.0 (full authority to ankles). Tune this first.
-    // hip_ratio:   fraction applied to hip pitch joints.
-    //              Start at 0.0. Enable only after ankles are stable.
-    //              Range 0.1–0.4. Hip assists with larger disturbances.
+    // Three ratios must sum to 1.0. Firmware normalises after every BALANCE_TUNE.
+    //
+    // ankle_ratio: fraction sent to ankle pitch joints. Start at 1.0. Tune first.
+    // hip_ratio:   fraction sent to hip pitch joints. Start at 0.0. Enable after
+    //              ankles are stable. Typical range: 0.1–0.4.
+    // torso_ratio: fraction sent to torso pitch joint. Start at 0.0. Enable last,
+    //              only after ankle + hip strategy is confirmed stable.
     float ankle_ratio          = 1.0f;
     float hip_ratio            = 0.0f;
+    float torso_ratio          = 0.0f;
 
     // --- Correction direction ---
     // +1.0: positive pitch (leaning forward) → positive joint correction (corrects lean).
@@ -105,6 +111,7 @@ struct BalanceState {
     float u_clamped     = 0.0f;   // PD output after clamping (deg). What joints receive.
     float ankle_cmd_deg = 0.0f;   // final command to each ankle pitch joint (deg from neutral)
     float hip_cmd_deg   = 0.0f;   // final command to each hip pitch joint (deg from neutral)
+    float torso_cmd_deg = 0.0f;   // final command to torso pitch joint (deg from neutral)
     bool  fell          = false;   // true if fall_threshold was exceeded this tick → ESTOP fired
 };
 
@@ -143,7 +150,7 @@ private:
     // Routes through MotionManager when wired (priority arbitration).
     // Falls back to direct ServoControl writes when MotionManager is absent
     // (preserves the pre-MotionManager behaviour for compatibility/testing).
-    void _applyPitchCorrection(float ankle_deg, float hip_deg);
+    void _applyPitchCorrection(float ankle_deg, float hip_deg, float torso_deg);
 };
 
 #endif // BALANCE_CONTROLLER_H

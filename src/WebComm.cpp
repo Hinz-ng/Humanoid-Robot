@@ -193,22 +193,26 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
     _lastBalanceBroadcast_us = now;
 
     const BalanceConfig& cfg = _balCtrl->getConfig();
-    // buf grows to 224 — add max and fell
-    char buf[224];
+    // buf grown to 256 to accommodate new torso fields (torso, torso_r).
+    char buf[256];
     snprintf(buf, sizeof(buf),
-        "BALANCE:enabled=%d,err=%.4f,u=%.3f,ankle=%.2f,hip=%.2f,Kp=%.3f,Kd=%.3f,sp=%.4f,ankle_r=%.2f,hip_r=%.2f,sign=%.1f,max=%.1f,fell=%d",
+        "BALANCE:enabled=%d,err=%.4f,u=%.3f,ankle=%.2f,hip=%.2f,torso=%.2f,"
+        "Kp=%.3f,Kd=%.3f,sp=%.4f,ankle_r=%.2f,hip_r=%.2f,torso_r=%.2f,"
+        "sign=%.1f,max=%.1f,fell=%d",
         (int)state.active,
         state.pitch_error,
         state.u_clamped,
         state.ankle_cmd_deg,
         state.hip_cmd_deg,
+        state.torso_cmd_deg,
         cfg.Kp, cfg.Kd,
         cfg.pitch_setpoint_rad,
         cfg.ankle_ratio,
         cfg.hip_ratio,
+        cfg.torso_ratio,
         cfg.correction_sign,
-        cfg.max_correction_deg,   // now broadcast — UI can sync max slider on reconnect
-        (int)state.fell            // now broadcast — UI can show fell state
+        cfg.max_correction_deg,
+        (int)state.fell
     );
     ws.textAll(buf);
 }
@@ -348,14 +352,30 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         else if (key == "setpoint") cfg.pitch_setpoint_rad    = val;
                         else if (key == "ankle")    cfg.ankle_ratio           = val;
                         else if (key == "hip")      cfg.hip_ratio             = val;
+                        else if (key == "torso")    cfg.torso_ratio           = val;
                         else if (key == "max")      cfg.max_correction_deg    = val;
                         else if (key == "sign")     cfg.correction_sign       = val;
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
+                // --- Normalise ratios so ankle + hip + torso always sum to 1.0 ---
+                // This is enforced here (single source of truth) so any sender
+                // — UI, serial, or future script — is automatically corrected.
+                float ratioSum = cfg.ankle_ratio + cfg.hip_ratio + cfg.torso_ratio;
+                if (ratioSum > 1e-3f) {
+                    cfg.ankle_ratio /= ratioSum;
+                    cfg.hip_ratio   /= ratioSum;
+                    cfg.torso_ratio /= ratioSum;
+                } else {
+                    // All three at zero — clamp ankle to 1 as a safe fallback.
+                    // This prevents a silent "no joints actuated" state.
+                    Serial.println("[WebComm] BALANCE_TUNE: all ratios zero — clamping ankle=1.0");
+                    cfg.ankle_ratio = 1.0f;
+                }
                 _balCtrl->setConfig(cfg);
-                Serial.printf("[WebComm] BALANCE_TUNE: Kp=%.3f Kd=%.3f sp=%.4f\n",
-                               cfg.Kp, cfg.Kd, cfg.pitch_setpoint_rad);
+                Serial.printf("[WebComm] BALANCE_TUNE: Kp=%.3f Kd=%.3f sp=%.4f  ankle=%.2f hip=%.2f torso=%.2f\n",
+                               cfg.Kp, cfg.Kd, cfg.pitch_setpoint_rad,
+                               cfg.ankle_ratio, cfg.hip_ratio, cfg.torso_ratio);
             }
         }
         else if (cmd == "CLEAR_ESTOP") {

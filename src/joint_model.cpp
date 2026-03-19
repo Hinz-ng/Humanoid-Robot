@@ -64,11 +64,11 @@ void JointModel::setJointAngle(uint8_t jointId, float angleDeg, bool immediate) 
 void JointModel::moveToNeutral(bool immediate) {
     // Joint angle 0 = neutral by definition — no math needed.
     //
-    // Channels in SKIP_BOOT_NEUTRAL_CHANNELS (joint_config.h) are intentionally
-    // skipped here. Their mounting orientation has not been confirmed; sending
-    // them to a "neutral" pulse before verification risks mechanical damage.
-    // Remove a channel from that list once its neutral position is physically
-    // verified.
+    // Channels in SKIP_BOOT_NEUTRAL_CHANNELS (joint_config.h) are handled
+    // separately below. Their mounting orientation has not been confirmed;
+    // sending them to a "neutral" pulse before verification risks mechanical
+    // damage. Remove a channel from that list once its neutral position is
+    // physically verified.
     for (int i = 0; i < NUM_JOINTS; i++) {
         bool skip = false;
         for (uint8_t k = 0; k < SKIP_BOOT_NEUTRAL_COUNT; k++) {
@@ -77,20 +77,34 @@ void JointModel::moveToNeutral(bool immediate) {
                 break;
             }
         }
-        // prime PCA9685 registers with a safe pulse before OE releases,
-// even though these channels are excluded from the motion queue.
-// Without this write, the PCA9685 holds its power-on or last-session
-// register state; when OE goes LOW after the boot hold, every skipped
-// servo snaps to that undefined position simultaneously.
-if (skip) {
-    int pulse = ServoDriver::degToPulse(JOINT_CONFIG[i].neutralDeg);
-    _currentPulse[i] = static_cast<float>(pulse);
-    _targetPulse[i]  = static_cast<uint16_t>(pulse);
-    if (_driver != nullptr) {
-        _driver->setServoPulse(i, pulse);
-    }
-    continue;
-}
+
+        if (skip) {
+            // Set firmware state to neutral for coherence — when this channel is
+            // first explicitly commanded (UI slider or controller), the smooth-stepper
+            // steps from neutralPulse rather than SD_USMIN (0°), preventing a violent
+            // snap to minimum position on the first write.
+            //
+            // Do NOT write to hardware. After ServoDriver::init(), the PCA9685 has
+            // been reset: all channel registers are 0, which outputs no valid servo
+            // pulse (below the 500µs minimum threshold recognised by hobby servos).
+            // The servo holds its physical position under no torque until explicitly
+            // commanded. This is the correct behaviour for unverified channels.
+            //
+            // WHY NOT write a neutral pulse here:
+            //   OE is HIGH when moveToNeutral() runs, so the servo cannot move yet.
+            //   But the PCA9685 register still holds whatever was last written.
+            //   When OE releases (1000ms later), the servo snaps to that register
+            //   value — even if the register was written while OE was HIGH.
+            //   Writing 1500µs here would cause the servo to snap to 135° on OE
+            //   release regardless of its current physical position. For unverified
+            //   channels this is dangerous. Leave the register at 0 (no pulse).
+            int pulse = ServoDriver::degToPulse(JOINT_CONFIG[i].neutralDeg);
+            _currentPulse[i] = static_cast<float>(pulse);
+            _targetPulse[i]  = static_cast<uint16_t>(pulse);
+            // Hardware write intentionally omitted — see comment above.
+            continue;
+        }
+
         setJointAngle(i, 0.0f, immediate);
     }
 }
@@ -180,8 +194,8 @@ void JointModel::update() {
     float servoAngle = jc.neutralDeg + (float)jc.direction * angleDeg;
 
     // Hardware bounds — servoAngle must stay within 0°–270°.
-    if (servoAngle < 0.0f)          servoAngle = 0.0f;
-    if (servoAngle > SD_ANGLE_RANGE) servoAngle = SD_ANGLE_RANGE;
+    if (servoAngle < 0.0f)           servoAngle = 0.0f;
+    if (servoAngle > SD_ANGLE_RANGE)  servoAngle = SD_ANGLE_RANGE;
 
     return ServoDriver::degToPulse(servoAngle);
 }

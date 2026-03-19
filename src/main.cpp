@@ -21,18 +21,23 @@ WebComm           webComm(&servoController);
 StateEstimator    stateEstimator;
 BalanceController balanceController(&servoController);
 MotionManager     motionManager;   // joint authority layer — wired in setup()
+
 // =============================================================================
 //  OE CONTROL IMPLEMENTATION
 //  Declared extern in oe_control.h so WebComm.cpp can call oe_estop/oe_clear.
 // =============================================================================
 
 static unsigned long _oe_boot_start = 0;
+
 // volatile required: these flags cross FreeRTOS task boundaries.
 // The WiFi task reads _oe_estopped; the main loop writes it (and vice versa).
 // Without volatile the compiler is permitted to cache the value and never
 // re-read memory, making the flag update invisible to the other task.
 static volatile bool _oe_released   = false;
 static volatile bool _oe_estopped   = false;
+
+// Single definition of oe_is_estopped(). Cast from volatile bool to bool is
+// explicit so the compiler cannot optimise away the memory read.
 bool oe_is_estopped() {
     return static_cast<bool>(_oe_estopped) || !static_cast<bool>(_oe_released);
 }
@@ -75,10 +80,6 @@ void oe_clear() {
     Serial.println("[OE] E-stop cleared — targets reset to neutral. Outputs ENABLED (OE=LOW).");
 }
 
-bool oe_is_estopped() {
-    return _oe_estopped || !_oe_released;
-}
-
 // =============================================================================
 //  SETUP
 // =============================================================================
@@ -95,6 +96,7 @@ void setup() {
     stateEstimator.reset();       // starts calibration countdown
     webComm.setStateEstimator(&stateEstimator);
     balanceController.init();
+
     // Wire MotionManager — must come after servoController.init() because
     // init() stores a pointer to servoController (no hardware calls yet).
     motionManager.init(&servoController);
@@ -114,17 +116,17 @@ void loop() {
     oe_loop();
     servoController.update();
 
-// Periodic joint-position state broadcast — 10 Hz.
-// Keeps the UI sliders in sync with the balance controller's live output
-// without requiring user interaction. Rate-limited to reduce WebSocket load.
-{
-    static uint32_t _lastStateBroadcastMs = 0;
-    const uint32_t  STATE_BROADCAST_INTERVAL_MS = 100;  // 10 Hz
-    if (millis() - _lastStateBroadcastMs >= STATE_BROADCAST_INTERVAL_MS) {
-        _lastStateBroadcastMs = millis();
-        webComm.broadcastState();
+    // Periodic joint-position state broadcast — 10 Hz.
+    // Keeps the UI sliders in sync with the balance controller's live output
+    // without requiring user interaction. Rate-limited to reduce WebSocket load.
+    {
+        static uint32_t _lastStateBroadcastMs = 0;
+        const uint32_t  STATE_BROADCAST_INTERVAL_MS = 100;  // 10 Hz
+        if (millis() - _lastStateBroadcastMs >= STATE_BROADCAST_INTERVAL_MS) {
+            _lastStateBroadcastMs = millis();
+            webComm.broadcastState();
+        }
     }
-}
 
     // 400 Hz gate: only reads IMU and runs estimator every 2500 µs.
     // WebSocket/servo tasks above still run every loop() iteration (no rate limit).
@@ -133,19 +135,20 @@ void loop() {
         static const uint32_t ESTIMATOR_INTERVAL_US = 2500;
         static uint32_t _lastEstimatorMicros = micros();
 
-// capture timestamp as close to the sensor read as possible.
-// _now is used for the gate check; a second sample _readNow is taken
-// immediately before IMU_update() to give dt the tightest possible
-// correlation with actual sensor integration time.
-uint32_t _now = micros();
-if ((_now - _lastEstimatorMicros) >= ESTIMATOR_INTERVAL_US) {
-    uint32_t _readNow = micros();          // capture just before sensor read
-    float dt = (_readNow - _lastEstimatorMicros) * 1e-6f;
-    _lastEstimatorMicros = _readNow;       // anchor to sensor-read timestamp
-    RawIMUData raw = IMU_update();
+        // _now is used for the gate check only.
+        // _readNow is sampled immediately before IMU_update() so that dt
+        // reflects actual sensor integration time, not WiFi/servo processing.
+        uint32_t _now = micros();
+        if ((_now - _lastEstimatorMicros) >= ESTIMATOR_INTERVAL_US) {
+            uint32_t _readNow = micros();          // capture just before sensor read
+            float dt = (_readNow - _lastEstimatorMicros) * 1e-6f;
+            _lastEstimatorMicros = _readNow;       // anchor to sensor-read timestamp
+
+            RawIMUData raw   = IMU_update();
             IMUState   state = stateEstimator.update(raw, dt);
 
             BalanceState balState = balanceController.update(state);
+
             // Flush after ALL sources have submitted for this tick:
             //   balanceController.update() → submit(SOURCE_BALANCE, ...)
             //   WebSocket slider events   → submit(SOURCE_UI, ...)  [already queued]

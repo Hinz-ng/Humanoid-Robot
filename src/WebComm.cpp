@@ -6,12 +6,10 @@
 #include "motion_manager.h"    // MotionSource, MotionManager::submit()
 
 // Constructor ---------------------------------------------------------------
-// AFTER:
-// AFTER:
 WebComm::WebComm(ServoControl* servo)
     : server(80), ws("/ws"), _servoCtrl(servo), _stateEst(nullptr) {
 }
-// ADD this function after the constructor closing brace:
+
 void WebComm::setStateEstimator(StateEstimator* stateEst) {
     _stateEst = stateEst;
 }
@@ -19,6 +17,7 @@ void WebComm::setStateEstimator(StateEstimator* stateEst) {
 void WebComm::setBalanceController(BalanceController* bal) {
     _balCtrl = bal;
 }
+
 void WebComm::setMotionManager(MotionManager* mm) {
     _motionManager = mm;
 }
@@ -86,8 +85,6 @@ void WebComm::broadcastState() {
 // =============================================================================
 
 void WebComm::broadcastJointInfo() {
-    // Now reads from JOINT_CONFIG (the canonical config table in joint_config.h).
-    // neutral_pulse is computed on the fly from neutralDeg — no separate field needed.
     String msg = "JOINTS:";
     for (int i = 0; i < NUM_JOINTS; i++) {
         const JointConfig& j = JOINT_CONFIG[i];
@@ -96,17 +93,16 @@ void WebComm::broadcastJointInfo() {
              + String(j.name)              + "|"
              + String(neutral_pulse)       + "|"
              + String(j.neutralDeg, 1)     + "|"
-             + String(j.direction);        // direction replaces ui_direction_hint
+             + String(j.direction);
         if (i < NUM_JOINTS - 1) msg += ",";
     }
     ws.textAll(msg);
 }
 
 // =============================================================================
-//  IMU BROADCAST                                                   --- ADD ---
+//  IMU BROADCAST
 //  Protocol: "IMU:ax=X,ay=Y,az=Z,gx=X,gy=Y,gz=Z"
-//  Rate-limited to 20 Hz internally. Skips silently if no clients
-//  are connected or the data struct is marked invalid.
+//  Rate-limited to 20 Hz internally.
 // =============================================================================
 
 void WebComm::broadcastIMU(RawIMUData data) {
@@ -125,12 +121,13 @@ void WebComm::broadcastIMU(RawIMUData data) {
     );
     ws.textAll(buf);
 }
+
 // =============================================================================
-//  ESTIMATE BROADCAST                                              --- ADD ---
+//  ESTIMATE BROADCAST
 //  Protocol: "ESTIMATE:pitch=X,roll=X,pitchRate=X,rollRate=X"
-//  Values: pitch/roll in radians (4 decimal places), rates in rad/s.
-//  Rate-limited to 20 Hz — same cadence as raw IMU broadcast.
+//  Rate-limited to 20 Hz.
 // =============================================================================
+
 void WebComm::broadcastEstimate(IMUState state) {
     if (!state.valid || ws.count() == 0) return;
 
@@ -148,8 +145,9 @@ void WebComm::broadcastEstimate(IMUState state) {
 }
 
 // =============================================================================
-//  CALIBRATION STATUS BROADCAST                                   --- ADD ---
-// AFTER:
+//  CALIBRATION STATUS BROADCAST
+// =============================================================================
+
 void WebComm::broadcastCalibStatus(CalibState state, float progress) {
     if (ws.count() == 0) return;
 
@@ -159,8 +157,6 @@ void WebComm::broadcastCalibStatus(CalibState state, float progress) {
     if (state != CALIB_DONE && (now - _lastCalibBroadcast_us) < INTERVAL_US) return;
     _lastCalibBroadcast_us = now;
 
-    // remaining_s is only meaningful during COLLECTING (known sample count / rate).
-    // During WAITING, remaining is undefined — send -1 so the UI can show "waiting" text.
     const float CALIB_TOTAL_S = (float)FilterConfig::CALIB_SAMPLES / 400.0f;
     float remaining_s;
     const char* stateStr;
@@ -171,9 +167,8 @@ void WebComm::broadcastCalibStatus(CalibState state, float progress) {
         stateStr    = "collecting";
         remaining_s = CALIB_TOTAL_S * (1.0f - progress);
     } else {
-        // CALIB_WAITING — robot is moving, unknown duration
         stateStr    = "waiting";
-        remaining_s = CALIB_TOTAL_S;   // show full duration as "will take ~Xs once still"
+        remaining_s = CALIB_TOTAL_S;
     }
 
     char buf[80];
@@ -184,6 +179,10 @@ void WebComm::broadcastCalibStatus(CalibState state, float progress) {
     ws.textAll(buf);
 }
 
+// =============================================================================
+//  BALANCE STATE BROADCAST
+// =============================================================================
+
 void WebComm::broadcastBalanceState(const BalanceState& state) {
     if (ws.count() == 0 || _balCtrl == nullptr) return;
 
@@ -193,7 +192,6 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
     _lastBalanceBroadcast_us = now;
 
     const BalanceConfig& cfg = _balCtrl->getConfig();
-    // buf grown to 256 to accommodate new torso fields (torso, torso_r).
     char buf[256];
     snprintf(buf, sizeof(buf),
         "BALANCE:enabled=%d,err=%.4f,u=%.3f,ankle=%.2f,hip=%.2f,torso=%.2f,"
@@ -223,7 +221,6 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
 
 void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
                       AwsEventType type, void* arg, uint8_t* data, size_t len) {
-    // AFTER:
     if (type == WS_EVT_CONNECT) {
         Serial.printf("[WebComm] Client #%u connected\n", client->id());
         if (_servoCtrl) {
@@ -236,7 +233,7 @@ void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
         // would never receive a CALIB packet and the bar stays at 0%.
         if (_stateEst) {
             char buf[80];
-            CalibState cs  = _stateEst->getCalibState();
+            CalibState cs   = _stateEst->getCalibState();
             float      prog = _stateEst->getCalibProgress();
             const float CALIB_TOTAL_S = (float)FilterConfig::CALIB_SAMPLES / 400.0f;
             float remaining_s = (cs == CALIB_DONE) ? 0.0f : CALIB_TOTAL_S * (1.0f - prog);
@@ -266,7 +263,6 @@ void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
 // =============================================================================
 
 void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
-    // Build String from explicit length to avoid buffer overrun or missing null terminator.
     String message((const char*)data, len);
     if (!_servoCtrl) return;
 
@@ -275,37 +271,48 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
     if (message.startsWith("CMD:")) {
         String cmd = message.substring(4);
 
+        // ---------------------------------------------------------------------
+        //  RESETP — return all verified joints to neutral standing pose.
+        //  Channels in SKIP_BOOT_NEUTRAL_CHANNELS are excluded: their mounting
+        //  orientation has not been physically confirmed; commanding an unverified
+        //  neutral risks mechanical damage.
+        //  Routes through MotionManager so SOURCE_UI authority applies correctly:
+        //  if the balance controller is active it wins on shared joints.
+        // ---------------------------------------------------------------------
         if (cmd == "RESETP") {
             for (int i = 0; i < NUM_JOINTS; i++) {
-        bool skip = false;
-        for (uint8_t k = 0; k < SKIP_BOOT_NEUTRAL_COUNT; k++) {
-            if (static_cast<uint8_t>(i) == SKIP_BOOT_NEUTRAL_CHANNELS[k]) {
-                skip = true;
-                break;
+                bool skip = false;
+                for (uint8_t k = 0; k < SKIP_BOOT_NEUTRAL_COUNT; k++) {
+                    if (static_cast<uint8_t>(i) == SKIP_BOOT_NEUTRAL_CHANNELS[k]) {
+                        skip = true;
+                        break;
+                    }
+                }
+                if (!skip) {
+                    if (_motionManager) {
+                        // Route through authority layer so RESETP competes correctly with
+                        // any active controller. SOURCE_UI loses to SOURCE_BALANCE, so if
+                        // balance is active, the correction wins — which is correct.
+                        _motionManager->submit(SOURCE_UI,
+                                               static_cast<uint8_t>(i),
+                                               JOINT_CONFIG[i].neutralDeg);
+                    } else {
+                        _servoCtrl->setGaitOffset(i, 0.0f);
+                    }
+                }
             }
+            broadcastState();
         }
-        // Replace the direct setGaitOffset call with MotionManager submission:
-if (!skip) {
-    if (_motionManager) {
-        // Route through authority layer so RESETP competes correctly with
-        // any active controller. SOURCE_UI loses to SOURCE_BALANCE, so if
-        // balance is active, the correction wins — which is correct.
-        _motionManager->submit(SOURCE_UI,
-                               static_cast<uint8_t>(i),
-                               JOINT_CONFIG[i].neutralDeg);
-    } else {
-        _servoCtrl->setGaitOffset(i, 0.0f);
-    }
-}
-    broadcastState();
-}
+        // ---------------------------------------------------------------------
         else if (cmd.startsWith("LOAD:")) {
             _servoCtrl->loadPose(cmd.substring(5));
             broadcastState();
         }
-        // Named movement
-        // Protocol: CMD:MOVE_NAMED:<channel>:<movement>:<magnitude>
-        // Example:  CMD:MOVE_NAMED:2:flex:45.5
+        // ---------------------------------------------------------------------
+        //  Named movement
+        //  Protocol: CMD:MOVE_NAMED:<channel>:<movement>:<magnitude>
+        //  Example:  CMD:MOVE_NAMED:2:flex:45.5
+        // ---------------------------------------------------------------------
         else if (cmd.startsWith("MOVE_NAMED:")) {
             String params = cmd.substring(11);
             int sep1 = params.indexOf(':');
@@ -324,14 +331,18 @@ if (!skip) {
                 Serial.printf("[WebComm] MOVE_NAMED parse error: params='%s'\n", params.c_str());
             }
         }
-        // Emergency Stop
+        // ---------------------------------------------------------------------
+        //  Emergency Stop
+        // ---------------------------------------------------------------------
         else if (cmd == "ESTOP") {
             oe_estop();
             broadcastState();
             ws.textAll("ESTOP:ACTIVE");
             Serial.println("[WebComm] CMD: ESTOP received — outputs disabled");
         }
-        // AFTER:
+        // ---------------------------------------------------------------------
+        //  Balance controller enable / disable
+        // ---------------------------------------------------------------------
         else if (cmd == "BALANCE_ON") {
             if (_balCtrl) {
                 BalanceConfig cfg = _balCtrl->getConfig();
@@ -348,7 +359,9 @@ if (!skip) {
             }
             Serial.println("[WebComm] CMD: BALANCE_OFF");
         }
-        // AFTER (complete replacement — all braces balanced):
+        // ---------------------------------------------------------------------
+        //  Balance tuning — parses key=value pairs, normalises ratios
+        // ---------------------------------------------------------------------
         else if (cmd.startsWith("BALANCE_TUNE:")) {
             if (_balCtrl) {
                 BalanceConfig cfg = _balCtrl->getConfig();
@@ -362,18 +375,18 @@ if (!skip) {
                     if (eq != -1) {
                         String key = pair.substring(0, eq);
                         float  val = pair.substring(eq + 1).toFloat();
-                        if      (key == "Kp")       cfg.Kp                    = val;
-                        else if (key == "Kd")       cfg.Kd                    = val;
-                        else if (key == "setpoint") cfg.pitch_setpoint_rad    = val;
-                        else if (key == "ankle")    cfg.ankle_ratio           = val;
-                        else if (key == "hip")      cfg.hip_ratio             = val;
-                        else if (key == "torso")    cfg.torso_ratio           = val;
-                        else if (key == "max")      cfg.max_correction_deg    = val;
-                        else if (key == "sign")     cfg.correction_sign       = val;
+                        if      (key == "Kp")       cfg.Kp                 = val;
+                        else if (key == "Kd")       cfg.Kd                 = val;
+                        else if (key == "setpoint") cfg.pitch_setpoint_rad = val;
+                        else if (key == "ankle")    cfg.ankle_ratio        = val;
+                        else if (key == "hip")      cfg.hip_ratio          = val;
+                        else if (key == "torso")    cfg.torso_ratio        = val;
+                        else if (key == "max")      cfg.max_correction_deg = val;
+                        else if (key == "sign")     cfg.correction_sign    = val;
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
-                // --- Normalise ratios so ankle + hip + torso always sum to 1.0 ---
+                // Normalise ratios so ankle + hip + torso always sum to 1.0.
                 // This is enforced here (single source of truth) so any sender
                 // — UI, serial, or future script — is automatically corrected.
                 float ratioSum = cfg.ankle_ratio + cfg.hip_ratio + cfg.torso_ratio;
@@ -383,7 +396,7 @@ if (!skip) {
                     cfg.torso_ratio /= ratioSum;
                 } else {
                     // All three at zero — clamp ankle to 1 as a safe fallback.
-                    // This prevents a silent "no joints actuated" state.
+                    // Prevents a silent "no joints actuated" state.
                     Serial.println("[WebComm] BALANCE_TUNE: all ratios zero — clamping ankle=1.0");
                     cfg.ankle_ratio = 1.0f;
                 }
@@ -393,6 +406,9 @@ if (!skip) {
                                cfg.ankle_ratio, cfg.hip_ratio, cfg.torso_ratio);
             }
         }
+        // ---------------------------------------------------------------------
+        //  Clear E-stop
+        // ---------------------------------------------------------------------
         else if (cmd == "CLEAR_ESTOP") {
             oe_clear();
             broadcastState();
@@ -400,26 +416,27 @@ if (!skip) {
             Serial.println("[WebComm] CMD: CLEAR_ESTOP received — outputs enabled");
         }
     }
+    // -------------------------------------------------------------------------
+    //  Pose save
+    // -------------------------------------------------------------------------
     else if (message.startsWith("SAVE:")) {
         _servoCtrl->saveCurrentPose(message.substring(5));
         ws.textAll(_servoCtrl->listPoses());
-    } else {
-        // Slider control: "<channel>:<angle_degrees>" (existing protocol unchanged).
-        // Route through MotionManager when wired so UI authority is explicitly
-        // declared at SOURCE_UI priority. Any active controller (BALANCE, GAIT)
-        // will silently override shared joints — no code change needed in either
-        // controller to suppress UI when active.
+    }
+    // -------------------------------------------------------------------------
+    //  Slider control: "<channel>:<angle_degrees>"
+    //  Routes through MotionManager so SOURCE_UI authority is declared correctly.
+    //  Any active controller (BALANCE, GAIT) will silently override shared joints.
+    // -------------------------------------------------------------------------
+    else {
         int sep = message.indexOf(':');
         if (sep != -1) {
             uint8_t ch    = (uint8_t)message.substring(0, sep).toInt();
             float   angle = message.substring(sep + 1).toFloat();
 
             if (_motionManager) {
-                // Preferred path: submit as SOURCE_UI. flush() dispatches via
-                // setTargetAngle() which preserves smooth-stepping behaviour.
                 _motionManager->submit(SOURCE_UI, ch, angle);
             } else {
-                // Fallback: direct write (pre-MotionManager behaviour preserved).
                 _servoCtrl->setTargetAngle(ch, angle);
             }
             broadcastState();

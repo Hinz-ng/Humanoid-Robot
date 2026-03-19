@@ -4,7 +4,7 @@
 // Scope   : Raw data only. No filtering. No orientation math.
 //
 // Hardware assumptions:
-//   - BMI160 connected via I2C on GPIO 17 (SDA) / GPIO 18 (SCL)
+//   - BMI160 connected via I2C on GPIO 8 (SDA) / GPIO 9 (SCL)
 //   - SA0 pin tied to GND  →  I2C address = 0x68
 //
 // Output: Raw values are returned from IMU_update() for the caller to
@@ -14,8 +14,12 @@
 #include "imu.h"
 #include <BMI160Gen.h>
 
-static const int IMU_SDA_PIN = 8;   // shared I2C bus with PCA9685
-static const int IMU_SCL_PIN = 9;   // servoController.init() calls Wire.begin(8,9)
+// Both PCA9685 and BMI160 share the SAME Wire bus on GPIO 8 (SDA) / 9 (SCL).
+// Wire.begin(8,9) is called once in ServoControl::init(). The BMI160Gen
+// library calls Wire.begin() internally — on ESP32 this is a no-op when the
+// bus is already initialized, so the pin configuration is preserved.
+static const int IMU_SDA_PIN = 8;
+static const int IMU_SCL_PIN = 9;
 static const uint8_t BMI160_I2C_ADDR  = 0x68;
 
 static bool       _initialized = false;
@@ -29,7 +33,10 @@ static RawIMUData _latestData  = {};
 bool IMU_init() {
     // Wire.begin(8, 9) is already called by servoController.init() before
     // IMU_init(). The library reuses that bus via the SDA pin number arg.
-    bool ok = BMI160.begin(BMI160GenClass::I2C_MODE, BMI160_I2C_ADDR, IMU_SDA_PIN);
+    // pass -1 as interrupt pin: BMI160Gen checks (0 <= arg2) before
+// calling digitalPinToInterrupt(), so -1 suppresses registration entirely.
+// The BMI160 is polled at 400 Hz via getMotion6(); no data-ready interrupt is used.
+    bool ok = BMI160.begin(BMI160GenClass::I2C_MODE, BMI160_I2C_ADDR, /*intr_pin=*/-1);
     if (!ok) {
         Serial.println("[IMU] ERROR: BMI160 not found. Check wiring and SA0 pin.");
         Serial.printf("[IMU]   SDA: GPIO %d  SCL: GPIO %d\n", IMU_SDA_PIN, IMU_SCL_PIN);

@@ -77,7 +77,20 @@ void JointModel::moveToNeutral(bool immediate) {
                 break;
             }
         }
-        if (skip) continue;
+        // prime PCA9685 registers with a safe pulse before OE releases,
+// even though these channels are excluded from the motion queue.
+// Without this write, the PCA9685 holds its power-on or last-session
+// register state; when OE goes LOW after the boot hold, every skipped
+// servo snaps to that undefined position simultaneously.
+if (skip) {
+    int pulse = ServoDriver::degToPulse(JOINT_CONFIG[i].neutralDeg);
+    _currentPulse[i] = static_cast<float>(pulse);
+    _targetPulse[i]  = static_cast<uint16_t>(pulse);
+    if (_driver != nullptr) {
+        _driver->setServoPulse(i, pulse);
+    }
+    continue;
+}
         setJointAngle(i, 0.0f, immediate);
     }
 }

@@ -168,3 +168,10 @@ String ServoControl::listPoses() {
     }
     return list;
 }
+
+void ServoControl::resetToNeutral() {
+    // immediate=true: writes _currentPulse, _targetPulse, AND hardware registers
+    // in one call. This ensures the smooth-stepper has nothing to chase when
+    // OE goes LOW immediately after this returns.
+    _model.moveToNeutral(/*immediate=*/true);
+}

@@ -196,11 +196,20 @@ IMUState StateEstimator::update(const RawIMUData& raw, float dt) {
     // ESTIMATION PHASE
     // -----------------------------------------------------------------------
 
-    // dt sanity guard: reject stale or implausible timesteps.
-    if (dt <= 0.0f || dt > 0.05f) {
-        _state.valid = false;
-        return _state;
-    }
+// cap rather than invalidate.
+// A dt that is slightly too large (slow tick from WiFi/I2C) still produces
+// a usable estimate; complete invalidation forces the balance controller
+// offline for the whole tick and risks cascading if multiple slow ticks
+// occur in sequence. Lower bound guard (dt <= 0) still hard-rejects
+// pathological values (clock rollover not yet applied, duplicate call, etc.).
+if (dt <= 0.0f) {
+    _state.valid = false;
+    return _state;
+}
+// Cap dt at 50ms (20 Hz equivalent). At 400 Hz nominal, any single tick
+// over 50ms indicates a scheduling anomaly — the cap prevents the gyro
+// integrator from producing a large spurious angle step.
+if (dt > 0.05f) dt = 0.05f;
 
     // --- Stage 1: Scale + bias subtract + deadband ---
     float ax_g, ay_g, az_g, gx_rs, gy_rs, gz_rs;

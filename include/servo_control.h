@@ -88,6 +88,12 @@ public:
     void   loadPose(String name);
     String listPoses();
 
+    // Reset all joints to neutral and prime PCA9685 registers with safe values.
+// Must be called before re-enabling OE after any e-stop or fall event.
+// Uses immediate=true so _currentPulse, _targetPulse, and hardware registers
+// are all synchronised before the caller sets OE LOW.
+void resetToNeutral();
+
 private:
     // The two owned layers — constructed in-place (not heap allocated).
     ServoDriver _driver;  // Layer 1: PCA9685 communication

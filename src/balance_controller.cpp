@@ -73,13 +73,20 @@ BalanceState BalanceController::update(const IMUState& state) {
     // completely unrecoverable. Fire ESTOP to protect servos from holding
     // max torque against the floor indefinitely.
     if (fabsf(state.pitch) > _cfg.fall_threshold_rad) {
-        oe_estop();
-        out.fell = true;
-        Serial.printf("[BalanceController] FALL DETECTED: |pitch|=%.3f rad > threshold=%.3f → ESTOP\n",
-                      state.pitch, _cfg.fall_threshold_rad);
-        _lastState = out;
-        return out;
+       oe_estop();
+    // Pre-load neutral pulse values into PCA9685 registers and _targetPulse
+    // while OE is now HIGH. This ensures that if oe_clear() is called later,
+    // oe_clear()'s own resetToNeutral() sees a consistent state, and the
+    // smooth-stepper has nothing to chase when outputs re-enable.
+    if (_servo != nullptr) {
+        _servo->resetToNeutral();
     }
+    out.fell = true;
+    Serial.printf("[BalanceController] FALL DETECTED: |pitch|=%.3f rad > threshold=%.3f → ESTOP\n",
+                  state.pitch, _cfg.fall_threshold_rad);
+    _lastState = out;
+    return out;
+}
 
     // --- PD computation ---
     //

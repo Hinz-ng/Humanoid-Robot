@@ -276,14 +276,29 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         String cmd = message.substring(4);
 
         if (cmd == "RESETP") {
-            Serial.println("[WebComm] CMD: Reset Neutral");
             for (int i = 0; i < NUM_JOINTS; i++) {
-                // Use JOINT_CONFIG (new SSOT) instead of legacy JOINT_MAP.
-                // setGaitOffset(ch, 0) moves to neutral with zero offset.
-                _servoCtrl->setGaitOffset(i, 0.0f);
+        bool skip = false;
+        for (uint8_t k = 0; k < SKIP_BOOT_NEUTRAL_COUNT; k++) {
+            if (static_cast<uint8_t>(i) == SKIP_BOOT_NEUTRAL_CHANNELS[k]) {
+                skip = true;
+                break;
             }
-            broadcastState();
         }
+        // Replace the direct setGaitOffset call with MotionManager submission:
+if (!skip) {
+    if (_motionManager) {
+        // Route through authority layer so RESETP competes correctly with
+        // any active controller. SOURCE_UI loses to SOURCE_BALANCE, so if
+        // balance is active, the correction wins — which is correct.
+        _motionManager->submit(SOURCE_UI,
+                               static_cast<uint8_t>(i),
+                               JOINT_CONFIG[i].neutralDeg);
+    } else {
+        _servoCtrl->setGaitOffset(i, 0.0f);
+    }
+}
+    broadcastState();
+}
         else if (cmd.startsWith("LOAD:")) {
             _servoCtrl->loadPose(cmd.substring(5));
             broadcastState();

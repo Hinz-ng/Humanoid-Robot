@@ -27,8 +27,15 @@ MotionManager     motionManager;   // joint authority layer — wired in setup()
 // =============================================================================
 
 static unsigned long _oe_boot_start = 0;
-static bool          _oe_released   = false;
-static bool          _oe_estopped   = false;
+// volatile required: these flags cross FreeRTOS task boundaries.
+// The WiFi task reads _oe_estopped; the main loop writes it (and vice versa).
+// Without volatile the compiler is permitted to cache the value and never
+// re-read memory, making the flag update invisible to the other task.
+static volatile bool _oe_released   = false;
+static volatile bool _oe_estopped   = false;
+bool oe_is_estopped() {
+    return static_cast<bool>(_oe_estopped) || !static_cast<bool>(_oe_released);
+}
 
 void oe_begin() {
     pinMode(OE_PIN, OUTPUT);
@@ -56,10 +63,16 @@ void oe_estop() {
 }
 
 void oe_clear() {
+    // CRITICAL ORDER: reset servo state BEFORE enabling outputs.
+    // Any stale target values accumulated during estop (balance corrections,
+    // UI slider commands, fall-detection peaks) would otherwise snap all
+    // joints simultaneously the moment OE goes LOW.
+    servoController.resetToNeutral();
+
     _oe_estopped = false;
     _oe_released = true;
     digitalWrite(OE_PIN, LOW);
-    Serial.println("[OE] E-stop cleared. Outputs ENABLED (OE=LOW).");
+    Serial.println("[OE] E-stop cleared — targets reset to neutral. Outputs ENABLED (OE=LOW).");
 }
 
 bool oe_is_estopped() {
@@ -101,19 +114,35 @@ void loop() {
     oe_loop();
     servoController.update();
 
-    // AFTER — 400 Hz gate: only reads IMU and runs estimator every 2500 µs.
+// Periodic joint-position state broadcast — 10 Hz.
+// Keeps the UI sliders in sync with the balance controller's live output
+// without requiring user interaction. Rate-limited to reduce WebSocket load.
+{
+    static uint32_t _lastStateBroadcastMs = 0;
+    const uint32_t  STATE_BROADCAST_INTERVAL_MS = 100;  // 10 Hz
+    if (millis() - _lastStateBroadcastMs >= STATE_BROADCAST_INTERVAL_MS) {
+        _lastStateBroadcastMs = millis();
+        webComm.broadcastState();
+    }
+}
+
+    // 400 Hz gate: only reads IMU and runs estimator every 2500 µs.
     // WebSocket/servo tasks above still run every loop() iteration (no rate limit).
     {
         // 2500 µs = 400 Hz. Must match BMI160 ODR set in IMU_init().
         static const uint32_t ESTIMATOR_INTERVAL_US = 2500;
         static uint32_t _lastEstimatorMicros = micros();
 
-        uint32_t _now = micros();
-        if ((_now - _lastEstimatorMicros) >= ESTIMATOR_INTERVAL_US) {
-            float dt = (_now - _lastEstimatorMicros) * 1e-6f;
-            _lastEstimatorMicros = _now;
-
-            RawIMUData raw   = IMU_update();
+// capture timestamp as close to the sensor read as possible.
+// _now is used for the gate check; a second sample _readNow is taken
+// immediately before IMU_update() to give dt the tightest possible
+// correlation with actual sensor integration time.
+uint32_t _now = micros();
+if ((_now - _lastEstimatorMicros) >= ESTIMATOR_INTERVAL_US) {
+    uint32_t _readNow = micros();          // capture just before sensor read
+    float dt = (_readNow - _lastEstimatorMicros) * 1e-6f;
+    _lastEstimatorMicros = _readNow;       // anchor to sensor-read timestamp
+    RawIMUData raw = IMU_update();
             IMUState   state = stateEstimator.update(raw, dt);
 
             BalanceState balState = balanceController.update(state);

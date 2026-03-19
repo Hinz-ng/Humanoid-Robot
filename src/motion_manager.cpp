@@ -14,7 +14,7 @@
 // =============================================================================
 
 #include "motion_manager.h"
-
+#include "oe_control.h"   // oe_is_estopped() — gate prevents stale commands reaching hardware
 // ---------------------------------------------------------------------------
 MotionManager::MotionManager()
     : _servo(nullptr)
@@ -72,14 +72,25 @@ void MotionManager::submit(MotionSource src, uint8_t channel, float angleDeg) {
 //  flush() — apply all pending commands to hardware, then clear slots.
 // ---------------------------------------------------------------------------
 void MotionManager::flush() {
-    // Safe no-op if init() was never called (null-pointer guard).
     if (_servo == nullptr) return;
 
-    for (uint8_t ch = 0; ch < NUM_JOINTS; ch++) {
-        if (!_slots[ch].occupied) continue;   // nothing submitted for this joint
+    // Drain the slot table while estopped — discard every pending command.
+    // Rationale: commands submitted during estop are contextually stale.
+    // Balance corrections calculated when the robot was falling, or slider
+    // positions sent while outputs were disabled, must not be applied when
+    // OE re-enables. Draining here (rather than in submit()) keeps the
+    // submission path clean and makes the discard policy explicit and visible.
+    if (oe_is_estopped()) {
+        for (uint8_t ch = 0; ch < NUM_JOINTS; ch++) {
+            _slots[ch] = {};
+        }
+        return;
+    }
 
+    for (uint8_t ch = 0; ch < NUM_JOINTS; ch++) {
+        if (!_slots[ch].occupied) continue;
         _applyCommand(ch, _slots[ch]);
-        _slots[ch] = {};   // clear slot — occupied=false, ready for next tick
+        _slots[ch] = {};
     }
 }
 

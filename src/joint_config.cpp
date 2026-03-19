@@ -56,3 +56,10 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
     { 15,  "left_ankle_roll",     122.0f,   -1,   -30.0f,  +30.0f  },  // TUNE
 
 };
+// Guard: array length must match NUM_JOINTS. If you add or remove a joint,
+// update NUM_JOINTS in joint_config.h to match. This fires at compile time.
+static_assert(
+    sizeof(JOINT_CONFIG) / sizeof(JOINT_CONFIG[0]) == NUM_JOINTS,
+    "JOINT_CONFIG array length does not match NUM_JOINTS — "
+    "update joint_config.cpp and joint_config.h together."
+);

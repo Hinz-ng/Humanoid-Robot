@@ -31,11 +31,12 @@ struct RawIMUData {
 
 // ---------------------------------------------------------------------------
 // IMU_init()
-// Call once in setup(). Order relative to servoController.init() does not
-// matter — the IMU uses Wire1 (GPIO 8/9), which is a completely separate
-// I2C peripheral from Wire (GPIO 8/9) used by the PCA9685.
-// IMU_init() calls Wire1.begin() internally.
-//
+// Call once in setup().
+// Both the IMU and PCA9685 share the Wire bus on GPIO 8/9.
+// Wire.begin(8,9) is called by ServoControl::init() before IMU_init().
+// The BMI160Gen library re-calls Wire.begin() internally; on ESP32 this
+// is harmless when the bus is already running on the correct pins.
+
 // Returns true if the BMI160 was found and configured successfully.
 // Returns false if the sensor did not respond (check wiring / SA0 pin).
 // ---------------------------------------------------------------------------

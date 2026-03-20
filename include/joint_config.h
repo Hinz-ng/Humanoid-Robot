@@ -88,9 +88,9 @@ extern const JointConfig JOINT_CONFIG[NUM_JOINTS];
 #define IDX_R_HIP_YAW      4
 #define IDX_R_HIP_PITCH    5
 
-// ch 8, 10, 11 — torso DOF (formerly unused stubs; now assigned)
+// ch 8, 9, 11 — torso DOF (formerly unused stubs; now assigned)
 #define IDX_TORSO_ROLL      8   // ch 8  — torso roll
-#define IDX_TORSO_PITCH     10  // ch 10 — torso pitch  (driven by balance controller)
+#define IDX_TORSO_PITCH     9   // ch 9  — torso pitch  (driven by balance controller)
 #define IDX_TORSO_ROTATION  11  // ch 11 — torso rotation (yaw)
 #define IDX_L_HIP_PITCH   6
 #define IDX_L_HIP_YAW     7
@@ -110,7 +110,7 @@ extern const JointConfig JOINT_CONFIG[NUM_JOINTS];
 //  Remove its value from this array (and decrement SKIP_BOOT_NEUTRAL_COUNT).
 //  Re-verify the neutral position physically before the next flash.
 // =============================================================================
-static constexpr uint8_t SKIP_BOOT_NEUTRAL_CHANNELS[] = { 8, 10, 11 };
-static constexpr uint8_t SKIP_BOOT_NEUTRAL_COUNT       = 3;
+static constexpr uint8_t SKIP_BOOT_NEUTRAL_CHANNELS[] = {};
+static constexpr uint8_t SKIP_BOOT_NEUTRAL_COUNT       = 0;
 
 #endif // JOINT_CONFIG_H

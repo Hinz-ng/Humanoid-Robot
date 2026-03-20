@@ -29,7 +29,7 @@
 //   IDX_L_ANKLE_PITCH  (ch 14, dir -1)
 //   IDX_R_HIP_PITCH    (ch 5,  dir +1)  — only if hip_ratio > 0
 //   IDX_L_HIP_PITCH    (ch 6,  dir -1)  — only if hip_ratio > 0
-//   IDX_TORSO_PITCH    (ch 10, dir +1)  — only if torso_ratio > 0 (direction UNVERIFIED)
+//   IDX_TORSO_PITCH    (ch 9,  dir +1)  — only if torso_ratio > 0 (direction UNVERIFIED)
 //
 //   Direction is handled by JointModel — passing the same jointDeg value to
 //   both left and right joints moves them anatomically symmetrically.

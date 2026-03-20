@@ -11,8 +11,7 @@
 //    direction   — +1 if increasing servo angle = flexion; −1 if inverted
 //    minAngle    — max degrees in the NEGATIVE joint direction (≤ 0, usually 0 for knees)
 //    maxAngle    — max degrees in the POSITIVE joint direction (≥ 0)
-//
-//  Search "// TUNE" to find values that still need hardware calibration.
+
 //  Replace "// TUNE" with "// OK" once a joint is verified.
 // =============================================================================
 
@@ -25,7 +24,7 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
 
     {  0,  "right_ankle_roll",    121.0f,   +1,   -30.0f,  +30.0f  },  // TUNE
     {  1,  "right_ankle_pitch",   125.0f,   +1,   -60.0f,  +60.0f  },  // TUNE
-    {  2,  "right_knee_pitch",    123.0f,   -1,     0.0f,  +100.0f  },  // TUNE — knee only flexes one way
+    {  2,  "right_knee_pitch",    123.0f,   -1,     0.0f,  +100.0f },  // TUNE — knee only flexes one way
     {  3,  "right_hip_roll",      125.0f,   +1,   -20.0f,  +80.0f  },  // TUNE
     {  4,  "right_hip_yaw",       130.0f,   +1,   -50.0f,  +50.0f  },  // TUNE
     {  5,  "right_hip_pitch",     145.0f,   +1,   -25.0f,  +90.0f  },  // TUNE
@@ -43,15 +42,15 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
 //    active balance control on IDX_TORSO_PITCH.
 //    These joints are excluded from boot-to-neutral (see SKIP_BOOT_NEUTRAL_CHANNELS).
 
-    {  8,  "torso_roll",          135.0f,   +1,  -100.0f, +100.0f  },  // TUNE — dir unverified
-    {  9,  "unused_9",            135.0f,   +1,     0.0f,   0.0f   },  // not yet assigned
-    { 10,  "torso_pitch",         135.0f,   +1,  -100.0f, +100.0f  },  // TUNE — dir unverified
-    { 11,  "torso_rotation",      135.0f,   +1,  -100.0f, +100.0f  },  // TUNE — dir unverified
+    {  8,  "torso_roll",          140.0f,   +1,  -25.0f,  +25.0f  },  // TUNE — dir unverified
+    {  9,  "torso_pitch",         135.0f,   +1,  -20.0f,  +30.0f  },   
+    { 10,  "unused_10",           135.0f,   +1,     0.0f,     0.0f  },  // not yet assigned
+    { 11,  "torso_rotation",      130.0f,   +1,  -65.0f,  +65.0f  },  // TUNE — dir unverified
 
 // ▼  LEFT LEG  ────────────────────────────────────────────────────────
 //    Note direction = −1 for mirrored joints.
     { 12,  "left_hip_roll",       130.0f,   -1,   -20.0f,  +80.0f  },  // TUNE
-    { 13,  "left_knee_pitch",     125.0f,   +1,     0.0f,  +100.0f  },  // TUNE — knee only flexes one way
+    { 13,  "left_knee_pitch",     125.0f,   +1,     0.0f,  +100.0f },  // TUNE — knee only flexes one way
     { 14,  "left_ankle_pitch",    120.0f,   -1,   -60.0f,  +60.0f  },  // TUNE
     { 15,  "left_ankle_roll",     122.0f,   -1,   -30.0f,  +30.0f  },  // TUNE
 

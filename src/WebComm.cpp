@@ -216,6 +216,23 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
 }
 
 // =============================================================================
+//  SPEED BROADCAST
+//  Protocol: "SPEED:<ch0_speed>,<ch1_speed>,...,<ch15_speed>"
+//  Sent once on connect and after every SPEED or SPEED_ALL command.
+//  Clients use this to sync their speed sliders on reconnect.
+// =============================================================================
+
+void WebComm::broadcastSpeeds() {
+    if (!_servoCtrl || ws.count() == 0) return;
+    String msg = "SPEED:";
+    for (int i = 0; i < NUM_JOINTS; i++) {
+        msg += String(_servoCtrl->getJointSpeed(i), 1);
+        if (i < NUM_JOINTS - 1) msg += ",";
+    }
+    ws.textAll(msg);
+}
+
+// =============================================================================
 //  EVENT HANDLER
 // =============================================================================
 
@@ -227,6 +244,7 @@ void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
             client->text(_servoCtrl->listPoses());
             broadcastJointInfo();
             broadcastState();
+            broadcastSpeeds();   // sync speed sliders on reconnect
         }
         // Push current calibration state immediately to the new client.
         // Without this, any client that connects after calibration finishes
@@ -406,6 +424,37 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                                cfg.ankle_ratio, cfg.hip_ratio, cfg.torso_ratio);
             }
         }
+       
+        // ---------------------------------------------------------------------
+        //  Per-joint speed control
+        //  Protocol: CMD:SPEED:<channel>:<deg_per_sec>
+        //  Example:  CMD:SPEED:1:45.0
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("SPEED:")) {
+            String params = cmd.substring(6);
+            int sep = params.indexOf(':');
+            if (sep != -1 && _servoCtrl) {
+                uint8_t ch    = (uint8_t)params.substring(0, sep).toInt();
+                float   speed = params.substring(sep + 1).toFloat();
+                _servoCtrl->setJointSpeed(ch, speed);
+                Serial.printf("[WebComm] SPEED: ch=%d  speed=%.1f deg/s\n", ch, speed);
+                broadcastSpeeds();
+            }
+        }
+        // ---------------------------------------------------------------------
+        //  Global speed — applies the same speed to all joints at once.
+        //  Protocol: CMD:SPEED_ALL:<deg_per_sec>
+        //  Example:  CMD:SPEED_ALL:90.0
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("SPEED_ALL:")) {
+            if (_servoCtrl) {
+                float speed = cmd.substring(10).toFloat();
+                _servoCtrl->setAllJointsSpeed(speed);
+                Serial.printf("[WebComm] SPEED_ALL: all joints → %.1f deg/s\n", speed);
+                broadcastSpeeds();
+            }
+        }
+       
         // ---------------------------------------------------------------------
         //  Clear E-stop
         // ---------------------------------------------------------------------

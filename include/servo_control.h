@@ -76,6 +76,16 @@ public:
     // Used by gait modules: setGaitOffset(ch, 30) moves servo 30° above neutral.
     void setGaitOffset(uint8_t channel, float absoluteOffsetDeg);
 
+    // =========================================================================
+    //  SPEED CONTROL
+    // =========================================================================
+    // Sets movement speed in deg/s for smooth-stepped writes (immediate=false).
+    // The balance controller uses immediate=true — speed settings have no effect
+    // on real-time balance corrections.
+    void  setJointSpeed(uint8_t channel, float speedDegPerSec);
+    void  setAllJointsSpeed(float speedDegPerSec);
+    float getJointSpeed(uint8_t channel) const;
+    
     // Named semantic movement: "flex" or "extend" by magnitude degrees.
     // Internally calls JointModel::setJointAngle — magnitude maps 1:1 to degrees.
     void applyNamedMovement(uint8_t channel, const char* movementName,

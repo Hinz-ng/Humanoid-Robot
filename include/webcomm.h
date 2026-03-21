@@ -26,6 +26,7 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     void broadcastEstimate(IMUState state); // --- ADD: sends pitch/roll/rates to UI
     void broadcastCalibStatus(CalibState state, float progress); // --- ADD
     void broadcastBalanceState(const BalanceState& state);
+    void broadcastSpeeds();
     void setBalanceController(BalanceController* bal);
     // Wire the joint authority layer. Call once in setup() after motionManager.init().
     // When wired, slider commands are routed through MotionManager so they silently

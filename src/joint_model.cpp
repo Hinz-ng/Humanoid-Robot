@@ -1,4 +1,5 @@
 #include "joint_model.h"
+#include "project_wide_defs.h"
 
 // =============================================================================
 //  JOINT MODEL — Implementation
@@ -6,14 +7,14 @@
 
 JointModel::JointModel()
     : _driver(nullptr),
-      stepSize(10.0f),
+      stepSize(10.0f),   // deprecated — kept for ABI compatibility only
       deadband(4.0f),
       _lastUpdateMs(0)
 {
-    // Zero-initialize arrays so un-initted channels are safe to read.
     for (int i = 0; i < NUM_JOINTS; i++) {
-        _currentPulse[i] = (float)SD_USMIN;
-        _targetPulse[i]  = (uint16_t)SD_USMIN;
+        _currentPulse[i]   = (float)SD_USMIN;
+        _targetPulse[i]    = (uint16_t)SD_USMIN;
+        _speedDegPerSec[i] = JOINT_SPEED_DEFAULT_DEG_S;
     }
 }
 
@@ -146,23 +147,39 @@ int JointModel::getServoPulse(uint8_t jointId) const {
 // =============================================================================
 
 void JointModel::update() {
-    // Self-limit to ~50 Hz. At 50 Hz and stepSize=10µs, max servo speed is
-    // 500 µs/s ≈ 67°/s — fast enough for controlled motion, slow enough to
-    // feel deliberate.
-    if (millis() - _lastUpdateMs < 20) return;
-    _lastUpdateMs = millis();
+    // Rate-limit to ~50 Hz (20ms minimum interval).
+    unsigned long nowMs = millis();
+    if (nowMs - _lastUpdateMs < 20) return;
+
+    // Use actual elapsed time for speed-to-µs conversion so accuracy holds
+    // even when WiFi or I2C occasionally delays a tick past 20ms.
+    float dt_s = (float)(nowMs - _lastUpdateMs) * 1e-3f;
+    _lastUpdateMs = nowMs;
 
     if (_driver == nullptr) return;
+
+    // Pre-compute the pulse range once — used in every per-joint conversion.
+    // Formula: µs/tick = (deg/s ÷ fullRangeDeg) × fullRangeUs × dt_s
+    const float fullRangeUs = (float)(SD_USMAX - SD_USMIN);  // 2000 µs
 
     for (int i = 0; i < NUM_JOINTS; i++) {
         float diff = (float)_targetPulse[i] - _currentPulse[i];
 
-        // Deadband prevents constant tiny hardware writes when the servo is
-        // essentially at rest. Reduces I2C bus traffic and servo jitter.
-        if (fabsf(diff) > deadband) {
-            _currentPulse[i] += (diff > 0.0f) ? stepSize : -stepSize;
-            _driver->setServoPulse(i, (int)_currentPulse[i]);
-        }
+        // Deadband: skip write if already close enough. Reduces I2C bus
+        // traffic and prevents audible servo buzz at rest.
+        if (fabsf(diff) <= deadband) continue;
+
+        // Convert this joint's deg/s speed to a µs step for this tick.
+        float stepUs = (_speedDegPerSec[i] / SD_ANGLE_RANGE) * fullRangeUs * dt_s;
+
+        // CRITICAL: clamp step to the remaining distance.
+        // Without this, stepUs > |diff| causes the servo to overshoot and
+        // ping-pong around the target — the root cause of jitter at low speeds
+        // or on final approach. This was a bug in the original fixed-stepSize code.
+        stepUs = fminf(stepUs, fabsf(diff));
+
+        _currentPulse[i] += (diff > 0.0f) ? stepUs : -stepUs;
+        _driver->setServoPulse(i, (int)(_currentPulse[i] + 0.5f));
     }
 }
 
@@ -207,4 +224,28 @@ void JointModel::update() {
     if (jointId >= NUM_JOINTS) return 0.0f;
     const JointConfig& jc = JOINT_CONFIG[jointId];
     return (absoluteDeg - jc.neutralDeg) * (float)jc.direction;
+}
+
+// =============================================================================
+//  SPEED CONTROL
+// =============================================================================
+
+void JointModel::setJointSpeed(uint8_t jointId, float speedDegPerSec) {
+    if (jointId >= NUM_JOINTS) return;
+    // Clamp to configured limits. JOINT_SPEED_MIN_DEG_S prevents a zero speed
+    // that would freeze a joint silently; MAX caps mechanical wear from high rates.
+    if (speedDegPerSec < JOINT_SPEED_MIN_DEG_S) speedDegPerSec = JOINT_SPEED_MIN_DEG_S;
+    if (speedDegPerSec > JOINT_SPEED_MAX_DEG_S) speedDegPerSec = JOINT_SPEED_MAX_DEG_S;
+    _speedDegPerSec[jointId] = speedDegPerSec;
+}
+
+void JointModel::setAllJointsSpeed(float speedDegPerSec) {
+    for (uint8_t i = 0; i < NUM_JOINTS; i++) {
+        setJointSpeed(i, speedDegPerSec);
+    }
+}
+
+float JointModel::getJointSpeed(uint8_t jointId) const {
+    if (jointId >= NUM_JOINTS) return JOINT_SPEED_DEFAULT_DEG_S;
+    return _speedDegPerSec[jointId];
 }

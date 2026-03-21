@@ -175,3 +175,19 @@ void ServoControl::resetToNeutral() {
     // OE goes LOW immediately after this returns.
     _model.moveToNeutral(/*immediate=*/true);
 }
+
+// =============================================================================
+//  SPEED CONTROL  —  thin delegation to JointModel
+// =============================================================================
+
+void ServoControl::setJointSpeed(uint8_t channel, float speedDegPerSec) {
+    _model.setJointSpeed(channel, speedDegPerSec);
+}
+
+void ServoControl::setAllJointsSpeed(float speedDegPerSec) {
+    _model.setAllJointsSpeed(speedDegPerSec);
+}
+
+float ServoControl::getJointSpeed(uint8_t channel) const {
+    return _model.getJointSpeed(channel);
+}

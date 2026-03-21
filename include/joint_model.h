@@ -114,19 +114,45 @@ public:
     // Self-limits to 50 Hz internally.
     void update();
 
-    // Stepping parameters — public so they can be tuned at runtime if needed.
-    float stepSize;   // µs moved per update cycle (default 10). Higher = faster.
-    float deadband;   // µs gap below which no hardware write occurs (default 4).
-                      // Prevents constant tiny PWM jitter at rest.
+    // =========================================================================
+    //  PER-JOINT SPEED CONTROL
+    // =========================================================================
+    // Speed is in degrees per second and applies only to smooth-stepped moves.
+    // immediate=true writes (balance controller) are never rate-limited here.
+    //
+    // Internals: deg/s is converted to µs/tick inside update() using actual
+    // elapsed dt so speed tracking is accurate even if the update rate drifts.
+
+    // Set movement speed for one joint (deg/s).
+    // Clamped to [JOINT_SPEED_MIN_DEG_S, JOINT_SPEED_MAX_DEG_S] from project_wide_defs.h.
+    void  setJointSpeed(uint8_t jointId, float speedDegPerSec);
+
+    // Set the same speed for every joint at once. Useful for UI "apply all".
+    void  setAllJointsSpeed(float speedDegPerSec);
+
+    // Query current configured speed for one joint.
+    float getJointSpeed(uint8_t jointId) const;
+
+    // deadband: µs gap below which no hardware write occurs (default 4).
+    // Prevents constant tiny PWM jitter at rest.
+    // stepSize is DEPRECATED — use setJointSpeed() instead. Left in place so
+    // any legacy call sites still compile; it is no longer read by update().
+    float deadband;
+    float stepSize;   // DEPRECATED — no longer used by update()
 
 private:
     ServoDriver* _driver;  // Pointer to Layer 1 — set by init(), never owned
 
-    // Per-channel state — both in µs for consistent math throughout.
-    float    _currentPulse[NUM_JOINTS];  // Actual hardware position (smoothed)
-    uint16_t _targetPulse[NUM_JOINTS];   // Desired position (set by set*() calls)
+   // Per-channel state — both in µs for consistent math throughout.
+    float    _currentPulse[NUM_JOINTS];     // Actual hardware position (smoothed)
+    uint16_t _targetPulse[NUM_JOINTS];      // Desired position (set by set*() calls)
 
-    unsigned long _lastUpdateMs;  // For 50 Hz rate limiting in update()
+    // Per-joint movement speed for the smooth-stepping loop (deg/s).
+    // Converted to µs/tick inside update() using actual dt.
+    // Defaults to JOINT_SPEED_DEFAULT_DEG_S (project_wide_defs.h) at construction.
+    float _speedDegPerSec[NUM_JOINTS];
+
+    unsigned long _lastUpdateMs;  // For rate limiting in update()
 
     // -------------------------------------------------------------------------
     //  Private helpers  (all static — they depend only on JOINT_CONFIG data)

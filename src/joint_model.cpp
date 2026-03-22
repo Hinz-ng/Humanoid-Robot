@@ -7,7 +7,6 @@
 
 JointModel::JointModel()
     : _driver(nullptr),
-      stepSize(10.0f),   // deprecated — kept for ABI compatibility only
       deadband(4.0f),
       _lastUpdateMs(0)
 {
@@ -158,8 +157,7 @@ void JointModel::update() {
 
     if (_driver == nullptr) return;
 
-    // Pre-compute the pulse range once — used in every per-joint conversion.
-    // Formula: µs/tick = (deg/s ÷ fullRangeDeg) × fullRangeUs × dt_s
+    // Pulse range is fixed by the PCA9685 / servo hardware — same for all joints.
     const float fullRangeUs = (float)(SD_USMAX - SD_USMIN);  // 2000 µs
 
     for (int i = 0; i < NUM_JOINTS; i++) {
@@ -170,7 +168,12 @@ void JointModel::update() {
         if (fabsf(diff) <= deadband) continue;
 
         // Convert this joint's deg/s speed to a µs step for this tick.
-        float stepUs = (_speedDegPerSec[i] / SD_ANGLE_RANGE) * fullRangeUs * dt_s;
+        // MUST use JOINT_CONFIG[i].rangeDeg, not SD_ANGLE_RANGE:
+        //   180° joints (hip yaw, ankle pitch) map the same 2000 µs pulse range
+        //   to fewer degrees, so each µs represents more degrees on those joints.
+        //   Using SD_ANGLE_RANGE (270°) on a 180° joint underestimates the step
+        //   size by 33%, making those joints appear slower than commanded.
+        float stepUs = (_speedDegPerSec[i] / JOINT_CONFIG[i].rangeDeg) * fullRangeUs * dt_s;
 
         // CRITICAL: clamp step to the remaining distance.
         // Without this, stepUs > |diff| causes the servo to overshoot and
@@ -232,10 +235,15 @@ void JointModel::update() {
 
 void JointModel::setJointSpeed(uint8_t jointId, float speedDegPerSec) {
     if (jointId >= NUM_JOINTS) return;
-    // Clamp to configured limits. JOINT_SPEED_MIN_DEG_S prevents a zero speed
-    // that would freeze a joint silently; MAX caps mechanical wear from high rates.
+    // Floor: JOINT_SPEED_MIN_DEG_S prevents a zero/negative speed that would
+    // freeze the joint silently or step backward indefinitely.
+    // Ceiling: per-joint no-load speed from JointConfig — the servo physically
+    // cannot exceed this. Clamping here prevents commanding a slew rate the
+    // hardware cannot follow, which would cause the smooth-stepper to fall
+    // permanently behind and never reach the target.
+    const float maxSpeed = JOINT_CONFIG[jointId].noLoadSpeedDegS;
     if (speedDegPerSec < JOINT_SPEED_MIN_DEG_S) speedDegPerSec = JOINT_SPEED_MIN_DEG_S;
-    if (speedDegPerSec > JOINT_SPEED_MAX_DEG_S) speedDegPerSec = JOINT_SPEED_MAX_DEG_S;
+    if (speedDegPerSec > maxSpeed)              speedDegPerSec = maxSpeed;
     _speedDegPerSec[jointId] = speedDegPerSec;
 }
 

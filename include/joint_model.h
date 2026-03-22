@@ -138,7 +138,6 @@ public:
     // stepSize is DEPRECATED — use setJointSpeed() instead. Left in place so
     // any legacy call sites still compile; it is no longer read by update().
     float deadband;
-    float stepSize;   // DEPRECATED — no longer used by update()
 
 private:
     ServoDriver* _driver;  // Pointer to Layer 1 — set by init(), never owned

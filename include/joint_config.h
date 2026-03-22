@@ -61,18 +61,28 @@
 #define NUM_JOINTS  16
 
 struct JointConfig {
-    uint8_t     channel;     // PCA9685 channel 0–15
-    const char* name;        // Snake_case label — used in debug output and UI
-    float       neutralDeg;  // Absolute servo angle (°) at neutral standing pose. TUNE.
-    int         direction;   // +1 or −1. See direction convention above.
-    float       minAngle;    // Min joint angle (° from neutral, ≤ 0). TUNE.
-    float       maxAngle;    // Max joint angle (° from neutral, ≥ 0). TUNE.
+    uint8_t     channel;          // PCA9685 channel 0–15
+    const char* name;             // Snake_case label — used in debug output and UI
+    float       neutralDeg;       // Absolute servo angle (°) at neutral standing pose. TUNE.
+    int         direction;        // +1 or −1. See direction convention above.
+    float       minAngle;         // Min joint angle (° from neutral, ≤ 0). TUNE.
+    float       maxAngle;         // Max joint angle (° from neutral, ≥ 0). TUNE.
+    float       rangeDeg;         // Total servo travel in degrees (180 or 270).
+                                  // Used to convert deg/s → µs/tick in JointModel::update().
+                                  // Source: servo spec sheet. Do NOT use SD_ANGLE_RANGE here —
+                                  // that constant assumes 270° for all joints, which is wrong
+                                  // for hip yaw (180°) and ankle pitch (180°).
+    float       noLoadSpeedDegS;  // Servo no-load speed (°/s). Source: spec sheet.
+                                  // Formula: noLoadSpeedDegS = 60 / (seconds_per_60_deg).
+                                  // Used as the upper clamp in setJointSpeed().
+                                  // Real loaded speed will be lower — treat this as a
+                                  // physical ceiling, not an achievable operating speed.
 };
 
 // =============================================================================
 //  CONFIGURATION TABLE  —  one row per channel
 //
-//  Column order:  channel | name | neutralDeg | direction | minAngle | maxAngle
+// Column order:  channel | name | neutralDeg | direction | minAngle | maxAngle | rangeDeg | noLoadSpeedDegS
 // =============================================================================
 
 // Declared as extern so it lives in joint_config.cpp — avoids multiple-definition

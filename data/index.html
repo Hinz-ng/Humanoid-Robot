@@ -369,9 +369,9 @@
         <!-- Global speed row -->
         <div class="spd-global">
             <label>Global Speed (all joints)</label>
-            <input type="range" id="slSpdAll" min="1" max="360" step="1" value="60"
-                   oninput="document.getElementById('tvSpdAll').textContent = this.value + ' °/s'">
-            <span class="spd-val" id="tvSpdAll">60 °/s</span>
+            <input type="range" id="slSpdAll" min="1" max="100" step="1" value="10"
+                   oninput="document.getElementById('tvSpdAll').textContent = this.value + '%'">
+            <span class="spd-val" id="tvSpdAll">10%</span>
             <button class="btn-spd-apply" onclick="applySpeedAll()">Apply to All</button>
         </div>
 
@@ -405,8 +405,16 @@
         </div>
     </div>
 
-    <h2 style="margin-bottom:8px;">Joint Control</h2>
-    <div id="servosContainer"></div>
+    <!-- ── Joint Control Panel ────────────────────────────────────────────────── -->
+<div class="spd-panel" style="border-color:#3a3a3a;">
+    <div class="spd-header" onclick="toggleJointPanel()" style="background:#1e1e1e;">
+        <h3 style="color:#ccc;">🦾 Joint Control</h3>
+        <span class="spd-chevron" id="jointChevron">▼</span>
+    </div>
+    <div id="jointBody" style="padding:0 16px 16px;">
+        <div id="servosContainer"></div>
+    </div>
+</div>
 
 </div>
 
@@ -421,24 +429,24 @@ const RANGE  = 270;
 // =============================================================================
 //  JOINT DEFAULTS  (used for initial render; overwritten by JOINTS: message)
 // =============================================================================
+// noLoadSpeedDegS: servo spec no-load speed (60 / seconds_per_60_deg).
+// rangeDeg: servo physical travel — 180° or 270°. Must match joint_config.cpp.
 const JOINT_DEFAULTS = [
-    {ch: 0,  name:"Right Ankle Roll",   neutral_deg:121, hint:+1, legClass:"right-leg"},
-    {ch: 1,  name:"Right Ankle Pitch",  neutral_deg:125, hint:+1, legClass:"right-leg"},
-    {ch: 2,  name:"Right Knee Pitch",   neutral_deg:123, hint:-1, legClass:"right-leg"},
-    {ch: 3,  name:"Right Hip Roll",     neutral_deg:125, hint:+1, legClass:"right-leg"},
-    {ch: 4,  name:"Right Hip Yaw",      neutral_deg:130, hint:+1, legClass:"right-leg"},
-    {ch: 5,  name:"Right Hip Pitch",    neutral_deg:145, hint:+1, legClass:"right-leg"},
-    {ch:6,  name:"Left Hip Pitch",     neutral_deg:145, hint:-1, legClass:"left-leg"},
-    {ch: 7,  name:"Left Hip Yaw",       neutral_deg:130, hint:-1, legClass:"left-leg"},
-    // Torso DOF — direction unverified; limits will be updated after hardware test
-    {ch: 8,  name:"Torso Roll",         neutral_deg:140, hint:+1, legClass:"torso"},
-    {ch: 9, name:"Torso Pitch",        neutral_deg:135, hint:+1, legClass:"torso"},
-    {ch: 11, name:"Torso Rotation",     neutral_deg:130, hint:+1, legClass:"torso"},
-    
-     {ch:12,  name:"Left Hip Roll",      neutral_deg:130, hint:-1, legClass:"left-leg"},
-    {ch:13,  name:"Left Knee Pitch",    neutral_deg:125, hint:+1, legClass:"left-leg"},
-    {ch:14,  name:"Left Ankle Pitch",   neutral_deg:120, hint:-1, legClass:"left-leg"},
-    {ch:15,  name:"Left Ankle Roll",    neutral_deg:122, hint:-1, legClass:"left-leg"},
+    {ch: 0,  name:"Right Ankle Roll",  neutral_deg:121, hint:+1, legClass:"right-leg", rangeDeg:270, noLoadSpeedDegS:333},
+    {ch: 1,  name:"Right Ankle Pitch", neutral_deg:125, hint:+1, legClass:"right-leg", rangeDeg:180, noLoadSpeedDegS:706},
+    {ch: 2,  name:"Right Knee Pitch",  neutral_deg:123, hint:-1, legClass:"right-leg", rangeDeg:270, noLoadSpeedDegS:500},
+    {ch: 3,  name:"Right Hip Roll",    neutral_deg:125, hint:+1, legClass:"right-leg", rangeDeg:270, noLoadSpeedDegS:500},
+    {ch: 4,  name:"Right Hip Yaw",     neutral_deg:130, hint:+1, legClass:"right-leg", rangeDeg:180, noLoadSpeedDegS:667},
+    {ch: 5,  name:"Right Hip Pitch",   neutral_deg:145, hint:+1, legClass:"right-leg", rangeDeg:270, noLoadSpeedDegS:545},
+    {ch: 6,  name:"Left Hip Pitch",    neutral_deg:145, hint:-1, legClass:"left-leg",  rangeDeg:270, noLoadSpeedDegS:545},
+    {ch: 7,  name:"Left Hip Yaw",      neutral_deg:130, hint:-1, legClass:"left-leg",  rangeDeg:180, noLoadSpeedDegS:667},
+    {ch: 8,  name:"Torso Roll",        neutral_deg:140, hint:+1, legClass:"torso",     rangeDeg:270, noLoadSpeedDegS:1000},
+    {ch: 9,  name:"Torso Pitch",       neutral_deg:135, hint:+1, legClass:"torso",     rangeDeg:270, noLoadSpeedDegS:1000},
+    {ch: 11, name:"Torso Rotation",    neutral_deg:130, hint:+1, legClass:"torso",     rangeDeg:270, noLoadSpeedDegS:1000},
+    {ch: 12, name:"Left Hip Roll",     neutral_deg:130, hint:-1, legClass:"left-leg",  rangeDeg:270, noLoadSpeedDegS:500},
+    {ch: 13, name:"Left Knee Pitch",   neutral_deg:125, hint:+1, legClass:"left-leg",  rangeDeg:270, noLoadSpeedDegS:500},
+    {ch: 14, name:"Left Ankle Pitch",  neutral_deg:120, hint:-1, legClass:"left-leg",  rangeDeg:180, noLoadSpeedDegS:706},
+    {ch: 15, name:"Left Ankle Roll",   neutral_deg:122, hint:-1, legClass:"left-leg",  rangeDeg:270, noLoadSpeedDegS:333},
 ];
 
 // =============================================================================
@@ -913,6 +921,14 @@ function _syncSlider(sliderId, labelId, newVal, decimals) {
     }
 }
 
+function toggleJointPanel() {
+    const body    = document.getElementById("jointBody");
+    const chevron = document.getElementById("jointChevron");
+    const open    = body.style.display !== "none";
+    body.style.display = open ? "none" : "block";
+    chevron.classList.toggle("open", !open);
+}
+
 // =============================================================================
 //  SPEED CONTROL PANEL
 // =============================================================================
@@ -931,13 +947,15 @@ function buildSpeedPanel() {
     if (!grid) return;
     grid.innerHTML = "";
     JOINT_DEFAULTS.forEach(j => {
+        // Compute boot default % from JOINT_SPEED_DEFAULT_DEG_S equivalent (60 °/s).
+        const bootPct = Math.round(60 / j.noLoadSpeedDegS * 100);
         grid.innerHTML += `
         <div class="spd-joint-row">
             <div class="spd-jname">
                 <span>CH${j.ch} — ${j.name}</span>
-                <span class="spd-jval" id="tvSpd${j.ch}">60 °/s</span>
+                <span class="spd-jval" id="tvSpd${j.ch}">${bootPct}% (60 °/s)</span>
             </div>
-            <input type="range" id="slSpd${j.ch}" min="1" max="360" step="1" value="60"
+            <input type="range" id="slSpd${j.ch}" min="1" max="100" step="1" value="${bootPct}"
                    oninput="onJointSpeedChange(${j.ch}, this.value)">
         </div>`;
     });
@@ -946,44 +964,64 @@ function buildSpeedPanel() {
 // Debounce timer for per-joint speed sends.
 const _spdTimers = {};
 
-function onJointSpeedChange(ch, val) {
-    document.getElementById('tvSpd' + ch).textContent = val + ' °/s';
+// Speed display helpers — firmware always works in deg/s; UI displays %.
+// Conversion: pct = degS / noLoadSpeedDegS * 100  (and inverse).
+// Using noLoadSpeedDegS from JOINT_DEFAULTS keeps firmware and UI in sync
+// without sending per-joint max speeds over WebSocket.
+function _degSToPercent(degS, noLoadSpeedDegS) {
+    return Math.round(clamp(degS / noLoadSpeedDegS * 100, 1, 100));
+}
+function _percentToDegS(pct, noLoadSpeedDegS) {
+    return Math.round(clamp(pct / 100 * noLoadSpeedDegS, 1, noLoadSpeedDegS));
+}
+
+function onJointSpeedChange(ch, pct) {
+    // pct: slider value 1–100. Convert to deg/s for display label and wire send.
+    const j = JOINT_DEFAULTS.find(x => x.ch === ch);
+    if (!j) return;
+    const degS = _percentToDegS(parseFloat(pct), j.noLoadSpeedDegS);
+    document.getElementById('tvSpd' + ch).textContent = pct + '% (' + degS + ' °/s)';
     clearTimeout(_spdTimers[ch]);
     _spdTimers[ch] = setTimeout(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send('CMD:SPEED:' + ch + ':' + val);
+            ws.send('CMD:SPEED:' + ch + ':' + degS);
         }
     }, 80);
 }
 
 function applySpeedAll() {
-    const val = document.getElementById("slSpdAll").value;
-    // Update all per-joint sliders to match the global value visually.
+    // Global slider is also in %. Each joint converts to its own deg/s ceiling.
+    const pct = parseFloat(document.getElementById("slSpdAll").value);
+    document.getElementById('tvSpdAll').textContent = pct + '%';
     JOINT_DEFAULTS.forEach(j => {
         const sl = document.getElementById('slSpd' + j.ch);
-        if (sl) {
-            sl.value = val;
-            document.getElementById('tvSpd' + j.ch).textContent = val + ' °/s';
+        if (!sl) return;
+        const degS = _percentToDegS(pct, j.noLoadSpeedDegS);
+        sl.value = pct;
+        document.getElementById('tvSpd' + j.ch).textContent = pct + '% (' + degS + ' °/s)';
+        // Send per-joint deg/s individually — each joint has a different ceiling,
+        // so "50%" means different deg/s values on different joints.
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send('CMD:SPEED:' + j.ch + ':' + degS);
         }
     });
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send('CMD:SPEED_ALL:' + val);
-    }
 }
 
-// Sync speed sliders from SPEED: firmware broadcast (on connect or after change).
-// Format: "SPEED:<ch0_speed>,<ch1_speed>,...,<ch15_speed>"
+// Sync speed sliders from SPEED: firmware broadcast.
+// Firmware sends deg/s; UI converts to % using per-joint noLoadSpeedDegS.
+// Format: "SPEED:<ch0_degS>,<ch1_degS>,...,<ch15_degS>"
 function parseSpeeds(csv) {
     const vals = csv.split(",");
     JOINT_DEFAULTS.forEach(j => {
-        if (j.ch < vals.length) {
-            const spd = parseFloat(vals[j.ch]);
-            if (isNaN(spd)) return;
-            const sl = document.getElementById('slSpd' + j.ch);
-            if (sl) {
-                sl.value = spd;
-                document.getElementById('tvSpd' + j.ch).textContent = spd.toFixed(0) + ' °/s';
-            }
+        if (j.ch >= vals.length) return;
+        const degS = parseFloat(vals[j.ch]);
+        if (isNaN(degS)) return;
+        const pct = _degSToPercent(degS, j.noLoadSpeedDegS);
+        const sl  = document.getElementById('slSpd' + j.ch);
+        if (sl) {
+            sl.value = pct;
+            document.getElementById('tvSpd' + j.ch).textContent =
+                pct + '% (' + Math.round(degS) + ' °/s)';
         }
     });
 }

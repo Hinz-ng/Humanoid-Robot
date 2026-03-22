@@ -27,9 +27,9 @@
 // DEFAULT_DEG_S: comfortable default for UI interaction — not too sluggish, not snappy.
 // Recalculate MAX_DEG_S if SD_ANGLE_RANGE changes (servo_driver.h):
 //   max_us_per_tick = (MAX_DEG_S / SD_ANGLE_RANGE) * (SD_USMAX - SD_USMIN) * UPDATE_INTERVAL_S
-#define JOINT_SPEED_DEFAULT_DEG_S   60.0f   // All joints at boot
-#define JOINT_SPEED_MIN_DEG_S        1.0f   // Prevents zero-speed (frozen joint) bugs
-#define JOINT_SPEED_MAX_DEG_S      360.0f   // One full servo sweep per second (physical ceiling)
+#define JOINT_SPEED_DEFAULT_DEG_S   60.0f   // All joints at boot (~11–18% of no-load speed)
+#define JOINT_SPEED_MIN_DEG_S        1.0f   // Floor — prevents silent frozen-joint bugs
+// No global MAX: upper clamp is now per-joint (JointConfig::noLoadSpeedDegS).
 
 // --- Single source of truth for joint metadata is joint_config.h ---
 

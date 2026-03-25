@@ -50,9 +50,12 @@ class MotionManager;
 // ---------------------------------------------------------------------------
 struct BalanceConfig {
 
-    // --- Master switch ---
-    // Must be explicitly set to true. Safe default is off.
-    bool  enabled              = false;
+    // --- Master switches (independently toggleable for testing) ---
+    // pitch_enabled: enable the sagittal (forward/back) PD controller.
+    // roll_enabled:  enable the frontal (left/right) PD controller.
+    // Both default off — enable via WebSocket CMD:PITCH_ON / CMD:ROLL_ON.
+    bool  pitch_enabled        = false;
+    bool  roll_enabled         = false;
 
     // --- Upright target ---
     // The pitch (rad) the robot should hold. Start at 0.0 (perfectly vertical).
@@ -100,6 +103,28 @@ struct BalanceConfig {
     float fall_threshold_rad   = 0.524f;
 };
 
+// =========================================================================
+    //  ROLL CONTROLLER PARAMETERS
+    //  Mirror of the pitch fields above. Tune after pitch is stable.
+    //  ankle_roll_ratio + hip_roll_ratio + torso_roll_ratio must sum to 1.0.
+    //  Firmware normalises after every BALANCE_TUNE roll field update.
+    //
+    //  CAUTION: verify roll_correction_sign empirically before enabling.
+    //  Tilt right → observe roll sign in telemetry → set sign so correction
+    //  pushes back toward upright (not further into the lean).
+    // =========================================================================
+
+    float Kp_roll                 = 5.0f;    // deg/rad  — start lower than Kp_pitch;
+                                              //            5.6° stability margin is tight
+    float Kd_roll                 = 0.2f;    // deg/(rad/s)
+    float roll_setpoint_rad       = 0.0f;    // rad — target roll (0 = upright)
+    float roll_correction_sign    = 1.0f;    // ±1 — verify empirically on first enable
+    float ankle_roll_ratio        = 1.0f;    // fraction of u_roll sent to ankle roll joints
+    float hip_roll_ratio          = 0.0f;    // fraction of u_roll sent to hip roll joints
+    float torso_roll_ratio        = 0.0f;    // fraction of u_roll sent to torso roll joint
+    float max_roll_correction_deg = 8.0f;    // hard clamp — tighter than pitch (5.6° margin)
+
+    
 // ---------------------------------------------------------------------------
 // BalanceState — output snapshot from one update() call.
 // Broadcast to UI at 20 Hz so you can watch the controller in real time.
@@ -112,6 +137,14 @@ struct BalanceState {
     float ankle_cmd_deg = 0.0f;   // final command to each ankle pitch joint (deg from neutral)
     float hip_cmd_deg   = 0.0f;   // final command to each hip pitch joint (deg from neutral)
     float torso_cmd_deg = 0.0f;   // final command to torso pitch joint (deg from neutral)
+    bool  pitch_active       = false;   // true when pitch controller produced output
+    bool  roll_active        = false;   // true when roll controller produced output
+    float roll_error         = 0.0f;   // measured_roll - roll_setpoint (rad)
+    float u_roll_raw         = 0.0f;   // roll PD output before clamping (deg)
+    float u_roll_clamped     = 0.0f;   // roll PD output after clamping (deg)
+    float ankle_roll_cmd_deg = 0.0f;   // command to each ankle roll joint (deg from neutral)
+    float hip_roll_cmd_deg   = 0.0f;   // command to each hip roll joint (deg from neutral)
+    float torso_roll_cmd_deg = 0.0f;   // command to torso roll joint (deg from neutral)
     bool  fell          = false;   // true if fall_threshold was exceeded this tick → ESTOP fired
 };
 
@@ -151,6 +184,10 @@ private:
     // Falls back to direct ServoControl writes when MotionManager is absent
     // (preserves the pre-MotionManager behaviour for compatibility/testing).
     void _applyPitchCorrection(float ankle_deg, float hip_deg, float torso_deg);
+
+    // Applies computed ankle/hip/torso roll corrections.
+    // Identical routing logic to _applyPitchCorrection — uses roll IDX constants.
+    void _applyRollCorrection(float ankle_deg, float hip_deg, float torso_deg);
 };
 
 #endif // BALANCE_CONTROLLER_H

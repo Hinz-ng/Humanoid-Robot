@@ -243,11 +243,23 @@
 
     <div class="bal-body" id="balBody" style="display:none;">
 
-        <!-- Status row: badge + enable/disable buttons -->
-        <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
-            <span class="bal-status disabled" id="balStatus">DISABLED</span>
-            <button class="btn-bal-on"  id="balOnBtn"  onclick="sendCmd('BALANCE_ON')">Enable</button>
-            <button class="btn-bal-off" id="balOffBtn" onclick="sendCmd('BALANCE_OFF')" style="display:none;">Disable</button>
+        <!-- Status badges + independent pitch / roll enable buttons -->
+        <div style="display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:14px;">
+            <div style="display:flex; flex-direction:column; gap:4px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:11px; color:#aaa; width:36px;">PITCH</span>
+                    <span class="bal-status disabled" id="pitchStatus">OFF</span>
+                    <button class="btn-bal-on"  id="pitchOnBtn"  onclick="sendCmd('PITCH_ON')">Enable</button>
+                    <button class="btn-bal-off" id="pitchOffBtn" onclick="sendCmd('PITCH_OFF')" style="display:none;">Disable</button>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:11px; color:#aaa; width:36px;">ROLL</span>
+                    <span class="bal-status disabled" id="rollStatus">OFF</span>
+                    <button class="btn-bal-on"  id="rollOnBtn"  onclick="sendCmd('ROLL_ON')">Enable</button>
+                    <button class="btn-bal-off" id="rollOffBtn" onclick="sendCmd('ROLL_OFF')" style="display:none;">Disable</button>
+                </div>
+            </div>
+            <span class="bal-status disabled" id="balStatus" style="display:none;"></span><!-- kept for JS compat -->
         </div>
 
         <!--
@@ -264,8 +276,9 @@
             <div><span class="lbl">torso    = u × torso_ratio = </span><span class="hi" id="bfTorso">—</span><span class="lbl"> °</span></div>
         </div>
 
-        <!-- Live output cells -->
-        <div class="bal-outputs">
+        <!-- Live output cells — pitch row then roll row -->
+        <div style="font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Pitch outputs</div>
+        <div class="bal-outputs" style="margin-bottom:8px;">
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">Pitch error</div>
                 <div class="bal-out-val" id="bErr">—</div>
@@ -275,16 +288,39 @@
                 <div class="bal-out-val" id="bU">—</div>
             </div>
             <div class="bal-out-cell">
-                <div class="bal-out-lbl">Ankle cmd (°)</div>
+                <div class="bal-out-lbl">Ankle pitch (°)</div>
                 <div class="bal-out-val" id="bAnkle">—</div>
             </div>
             <div class="bal-out-cell">
-                <div class="bal-out-lbl">Hip cmd (°)</div>
+                <div class="bal-out-lbl">Hip pitch (°)</div>
                 <div class="bal-out-val" id="bHip">—</div>
             </div>
             <div class="bal-out-cell">
-                <div class="bal-out-lbl">Torso cmd (°)</div>
+                <div class="bal-out-lbl">Torso pitch (°)</div>
                 <div class="bal-out-val" id="bTorso">—</div>
+            </div>
+        </div>
+        <div style="font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Roll outputs</div>
+        <div class="bal-outputs" style="margin-bottom:14px;">
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Roll error</div>
+                <div class="bal-out-val" id="bRErr">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">u_roll (clamped °)</div>
+                <div class="bal-out-val" id="bRU">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Ankle roll (°)</div>
+                <div class="bal-out-val" id="bRAnkle">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Hip roll (°)</div>
+                <div class="bal-out-val" id="bRHip">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Torso roll (°)</div>
+                <div class="bal-out-val" id="bRTorso">—</div>
             </div>
         </div>
 
@@ -354,6 +390,71 @@
 </div>
 
         </div><!-- /.bal-tune-grid -->
+
+         <!-- ── Roll tuning sliders ──────────────────────────────────────────── -->
+        <div style="font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px;
+                    margin:14px 0 8px; border-top:1px solid #2e4a2e; padding-top:10px;">
+            Roll controller gains
+        </div>
+        <div class="bal-tune-grid">
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Kp_roll</span><span class="tune-val" id="tvKp_r">5.00</span></div>
+                <input type="range" id="slKp_r" min="0" max="60" step="0.5" value="5"
+                       oninput="updateRollTuneLabel('Kp_r',this.value); sendRollTune()">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Kd_roll</span><span class="tune-val" id="tvKd_r">0.20</span></div>
+                <input type="range" id="slKd_r" min="0" max="3" step="0.05" value="0.2"
+                       oninput="updateRollTuneLabel('Kd_r',this.value); sendRollTune()">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Setpoint roll (°)</span><span class="tune-val" id="tvSp_r">0.0</span></div>
+                <input type="range" id="slSp_r" min="-10" max="10" step="0.5" value="0"
+                       oninput="updateRollTuneLabel('sp_r',this.value); sendRollTune()">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Max correction roll (°)</span><span class="tune-val" id="tvMax_r">8</span></div>
+                <input type="range" id="slMax_r" min="1" max="20" step="1" value="8"
+                       oninput="updateRollTuneLabel('max_r',this.value); sendRollTune()">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Ankle roll ratio</span><span class="tune-val" id="tvAnkle_r">1.00</span></div>
+                <input type="range" id="slAnkle_r" min="0" max="1" step="0.05" value="1"
+                       oninput="updateRollTuneLabel('a_roll',this.value); sendRollTune()">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Hip roll ratio</span><span class="tune-val" id="tvHip_r">0.00</span></div>
+                <input type="range" id="slHip_r" min="0" max="1" step="0.05" value="0"
+                       oninput="updateRollTuneLabel('h_roll',this.value); sendRollTune()">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Torso roll ratio</span><span class="tune-val" id="tvTorso_r">0.00</span></div>
+                <input type="range" id="slTorso_r" min="0" max="1" step="0.05" value="0"
+                       oninput="updateRollTuneLabel('t_roll',this.value); sendRollTune()">
+            </div>
+
+            <div class="bal-tune-row" style="grid-column: span 2; margin-top: 4px;">
+                <div class="tune-header">
+                    <span>Roll correction sign</span>
+                    <span class="tune-val" id="tvSign_r">+1</span>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:4px;">
+                    <button id="btnSignPos_r" class="btn-sign btn-sign-active" onclick="setRollSign(1)">+1 — right lean corrects</button>
+                    <button id="btnSignNeg_r" class="btn-sign"                 onclick="setRollSign(-1)">−1 — flip direction</button>
+                </div>
+                <div style="font-size:10px; color:#666; margin-top:4px;">
+                    Verify BEFORE enabling: tilt right → confirm ankle roll correction pushes back left.
+                </div>
+            </div>
+
+        </div><!-- /.roll tune grid -->
 
     </div><!-- /.bal-body -->
 </div><!-- /.bal-panel -->
@@ -711,78 +812,101 @@ function initWebSocket() {
             }, 3000);
         }
         else if (msg.startsWith("BALANCE:")) {
-            // Parse key=value pairs from: "BALANCE:enabled=1,err=X,u=X,ankle=X,hip=X,Kp=X,Kd=X,sp=X"
+            // Parse compact key=value pairs from firmware broadcastBalanceState().
+            // Key names are intentionally short to minimise packet size.
             const v = {};
             msg.substring(8).split(",").forEach(pair => {
                 const eq = pair.indexOf("=");
                 if (eq !== -1) v[pair.substring(0, eq)] = pair.substring(eq + 1);
             });
 
-            const active = v["enabled"] === "1";
-            const fell   = v["fell"]    === "1";
+            const pitchEn = v["p_en"] === "1";
+            const rollEn  = v["r_en"] === "1";
+            const fell    = v["fell"] === "1";
 
-            // ── Status badge ──────────────────────────────────────────────
-            const badge = document.getElementById("balStatus");
-            if (fell) {
-                badge.textContent = "⚠ FELL — ESTOP";
-                badge.className   = "bal-status fell";
-            } else if (active) {
-                badge.textContent = "ACTIVE";
-                badge.className   = "bal-status active";
-            } else {
-                badge.textContent = "DISABLED";
-                badge.className   = "bal-status disabled";
+            // ── Per-controller status badges and button visibility ─────────────
+            function _setBadge(badgeId, onBtnId, offBtnId, active) {
+                const badge = document.getElementById(badgeId);
+                if (fell) {
+                    badge.textContent = "⚠ FELL";
+                    badge.className   = "bal-status fell";
+                } else if (active) {
+                    badge.textContent = "ACTIVE";
+                    badge.className   = "bal-status active";
+                } else {
+                    badge.textContent = "OFF";
+                    badge.className   = "bal-status disabled";
+                }
+                document.getElementById(onBtnId).style.display  = active ? "none"         : "inline-block";
+                document.getElementById(offBtnId).style.display = active ? "inline-block" : "none";
             }
+            _setBadge("pitchStatus", "pitchOnBtn", "pitchOffBtn", pitchEn);
+            _setBadge("rollStatus",  "rollOnBtn",  "rollOffBtn",  rollEn);
 
-            // Toggle enable / disable button visibility
-            document.getElementById("balOnBtn").style.display  = active ? "none"         : "inline-block";
-            document.getElementById("balOffBtn").style.display = active ? "inline-block" : "none";
-
-            // ── Formula display (live values) ─────────────────────────────
-            // Convert error from rad → deg for readability
-            const errRad  = parseFloat(v["err"]  || "0");
-            const errDeg  = (errRad * 180 / Math.PI).toFixed(3);
-            const uClamp  = parseFloat(v["u"]     || "0").toFixed(3);
-            const ankle   = parseFloat(v["ankle"] || "0").toFixed(2);
-            const hip     = parseFloat(v["hip"]   || "0").toFixed(2);
+            // ── Pitch formula display (live values in rad and deg) ────────────
+            const pErrRad = parseFloat(v["p_err"] || "0");
+            const pErrDeg = (pErrRad * 180 / Math.PI).toFixed(3);
+            const pU      = parseFloat(v["p_u"]   || "0").toFixed(3);
+            const pAnkle  = parseFloat(v["p_ank"] || "0").toFixed(2);
+            const pHip    = parseFloat(v["p_hip"] || "0").toFixed(2);
+            const pTorso  = parseFloat(v["p_trs"] || "0").toFixed(2);
             const Kp      = parseFloat(v["Kp"]    || "0");
             const Kd      = parseFloat(v["Kd"]    || "0");
             const spRad   = parseFloat(v["sp"]    || "0");
 
-            document.getElementById("bfErr").textContent  = errRad.toFixed(4);
-            document.getElementById("bfErr2").textContent = errRad.toFixed(4);
+            document.getElementById("bfErr").textContent  = pErrRad.toFixed(4);
+            document.getElementById("bfErr2").textContent = pErrRad.toFixed(4);
             document.getElementById("bfKp").textContent   = Kp.toFixed(2);
             document.getElementById("bfKd").textContent   = Kd.toFixed(2);
-            document.getElementById("bfU").textContent    = uClamp;
-            const torso = parseFloat(v["torso"] || "0").toFixed(2);
-            document.getElementById("bfAnkle").textContent = ankle;
-            document.getElementById("bfHip").textContent   = hip;
-            document.getElementById("bfTorso").textContent = torso;
+            document.getElementById("bfU").textContent    = pU;
+            document.getElementById("bfAnkle").textContent = pAnkle;
+            document.getElementById("bfHip").textContent   = pHip;
+            document.getElementById("bfTorso").textContent = pTorso;
+            document.getElementById("bfMax").textContent   = v["mx"] || "15";
 
-            // ── Live output cells ─────────────────────────────────────────
-            document.getElementById("bErr").textContent    = errDeg + "°";
-            document.getElementById("bU").textContent      = uClamp;
-            document.getElementById("bAnkle").textContent  = ankle;
-            document.getElementById("bHip").textContent    = hip;
-            document.getElementById("bTorso").textContent  = torso;
+            // ── Pitch live output cells ───────────────────────────────────────
+            document.getElementById("bErr").textContent   = pErrDeg + "°";
+            document.getElementById("bU").textContent     = pU;
+            document.getElementById("bAnkle").textContent = pAnkle;
+            document.getElementById("bHip").textContent   = pHip;
+            document.getElementById("bTorso").textContent = pTorso;
 
-            // ── Sync sliders to firmware state on reconnect ───────────────────
-            // Guarded by _tuneActive: if user is dragging, skip sync entirely.
-            // Ratios are post-normalisation values from firmware — they are the
-            // authoritative values and will overwrite any un-sent slider position.
+            // ── Roll live output cells ────────────────────────────────────────
+            const rErrRad = parseFloat(v["r_err"] || "0");
+            const rErrDeg = (rErrRad * 180 / Math.PI).toFixed(3);
+            document.getElementById("bRErr").textContent   = rErrDeg + "°";
+            document.getElementById("bRU").textContent     = parseFloat(v["r_u"]   || "0").toFixed(3);
+            document.getElementById("bRAnkle").textContent = parseFloat(v["r_ank"] || "0").toFixed(2);
+            document.getElementById("bRHip").textContent   = parseFloat(v["r_hip"] || "0").toFixed(2);
+            document.getElementById("bRTorso").textContent = parseFloat(v["r_trs"] || "0").toFixed(2);
+
+            // ── Sync sliders to firmware (guarded while user is dragging) ─────
             if (!_tuneActive) {
-                _syncSlider("slKp",    "tvKp",    Kp,                                    2);
-                _syncSlider("slKd",    "tvKd",    Kd,                                    2);
-                _syncSlider("slSp",    "tvSp",    spRad * 180 / Math.PI,                1);
-                _syncSlider("slMax",   "tvMax",   parseFloat(v["max"]      || "15"),     0);
-                _syncSlider("slAnkle", "tvAnkle", parseFloat(v["ankle_r"]  || "1"),      2);
-                _syncSlider("slHip",   "tvHip",   parseFloat(v["hip_r"]    || "0"),      2);
-                _syncSlider("slTorso", "tvTorso", parseFloat(v["torso_r"]  || "0"),      2);
-                // Sync correction sign toggle button state
-                const sign = parseFloat(v["sign"] || "1");
+                // Pitch sliders
+                _syncSlider("slKp",    "tvKp",    Kp,                          2);
+                _syncSlider("slKd",    "tvKd",    Kd,                          2);
+                _syncSlider("slSp",    "tvSp",    spRad * 180 / Math.PI,      1);
+                _syncSlider("slMax",   "tvMax",   parseFloat(v["mx"]  || "15"), 0);
+                _syncSlider("slAnkle", "tvAnkle", parseFloat(v["a_r"] || "1"),  2);
+                _syncSlider("slHip",   "tvHip",   parseFloat(v["h_r"] || "0"),  2);
+                _syncSlider("slTorso", "tvTorso", parseFloat(v["t_r"] || "0"),  2);
+                const sign = parseFloat(v["sgn"] || "1");
                 document.getElementById("tvSign").textContent = sign >= 0 ? "+1" : "−1";
                 document.getElementById("btnSignPos").className = "btn-sign" + (sign >= 0 ? " btn-sign-active" : "");
                 document.getElementById("btnSignNeg").className = "btn-sign" + (sign <  0 ? " btn-sign-active" : "");
+
+                // Roll sliders
+                _syncSlider("slKp_r",    "tvKp_r",    parseFloat(v["Kp_r"]  || "5"),   2);
+                _syncSlider("slKd_r",    "tvKd_r",    parseFloat(v["Kd_r"]  || "0.2"), 2);
+                _syncSlider("slSp_r",    "tvSp_r",    parseFloat(v["sp_r"]  || "0") * 180 / Math.PI, 1);
+                _syncSlider("slMax_r",   "tvMax_r",   parseFloat(v["mx_r"]  || "8"),   0);
+                _syncSlider("slAnkle_r", "tvAnkle_r", parseFloat(v["a_rr"]  || "1"),   2);
+                _syncSlider("slHip_r",   "tvHip_r",   parseFloat(v["h_rr"]  || "0"),   2);
+                _syncSlider("slTorso_r", "tvTorso_r", parseFloat(v["t_rr"]  || "0"),   2);
+                const signR = parseFloat(v["sgn_r"] || "1");
+                document.getElementById("tvSign_r").textContent = signR >= 0 ? "+1" : "−1";
+                document.getElementById("btnSignPos_r").className = "btn-sign" + (signR >= 0 ? " btn-sign-active" : "");
+                document.getElementById("btnSignNeg_r").className = "btn-sign" + (signR <  0 ? " btn-sign-active" : "");
             }
         }
         // --- ADD END ---
@@ -883,6 +1007,54 @@ function setSign(val) {
         ws.send("CMD:BALANCE_TUNE:sign=" + val);
         console.log("[WS TX] CMD:BALANCE_TUNE:sign=" + val);
     }
+}
+
+// ── Roll tune label helper ────────────────────────────────────────────────────
+const _rollTuneMap = {
+    Kp_r:   { el: "tvKp_r",    decimals: 2 },
+    Kd_r:   { el: "tvKd_r",    decimals: 2 },
+    sp_r:   { el: "tvSp_r",    decimals: 1 },
+    max_r:  { el: "tvMax_r",   decimals: 0 },
+    a_roll: { el: "tvAnkle_r", decimals: 2 },
+    h_roll: { el: "tvHip_r",   decimals: 2 },
+    t_roll: { el: "tvTorso_r", decimals: 2 },
+};
+function updateRollTuneLabel(id, rawVal) {
+    _setTuneActive();
+    const m = _rollTuneMap[id];
+    if (m) document.getElementById(m.el).textContent = parseFloat(rawVal).toFixed(m.decimals);
+}
+
+// Roll correction sign toggle — sends immediately, not batched.
+function setRollSign(val) {
+    _setTuneActive();
+    document.getElementById("tvSign_r").textContent = val > 0 ? "+1" : "−1";
+    document.getElementById("btnSignPos_r").className = "btn-sign" + (val > 0 ? " btn-sign-active" : "");
+    document.getElementById("btnSignNeg_r").className = "btn-sign" + (val < 0 ? " btn-sign-active" : "");
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send("CMD:BALANCE_TUNE:sign_r=" + val);
+    }
+}
+
+// Roll tuning send (80ms debounce — mirrors sendTune pattern exactly).
+// Converts setpoint from degrees (slider) → radians (firmware expectation).
+function sendRollTune() {
+    clearTimeout(sendRollTune._t);
+    sendRollTune._t = setTimeout(() => {
+        const Kp_r   = document.getElementById("slKp_r").value;
+        const Kd_r   = document.getElementById("slKd_r").value;
+        const spDeg  = parseFloat(document.getElementById("slSp_r").value);
+        const spRad  = (spDeg * Math.PI / 180).toFixed(5);
+        const a_roll = document.getElementById("slAnkle_r").value;
+        const h_roll = document.getElementById("slHip_r").value;
+        const t_roll = document.getElementById("slTorso_r").value;
+        const max_r  = document.getElementById("slMax_r").value;
+        const msg = `CMD:BALANCE_TUNE:Kp_r=${Kp_r},Kd_r=${Kd_r},sp_r=${spRad},a_roll=${a_roll},h_roll=${h_roll},t_roll=${t_roll},max_r=${max_r}`;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(msg);
+            console.log("[WS TX]", msg);
+        }
+    }, 80);
 }
 
 // ── Send tuning params to firmware (80ms debounce) ───────────────────────────

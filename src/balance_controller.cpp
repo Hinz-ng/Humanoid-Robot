@@ -39,19 +39,20 @@ BalanceController::BalanceController(ServoControl* servo)
 void BalanceController::init() {
     _lastState = {};
     // Log the starting config so it's visible in Serial on boot.
-    Serial.printf("[BalanceController] Init. enabled=%s  Kp=%.1f  Kd=%.2f  setpoint=%.3f rad\n",
-                  _cfg.enabled ? "true" : "false",
+    Serial.printf("[BalanceController] Init. pitch_en=%s  roll_en=%s  Kp=%.1f  Kd=%.2f  sp=%.3f rad\n",
+                  _cfg.pitch_enabled ? "true" : "false",
+                  _cfg.roll_enabled  ? "true" : "false",
                   _cfg.Kp, _cfg.Kd, _cfg.pitch_setpoint_rad);
 }
 
 // ---------------------------------------------------------------------------
 BalanceState BalanceController::update(const IMUState& state) {
-    BalanceState out = {};   // zero-initialized; active=false, fell=false by default
+    BalanceState out = {};   // zero-initialized; all fields false/0 by default
 
-    // --- Gate 1: must be explicitly enabled ---
-    // The controller is off by default. Enable via WebSocket CMD:BAL_ENABLE
-    // or by setting cfg.enabled = true in code after verifying correction direction.
-    if (!_cfg.enabled) {
+    // --- Gate 1: at least one controller must be enabled ---
+    // Both pitch and roll are off by default. Enable independently via
+    // CMD:PITCH_ON / CMD:ROLL_ON after verifying sign conventions on hardware.
+    if (!_cfg.pitch_enabled && !_cfg.roll_enabled) {
         _lastState = out;
         return out;
     }
@@ -68,65 +69,83 @@ BalanceState BalanceController::update(const IMUState& state) {
         return out;
     }
 
-    // --- Fall detection ---
-    // If pitch exceeds the fall threshold, the robot is on the ground or
-    // completely unrecoverable. Fire ESTOP to protect servos from holding
-    // max torque against the floor indefinitely.
-    if (fabsf(state.pitch) > _cfg.fall_threshold_rad) {
-       oe_estop();
-    // Pre-load neutral pulse values into PCA9685 registers and _targetPulse
-    // while OE is now HIGH. This ensures that if oe_clear() is called later,
-    // oe_clear()'s own resetToNeutral() sees a consistent state, and the
-    // smooth-stepper has nothing to chase when outputs re-enable.
-    if (_servo != nullptr) {
-        _servo->resetToNeutral();
+    // --- Fall detection (pitch OR roll exceeding threshold triggers ESTOP) ---
+    // Covers both axes: if the robot falls forward, backward, or laterally,
+    // it is past recoverable range. Torque-holding against the floor damages servos.
+    if (fabsf(state.pitch) > _cfg.fall_threshold_rad ||
+        fabsf(state.roll)  > _cfg.fall_threshold_rad) {
+        oe_estop();
+        // Reset servo state while OE is HIGH so no stale commands apply on re-enable.
+        if (_servo != nullptr) {
+            _servo->resetToNeutral();
+        }
+        out.fell = true;
+        Serial.printf("[BalanceController] FALL DETECTED: pitch=%.3f roll=%.3f rad  threshold=%.3f → ESTOP\n",
+                      state.pitch, state.roll, _cfg.fall_threshold_rad);
+        _lastState = out;
+        return out;
     }
-    out.fell = true;
-    Serial.printf("[BalanceController] FALL DETECTED: |pitch|=%.3f rad > threshold=%.3f → ESTOP\n",
-                  state.pitch, _cfg.fall_threshold_rad);
-    _lastState = out;
-    return out;
-}
 
-    // --- PD computation ---
-    //
-    // error: deviation from target (rad). Positive = leaning forward.
-    //   - When robot leans forward, error > 0.
-    //   - Controller should push ankles to correct (bring CoM back over feet).
-    //
-    // u_raw: raw control output in degrees (before clamping).
-    //   - Units: degrees. Passed directly to setJointAngle() as joint-relative degrees.
-    //   - Kp term: proportional to position error. Drives correction magnitude.
-    //   - Kd term: proportional to pitch rate. Damps oscillation.
-    //
-    // correction_sign: empirically determined direction multiplier.
-    //   +1.0 if positive pitch → positive joint correction restores upright.
-    //   -1.0 if the above is backwards on your hardware.
-    float error  = state.pitch - _cfg.pitch_setpoint_rad;
-    float u_raw  = (_cfg.Kp * error + _cfg.Kd * state.pitchRate) * _cfg.correction_sign;
+    // =========================================================================
+    //  PITCH PD (sagittal plane — forward/back)
+    //  error: positive = leaning forward.
+    //  correction_sign: +1 if positive error → positive ankle command corrects.
+    //                   Verify empirically before first enable.
+    // =========================================================================
+    if (_cfg.pitch_enabled) {
+        float error     = state.pitch - _cfg.pitch_setpoint_rad;
+        float u_raw     = (_cfg.Kp * error + _cfg.Kd * state.pitchRate) * _cfg.correction_sign;
+        float u_clamped = constrain(u_raw, -_cfg.max_correction_deg, _cfg.max_correction_deg);
 
-    // Hard clamp — prevents runaway correction due to bad Kp or sensor spike.
-    float u_clamped = constrain(u_raw, -_cfg.max_correction_deg, _cfg.max_correction_deg);
+        float ankle_cmd = u_clamped * _cfg.ankle_ratio;
+        float hip_cmd   = u_clamped * _cfg.hip_ratio;
+        float torso_cmd = u_clamped * _cfg.torso_ratio;
 
-    // --- Distribute to joints ---
-    // JointModel::setJointAngle handles the direction field for each joint,
-    // so the same signed value correctly mirrors left and right joints.
-    float ankle_cmd = u_clamped * _cfg.ankle_ratio;
-    float hip_cmd   = u_clamped * _cfg.hip_ratio;
-    float torso_cmd = u_clamped * _cfg.torso_ratio;
+        _applyPitchCorrection(ankle_cmd, hip_cmd, torso_cmd);
 
-    // --- Write to hardware ---
-    _applyPitchCorrection(ankle_cmd, hip_cmd, torso_cmd);
+        out.pitch_active  = true;
+        out.pitch_error   = error;
+        out.u_raw         = u_raw;
+        out.u_clamped     = u_clamped;
+        out.ankle_cmd_deg = ankle_cmd;
+        out.hip_cmd_deg   = hip_cmd;
+        out.torso_cmd_deg = torso_cmd;
+    }
 
-    // --- Fill output state for telemetry ---
-    out.active        = true;
-    out.pitch_error   = error;
-    out.u_raw         = u_raw;
-    out.u_clamped     = u_clamped;
-    out.ankle_cmd_deg = ankle_cmd;
-    out.hip_cmd_deg   = hip_cmd;
-    out.torso_cmd_deg = torso_cmd;
-    out.fell          = false;
+    // =========================================================================
+    //  ROLL PD (frontal plane — left/right)
+    //  error: positive = leaning right (verify sign on hardware before enabling).
+    //  roll_correction_sign: verify empirically — tilt right, observe roll in
+    //  telemetry, confirm ankle roll correction pushes back toward upright.
+    //  max_roll_correction_deg: starts at 8° — tighter than pitch (5.6° margin).
+    // =========================================================================
+    if (_cfg.roll_enabled) {
+        float roll_error     = state.roll - _cfg.roll_setpoint_rad;
+        float u_roll_raw     = (_cfg.Kp_roll * roll_error + _cfg.Kd_roll * state.rollRate)
+                               * _cfg.roll_correction_sign;
+        float u_roll_clamped = constrain(u_roll_raw,
+                                         -_cfg.max_roll_correction_deg,
+                                          _cfg.max_roll_correction_deg);
+
+        float ankle_roll_cmd = u_roll_clamped * _cfg.ankle_roll_ratio;
+        float hip_roll_cmd   = u_roll_clamped * _cfg.hip_roll_ratio;
+        float torso_roll_cmd = u_roll_clamped * _cfg.torso_roll_ratio;
+
+        _applyRollCorrection(ankle_roll_cmd, hip_roll_cmd, torso_roll_cmd);
+
+        out.roll_active        = true;
+        out.roll_error         = roll_error;
+        out.u_roll_raw         = u_roll_raw;
+        out.u_roll_clamped     = u_roll_clamped;
+        out.ankle_roll_cmd_deg = ankle_roll_cmd;
+        out.hip_roll_cmd_deg   = hip_roll_cmd;
+        out.torso_roll_cmd_deg = torso_roll_cmd;
+    }
+
+    // active = true if any controller ran this tick — maintains backward compat
+    // for downstream code (telemetry, UI) that checks state.active.
+    out.active = out.pitch_active || out.roll_active;
+    out.fell   = false;
 
     _lastState = out;
     return out;
@@ -143,10 +162,12 @@ void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg, fl
             _motionManager->submit(SOURCE_BALANCE, IDX_L_HIP_PITCH, hip_deg);
         }
         // Torso pitch is a single joint (not bilateral like ankle/hip).
-        // Guard: skip the submit entirely when the ratio is zero to avoid
-        // pointlessly overwriting the torso joint target every tick.
+        // Sign is negated: the torso pitch servo mechanical direction is opposite
+        // to ankle/hip for the same correction intent. correction_sign handles the
+        // global ankle/hip direction; the torso requires an additional internal flip.
+        // Do NOT remove this negation without re-verifying torso direction on hardware.
         if (fabsf(torso_deg) > 0.01f) {
-            _motionManager->submit(SOURCE_BALANCE, IDX_TORSO_PITCH, torso_deg);
+            _motionManager->submit(SOURCE_BALANCE, IDX_TORSO_PITCH, -torso_deg);
         }
         return;
     }
@@ -161,7 +182,50 @@ void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg, fl
         _servo->setJointAngleDirect(IDX_R_HIP_PITCH, hip_deg);
         _servo->setJointAngleDirect(IDX_L_HIP_PITCH, hip_deg);
     }
+    // Negated for same reason as MotionManager path — see comment above.
     if (fabsf(torso_deg) > 0.01f) {
-        _servo->setJointAngleDirect(IDX_TORSO_PITCH, torso_deg);
+        _servo->setJointAngleDirect(IDX_TORSO_PITCH, -torso_deg);
+    }
+}
+
+// ---------------------------------------------------------------------------
+void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg, float torso_deg) {
+    // Mirrors _applyPitchCorrection() exactly — same two-path structure.
+    //
+    // JointModel handles direction inversion per channel, so submitting the
+    // same signed angleDeg to both left and right roll joints produces
+    // anatomically symmetric corrections automatically:
+    //   IDX_R_ANKLE_ROLL: direction +1 → positive cmd = rightward tilt correction
+    //   IDX_L_ANKLE_ROLL: direction -1 → same signed cmd mirrors correctly to left
+
+    // ── Path A: MotionManager wired (normal runtime path) ────────────────────
+    if (_motionManager) {
+        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_ROLL, ankle_deg);
+        _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_ROLL, ankle_deg);
+        if (fabsf(hip_deg) > 0.01f) {
+            _motionManager->submit(SOURCE_BALANCE, IDX_R_HIP_ROLL, hip_deg);
+            _motionManager->submit(SOURCE_BALANCE, IDX_L_HIP_ROLL, hip_deg);
+        }
+        // Torso roll: single joint. Guard matches pitch convention.
+        // Direction is currently assumed +1 (not yet verified on hardware).
+        // If correction worsens the lean, set roll_correction_sign = -1 from UI.
+        if (fabsf(torso_deg) > 0.01f) {
+            _motionManager->submit(SOURCE_BALANCE, IDX_TORSO_ROLL, torso_deg);
+        }
+        return;
+    }
+
+    // ── Path B: MotionManager absent — direct write fallback ─────────────────
+    if (!_servo) return;
+    Serial.println("[BalanceController] WARNING: MotionManager not wired — "
+                   "using direct servo write for roll. Wire setMotionManager() in setup().");
+    _servo->setJointAngleDirect(IDX_R_ANKLE_ROLL, ankle_deg);
+    _servo->setJointAngleDirect(IDX_L_ANKLE_ROLL, ankle_deg);
+    if (fabsf(hip_deg) > 0.01f) {
+        _servo->setJointAngleDirect(IDX_R_HIP_ROLL, hip_deg);
+        _servo->setJointAngleDirect(IDX_L_HIP_ROLL, hip_deg);
+    }
+    if (fabsf(torso_deg) > 0.01f) {
+        _servo->setJointAngleDirect(IDX_TORSO_ROLL, torso_deg);
     }
 }

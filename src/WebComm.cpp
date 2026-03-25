@@ -192,29 +192,36 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
     _lastBalanceBroadcast_us = now;
 
     const BalanceConfig& cfg = _balCtrl->getConfig();
-    char buf[256];
+    // buf sized for full pitch + roll telemetry payload (~380 chars worst case).
+    char buf[512];
     snprintf(buf, sizeof(buf),
-        "BALANCE:enabled=%d,err=%.4f,u=%.3f,ankle=%.2f,hip=%.2f,torso=%.2f,"
-        "Kp=%.3f,Kd=%.3f,sp=%.4f,ankle_r=%.2f,hip_r=%.2f,torso_r=%.2f,"
-        "sign=%.1f,max=%.1f,fell=%d",
-        (int)state.active,
-        state.pitch_error,
-        state.u_clamped,
-        state.ankle_cmd_deg,
-        state.hip_cmd_deg,
-        state.torso_cmd_deg,
-        cfg.Kp, cfg.Kd,
-        cfg.pitch_setpoint_rad,
-        cfg.ankle_ratio,
-        cfg.hip_ratio,
-        cfg.torso_ratio,
-        cfg.correction_sign,
-        cfg.max_correction_deg,
+        // Controller enable flags + overall active state
+        "BALANCE:p_en=%d,r_en=%d,"
+        // Pitch live outputs
+        "p_err=%.4f,p_u=%.3f,p_ank=%.2f,p_hip=%.2f,p_trs=%.2f,"
+        // Roll live outputs
+        "r_err=%.4f,r_u=%.3f,r_ank=%.2f,r_hip=%.2f,r_trs=%.2f,"
+        // Pitch config
+        "Kp=%.3f,Kd=%.3f,sp=%.4f,a_r=%.2f,h_r=%.2f,t_r=%.2f,sgn=%.1f,mx=%.1f,"
+        // Roll config
+        "Kp_r=%.3f,Kd_r=%.3f,sp_r=%.4f,a_rr=%.2f,h_rr=%.2f,t_rr=%.2f,sgn_r=%.1f,mx_r=%.1f,"
+        // Safety
+        "fell=%d",
+        (int)cfg.pitch_enabled, (int)cfg.roll_enabled,
+        state.pitch_error,   state.u_clamped,
+        state.ankle_cmd_deg, state.hip_cmd_deg, state.torso_cmd_deg,
+        state.roll_error,    state.u_roll_clamped,
+        state.ankle_roll_cmd_deg, state.hip_roll_cmd_deg, state.torso_roll_cmd_deg,
+        cfg.Kp, cfg.Kd, cfg.pitch_setpoint_rad,
+        cfg.ankle_ratio, cfg.hip_ratio, cfg.torso_ratio,
+        cfg.correction_sign, cfg.max_correction_deg,
+        cfg.Kp_roll, cfg.Kd_roll, cfg.roll_setpoint_rad,
+        cfg.ankle_roll_ratio, cfg.hip_roll_ratio, cfg.torso_roll_ratio,
+        cfg.roll_correction_sign, cfg.max_roll_correction_deg,
         (int)state.fell
     );
     ws.textAll(buf);
 }
-
 // =============================================================================
 //  SPEED BROADCAST
 //  Protocol: "SPEED:<ch0_speed>,<ch1_speed>,...,<ch15_speed>"
@@ -360,22 +367,57 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         }
         // ---------------------------------------------------------------------
         //  Balance controller enable / disable
-        // ---------------------------------------------------------------------
+        // BALANCE_ON / BALANCE_OFF — legacy shorthand: enable/disable BOTH controllers.
         else if (cmd == "BALANCE_ON") {
             if (_balCtrl) {
                 BalanceConfig cfg = _balCtrl->getConfig();
-                cfg.enabled = true;
+                cfg.pitch_enabled = true;
+                cfg.roll_enabled  = true;
                 _balCtrl->setConfig(cfg);
             }
-            Serial.println("[WebComm] CMD: BALANCE_ON");
+            Serial.println("[WebComm] CMD: BALANCE_ON (both pitch + roll)");
         }
         else if (cmd == "BALANCE_OFF") {
             if (_balCtrl) {
                 BalanceConfig cfg = _balCtrl->getConfig();
-                cfg.enabled = false;
+                cfg.pitch_enabled = false;
+                cfg.roll_enabled  = false;
                 _balCtrl->setConfig(cfg);
             }
-            Serial.println("[WebComm] CMD: BALANCE_OFF");
+            Serial.println("[WebComm] CMD: BALANCE_OFF (both pitch + roll)");
+        }
+        // Individual pitch / roll enable commands — use these during testing.
+        else if (cmd == "PITCH_ON") {
+            if (_balCtrl) {
+                BalanceConfig cfg = _balCtrl->getConfig();
+                cfg.pitch_enabled = true;
+                _balCtrl->setConfig(cfg);
+            }
+            Serial.println("[WebComm] CMD: PITCH_ON");
+        }
+        else if (cmd == "PITCH_OFF") {
+            if (_balCtrl) {
+                BalanceConfig cfg = _balCtrl->getConfig();
+                cfg.pitch_enabled = false;
+                _balCtrl->setConfig(cfg);
+            }
+            Serial.println("[WebComm] CMD: PITCH_OFF");
+        }
+        else if (cmd == "ROLL_ON") {
+            if (_balCtrl) {
+                BalanceConfig cfg = _balCtrl->getConfig();
+                cfg.roll_enabled = true;
+                _balCtrl->setConfig(cfg);
+            }
+            Serial.println("[WebComm] CMD: ROLL_ON");
+        }
+        else if (cmd == "ROLL_OFF") {
+            if (_balCtrl) {
+                BalanceConfig cfg = _balCtrl->getConfig();
+                cfg.roll_enabled = false;
+                _balCtrl->setConfig(cfg);
+            }
+            Serial.println("[WebComm] CMD: ROLL_OFF");
         }
         // ---------------------------------------------------------------------
         //  Balance tuning — parses key=value pairs, normalises ratios
@@ -400,11 +442,20 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         else if (key == "hip")      cfg.hip_ratio          = val;
                         else if (key == "torso")    cfg.torso_ratio        = val;
                         else if (key == "max")      cfg.max_correction_deg = val;
-                        else if (key == "sign")     cfg.correction_sign    = val;
+                        else if (key == "sign")     cfg.correction_sign        = val;
+                        // ── Roll fields ───────────────────────────────────────
+                        else if (key == "Kp_r")     cfg.Kp_roll                = val;
+                        else if (key == "Kd_r")     cfg.Kd_roll                = val;
+                        else if (key == "sp_r")     cfg.roll_setpoint_rad      = val;
+                        else if (key == "a_roll")   cfg.ankle_roll_ratio       = val;
+                        else if (key == "h_roll")   cfg.hip_roll_ratio         = val;
+                        else if (key == "t_roll")   cfg.torso_roll_ratio       = val;
+                        else if (key == "max_r")    cfg.max_roll_correction_deg = val;
+                        else if (key == "sign_r")   cfg.roll_correction_sign   = val;
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
-                // Normalise ratios so ankle + hip + torso always sum to 1.0.
+                // Normalise pitch ratios so ankle + hip + torso always sum to 1.0.
                 // This is enforced here (single source of truth) so any sender
                 // — UI, serial, or future script — is automatically corrected.
                 float ratioSum = cfg.ankle_ratio + cfg.hip_ratio + cfg.torso_ratio;
@@ -417,6 +468,16 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     // Prevents a silent "no joints actuated" state.
                     Serial.println("[WebComm] BALANCE_TUNE: all ratios zero — clamping ankle=1.0");
                     cfg.ankle_ratio = 1.0f;
+                }
+                // Normalise roll ratios — same invariant as pitch.
+                float rollRatioSum = cfg.ankle_roll_ratio + cfg.hip_roll_ratio + cfg.torso_roll_ratio;
+                if (rollRatioSum > 1e-3f) {
+                    cfg.ankle_roll_ratio  /= rollRatioSum;
+                    cfg.hip_roll_ratio    /= rollRatioSum;
+                    cfg.torso_roll_ratio  /= rollRatioSum;
+                } else {
+                    Serial.println("[WebComm] BALANCE_TUNE: all roll ratios zero — clamping ankle_roll=1.0");
+                    cfg.ankle_roll_ratio = 1.0f;
                 }
                 _balCtrl->setConfig(cfg);
                 Serial.printf("[WebComm] BALANCE_TUNE: Kp=%.3f Kd=%.3f sp=%.4f  ankle=%.2f hip=%.2f torso=%.2f\n",

@@ -26,7 +26,7 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
     {  0,  "right_ankle_roll",    121.0f,  +1,  -30.0f,  +30.0f,  270.0f,  333.0f  },  // TUNE
 
     //  Ankle Pitch (QY3242BLS)  — 180° servo, 0.085 s/60° → 706 °/s
-    {  1,  "right_ankle_pitch",   125.0f,  +1,  -60.0f,  +60.0f,  180.0f,  706.0f  },  // TUNE
+    {  1,  "right_ankle_pitch",   122.0f,  +1,  -60.0f,  +60.0f,  180.0f,  706.0f  },  // TUNE
 
     //  Knee Pitch (same servo as hip roll)  — 270° servo, 0.12 s/60° → 500 °/s
     {  2,  "right_knee_pitch",    123.0f,  -1,    0.0f, +100.0f,  270.0f,  500.0f  },  // TUNE

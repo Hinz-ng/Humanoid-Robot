@@ -9,8 +9,9 @@
 #include "state_estimator.h"
 #include "balance_controller.h"
 
-// Forward declaration — only a pointer is stored; full type in motion_manager.h.
+// Forward declarations — only pointers are stored; full types in respective headers.
 class MotionManager;
+class WeightShift;
 
 class WebComm {
 public:    // ctor can be invoked at global scope; it simply stores the servo pointer.
@@ -32,6 +33,8 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // When wired, slider commands are routed through MotionManager so they silently
     // lose to any active controller (BALANCE or GAIT) on shared joints.
     void setMotionManager(MotionManager* mm);
+    // Wire weight shift module. Call once in setup() after weightShift.init().
+    void setWeightShift(WeightShift* ws);
 private:
     AsyncWebServer server;
     AsyncWebSocket ws;
@@ -43,6 +46,7 @@ private:
     BalanceController* _balCtrl         = nullptr;
     uint32_t           _lastBalanceBroadcast_us = 0;
     MotionManager*     _motionManager   = nullptr;  // joint authority layer
+    WeightShift*       _weightShift     = nullptr;  // gait: CoM lateral shift
     
     void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
     void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);

@@ -4,6 +4,7 @@
 #include "joint_config.h"
 #include "servo_driver.h"
 #include "motion_manager.h"    // MotionSource, MotionManager::submit()
+#include "weight_shift.h"      // WeightShift, ShiftDirection, WeightShiftConfig
 
 // Constructor ---------------------------------------------------------------
 WebComm::WebComm(ServoControl* servo)
@@ -20,6 +21,10 @@ void WebComm::setBalanceController(BalanceController* bal) {
 
 void WebComm::setMotionManager(MotionManager* mm) {
     _motionManager = mm;
+}
+
+void WebComm::setWeightShift(WeightShift* ws) {
+    _weightShift = ws;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +211,9 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         // Roll config
         "Kp_r=%.3f,Kd_r=%.3f,sp_r=%.4f,a_rr=%.2f,h_rr=%.2f,t_rr=%.2f,sgn_r=%.1f,mx_r=%.1f,"
         // Safety
-        "fell=%d",
+        "fell=%d,"
+        // Weight shift telemetry — progress and ramping flag for UI progress bar.
+        "ws_prog=%.2f,ws_ramp=%d",
         (int)cfg.pitch_enabled, (int)cfg.roll_enabled,
         state.pitch_error,   state.u_clamped,
         state.ankle_cmd_deg, state.hip_cmd_deg, state.torso_cmd_deg,
@@ -218,7 +225,9 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         cfg.Kp_roll, cfg.Kd_roll, cfg.roll_setpoint_rad,
         cfg.ankle_roll_ratio, cfg.hip_roll_ratio, cfg.torso_roll_ratio,
         cfg.roll_correction_sign, cfg.max_roll_correction_deg,
-        (int)state.fell
+        (int)state.fell,
+        _weightShift ? _weightShift->getState().progress    : 0.0f,
+        _weightShift ? (int)_weightShift->getState().ramping : 0
     );
     ws.textAll(buf);
 }
@@ -419,6 +428,61 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             }
             Serial.println("[WebComm] CMD: ROLL_OFF");
         }
+        // ---------------------------------------------------------------------
+        //  Weight shift commands
+        //  Protocol: CMD:WEIGHT_SHIFT:left | right | center
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("WEIGHT_SHIFT:")) {
+            if (_weightShift) {
+                String dir = cmd.substring(13);
+                dir.trim();
+                if (dir == "left") {
+                    _weightShift->trigger(ShiftDirection::LEFT);
+                    Serial.println("[WebComm] CMD: WEIGHT_SHIFT left");
+                } else if (dir == "right") {
+                    _weightShift->trigger(ShiftDirection::RIGHT);
+                    Serial.println("[WebComm] CMD: WEIGHT_SHIFT right");
+                } else if (dir == "center") {
+                    _weightShift->trigger(ShiftDirection::NONE);
+                    Serial.println("[WebComm] CMD: WEIGHT_SHIFT center");
+                } else {
+                    Serial.printf("[WebComm] WEIGHT_SHIFT: unknown direction '%s'\n",
+                                  dir.c_str());
+                }
+            }
+        }
+        // ---------------------------------------------------------------------
+        //  Weight shift tuning
+        //  Protocol: CMD:WEIGHT_SHIFT_TUNE:setpoint=0.05,hip=0.0,torso=0.0,ramp=500
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("WEIGHT_SHIFT_TUNE:")) {
+            if (_weightShift) {
+                WeightShiftConfig cfg = _weightShift->getConfig();
+                String params = cmd.substring(18);
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    String pair = (comma == -1) ? params.substring(start)
+                                                : params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq != -1) {
+                        String key = pair.substring(0, eq);
+                        float  val = pair.substring(eq + 1).toFloat();
+                        if      (key == "setpoint") cfg.setpoint_shift_rad = val;
+                        else if (key == "hip")      cfg.hip_shift_deg      = val;
+                        else if (key == "torso")    cfg.torso_shift_deg    = val;
+                        else if (key == "ramp")     cfg.ramp_ms            = val;
+                    }
+                    start = (comma == -1) ? params.length() : comma + 1;
+                }
+                _weightShift->setConfig(cfg);
+                Serial.printf("[WebComm] WEIGHT_SHIFT_TUNE: setpoint=%.3f rad  "
+                              "hip=%.1f°  torso=%.1f°  ramp=%.0f ms\n",
+                              cfg.setpoint_shift_rad, cfg.hip_shift_deg,
+                              cfg.torso_shift_deg, cfg.ramp_ms);
+            }
+        }
+        
         // ---------------------------------------------------------------------
         //  Balance tuning — parses key=value pairs, normalises ratios
         // ---------------------------------------------------------------------

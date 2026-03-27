@@ -6,6 +6,7 @@
 #include "state_estimator.h"
 #include "balance_controller.h"
 #include "motion_manager.h"        // joint authority layer
+#include "weight_shift.h"          // gait: CoM lateral shift
 
 // =============================================================================
 //  GLOBAL OBJECTS
@@ -21,6 +22,7 @@ WebComm           webComm(&servoController);
 StateEstimator    stateEstimator;
 BalanceController balanceController(&servoController);
 MotionManager     motionManager;   // joint authority layer — wired in setup()
+WeightShift       weightShift;     // gait: CoM lateral shift — wired in setup()
 
 // =============================================================================
 //  OE CONTROL IMPLEMENTATION
@@ -103,6 +105,8 @@ void setup() {
     balanceController.setMotionManager(&motionManager);
     webComm.setBalanceController(&balanceController);
     webComm.setMotionManager(&motionManager);
+    weightShift.init(&balanceController, &motionManager);
+    webComm.setWeightShift(&weightShift);
     webComm.init();
     Serial.println("System Ready.");
 }
@@ -146,6 +150,10 @@ void loop() {
 
             RawIMUData raw   = IMU_update();
             IMUState   state = stateEstimator.update(raw, dt);
+
+            // WeightShift must run BEFORE balanceController so the injected
+            // roll_setpoint_rad is used by balance on this same tick.
+            weightShift.update(dt);
 
             BalanceState balState = balanceController.update(state);
 

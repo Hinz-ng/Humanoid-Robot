@@ -101,7 +101,6 @@ struct BalanceConfig {
     // Triggers ESTOP to protect servos. ~30° = 0.524 rad.
     // Do not raise above 0.70 rad (~40°) — the physics don't support recovery there.
     float fall_threshold_rad   = 0.524f;
-};
 
 // =========================================================================
     //  ROLL CONTROLLER PARAMETERS
@@ -123,7 +122,7 @@ struct BalanceConfig {
     float hip_roll_ratio          = 0.0f;    // fraction of u_roll sent to hip roll joints
     float torso_roll_ratio        = 0.0f;    // fraction of u_roll sent to torso roll joint
     float max_roll_correction_deg = 8.0f;    // hard clamp — tighter than pitch (5.6° margin)
-
+};
     
 // ---------------------------------------------------------------------------
 // BalanceState — output snapshot from one update() call.

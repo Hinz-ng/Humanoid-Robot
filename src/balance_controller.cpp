@@ -200,7 +200,11 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg, flo
 
     // ── Path A: MotionManager wired (normal runtime path) ────────────────────
     if (_motionManager) {
-        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_ROLL, ankle_deg);
+        // Right ankle roll correction direction is mechanically opposite to left.
+        // The joint_config direction field (+1 right, -1 left) does not fully
+        // compensate for this asymmetry in the roll correction axis, so we negate
+        // the right ankle command explicitly here.
+        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_ROLL, -ankle_deg);
         _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_ROLL, ankle_deg);
         if (fabsf(hip_deg) > 0.01f) {
             _motionManager->submit(SOURCE_BALANCE, IDX_R_HIP_ROLL, hip_deg);
@@ -219,7 +223,7 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg, flo
     if (!_servo) return;
     Serial.println("[BalanceController] WARNING: MotionManager not wired — "
                    "using direct servo write for roll. Wire setMotionManager() in setup().");
-    _servo->setJointAngleDirect(IDX_R_ANKLE_ROLL, ankle_deg);
+    _servo->setJointAngleDirect(IDX_R_ANKLE_ROLL, -ankle_deg); // direction opposite to left
     _servo->setJointAngleDirect(IDX_L_ANKLE_ROLL, ankle_deg);
     if (fabsf(hip_deg) > 0.01f) {
         _servo->setJointAngleDirect(IDX_R_HIP_ROLL, hip_deg);

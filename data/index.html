@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
     <title>Humanoid Control</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
@@ -28,7 +29,7 @@
         .estop-banner.visible { display: block; }
         /* --- ADD END --- */
 
-        input[type=text], input[type=number] {
+        input[type="text"], input[type="number"] {
             padding: 8px; border-radius: 4px; border: 1px solid #555; background: #333; color: white;
         }
 
@@ -57,9 +58,9 @@
         .info .neutral-tag { color: #00bcd4; font-size: 10px; margin-top: 3px; }
 
         .controls { flex: 2; display: flex; align-items: center; gap: 8px; min-width: 300px; }
-        input[type=range] { flex-grow: 1; min-width: 100px; }
+        input[type="range"] { flex-grow: 1; min-width: 100px; }
         .input-group { display: flex; flex-direction: column; align-items: center; font-size: 10px; color: #888; }
-        .input-group input[type=number] { width: 58px; text-align: center; padding: 5px; }
+        .input-group input[type="number"] { width: 58px; text-align: center; padding: 5px; }
 
         #ws-status { font-size: 12px; }
         /* --- IMU Panel --- */
@@ -95,7 +96,8 @@
              border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
 
 .bal-header { display: flex; justify-content: space-between; align-items: center;
-              padding: 12px 16px; cursor: pointer; user-select: none; }
+              padding: 12px 16px; cursor: pointer; -webkit-user-select: none;
+              -ms-user-select: none; user-select: none; }
 .bal-header h3 { margin: 0; font-size: 13px; text-transform: uppercase;
                  letter-spacing: 1px; color: #66bb6a; }
 .bal-chevron { font-size: 11px; color: #888; transition: transform 0.2s; }
@@ -130,7 +132,7 @@
 .bal-tune-row  { display: flex; flex-direction: column; font-size: 11px; color: #aaa; }
 .bal-tune-row .tune-header { display: flex; justify-content: space-between; margin-bottom: 3px; }
 .bal-tune-row .tune-val    { color: #66bb6a; font-weight: bold; font-family: monospace; }
-.bal-tune-row input[type=range] { width: 100%; margin: 0; }
+.bal-tune-row input[type="range"] { width: 100%; margin: 0; }
 
 /* Enable / Disable buttons */
 .btn-bal-on  { background: #1e5c1e; color: #fff; border: none; padding: 5px 14px;
@@ -145,7 +147,8 @@
 .spd-panel { background: #1a1a2e; border: 1px solid #2a2a5e;
              border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
 .spd-header { display: flex; justify-content: space-between; align-items: center;
-              padding: 12px 16px; cursor: pointer; user-select: none; }
+              padding: 12px 16px; cursor: pointer; -webkit-user-select: none;
+              -ms-user-select: none; user-select: none; }
 .spd-header h3 { margin: 0; font-size: 13px; text-transform: uppercase;
                  letter-spacing: 1px; color: #7c83fd; }
 .spd-chevron { font-size: 11px; color: #888; transition: transform 0.2s; }
@@ -154,7 +157,7 @@
 .spd-global { display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
               padding-bottom: 12px; border-bottom: 1px solid #2a2a4a; flex-wrap: wrap; }
 .spd-global label { font-size: 12px; color: #aaa; min-width: 140px; }
-.spd-global input[type=range] { flex: 1; min-width: 120px; }
+.spd-global input[type="range"] { flex: 1; min-width: 120px; }
 .spd-global .spd-val { font-family: monospace; font-size: 13px; color: #7c83fd;
                         font-weight: bold; min-width: 60px; }
 .btn-spd-apply { background: #1e1e5c; color: #7c83fd; border: 1px solid #7c83fd;
@@ -164,8 +167,45 @@
 .spd-joint-row { display: flex; flex-direction: column; font-size: 11px; color: #aaa; }
 .spd-joint-row .spd-jname { display: flex; justify-content: space-between; margin-bottom: 3px; }
 .spd-joint-row .spd-jval  { color: #7c83fd; font-weight: bold; font-family: monospace; }
-.spd-joint-row input[type=range] { width: 100%; margin: 0; }
-    </style>
+.spd-joint-row input[type="range"] { width: 100%; margin: 0; }
+
+/* ── Weight Shift Panel ──────────────────────────────────────────────── */
+.wshift-panel { background: #1a1a2a; border: 1px solid #3a2a5e;
+                border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
+.wshift-header { display: flex; justify-content: space-between; align-items: center;
+                 padding: 12px 16px; cursor: pointer; -webkit-user-select: none;
+                 -ms-user-select: none; user-select: none; }
+.wshift-header h3 { margin: 0; font-size: 13px; text-transform: uppercase;
+                    letter-spacing: 1px; color: #ce93d8; }
+.wshift-chevron { font-size: 11px; color: #888; transition: transform 0.2s; }
+.wshift-chevron.open { transform: rotate(180deg); }
+.wshift-body { padding: 0 16px 16px; }
+.wshift-btn-row { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.btn-shift-left   { background: #2a1a5e; color: #ce93d8; border: 1px solid #7e57c2;
+                    padding: 8px 20px; border-radius: 5px; cursor: pointer;
+                    font-size: 13px; font-weight: bold; }
+.btn-shift-right  { background: #5e1a2a; color: #f48fb1; border: 1px solid #c2577e;
+                    padding: 8px 20px; border-radius: 5px; cursor: pointer;
+                    font-size: 13px; font-weight: bold; }
+.btn-shift-center { background: #2a2a2a; color: #aaa; border: 1px solid #555;
+                    padding: 8px 20px; border-radius: 5px; cursor: pointer;
+                    font-size: 13px; font-weight: bold; }
+.btn-shift-left:active   { background: #3d2a8a; }
+.btn-shift-right:active  { background: #8a2a3d; }
+.btn-shift-center:active { background: #444; }
+.wshift-progress-wrap { margin-bottom: 12px; }
+.wshift-progress-bg   { background: #111; border-radius: 4px; height: 10px;
+                         overflow: hidden; border: 1px solid #333; position: relative; }
+.wshift-progress-bar  { height: 100%; width: 50%; background: #7e57c2;
+                         transition: width 0.05s linear, background 0.2s;
+                         border-radius: 4px; }
+.wshift-progress-label { font-size: 10px; color: #888; margin-top: 4px; }
+.wshift-tune-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+.wshift-tune-row  { display: flex; flex-direction: column; font-size: 11px; color: #aaa; }
+.wshift-tune-row .tune-header { display: flex; justify-content: space-between; margin-bottom: 3px; }
+.wshift-tune-row .tune-val    { color: #ce93d8; font-weight: bold; font-family: monospace; }
+.wshift-tune-row input[type="range"] { width: 100%; margin: 0; }
+     </style>
 </head>
 <body>
 
@@ -481,6 +521,90 @@
 
     </div>
 </div>
+
+<!-- ── Weight Shift Panel ──────────────────────────────────────────────── -->
+<div class="wshift-panel">
+    <div class="wshift-header" onclick="toggleWShiftPanel()">
+        <h3>⚖ Weight Shift</h3>
+        <span class="wshift-chevron" id="wshiftChevron">▼</span>
+    </div>
+    <div class="wshift-body" id="wshiftBody" style="display:none;">
+
+        <!-- Shift trigger buttons -->
+        <div class="wshift-btn-row">
+            <button class="btn-shift-left"   onclick="sendCmd('WEIGHT_SHIFT:left')">← Shift Left</button>
+            <button class="btn-shift-center" onclick="sendCmd('WEIGHT_SHIFT:center')">Center</button>
+            <button class="btn-shift-right"  onclick="sendCmd('WEIGHT_SHIFT:right')">Shift Right →</button>
+        </div>
+
+        <!-- Progress bar: center = 50%, left = 0%, right = 100% -->
+        <div class="wshift-progress-wrap">
+            <div class="wshift-progress-bg">
+                <div class="wshift-progress-bar" id="wshiftBar"></div>
+                <!-- Center marker -->
+                <div style="position:absolute; top:0; left:50%; width:1px;
+                             height:100%; background:#555;"></div>
+            </div>
+            <div class="wshift-progress-label" id="wshiftLabel">Progress: center</div>
+        </div>
+
+        <!-- Tuning controls -->
+        <div style="font-size:10px; color:#888; text-transform:uppercase;
+                    letter-spacing:0.5px; margin-bottom:8px;">Tuning</div>
+        <div class="wshift-tune-grid">
+
+            <div class="wshift-tune-row">
+                <div class="tune-header">
+                    <span>Setpoint shift (°)</span>
+                    <span class="tune-val" id="tvWsSp">2.9</span>
+                </div>
+                <!-- Slider in degrees for readability; converted to rad on send -->
+                <input type="range" id="slWsSp" min="0" max="8" step="0.1" value="2.86"
+                       oninput="updateWSTuneLabel('setpoint', this.value); sendWSTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Roll setpoint injected into balance controller
+                </div>
+            </div>
+
+            <div class="wshift-tune-row">
+                <div class="tune-header">
+                    <span>Ramp time (ms)</span>
+                    <span class="tune-val" id="tvWsRamp">500</span>
+                </div>
+                <input type="range" id="slWsRamp" min="100" max="2000" step="50" value="500"
+                       oninput="updateWSTuneLabel('ramp', this.value); sendWSTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Start ≥ 500 ms; reduce only after shift is stable
+                </div>
+            </div>
+
+            <div class="wshift-tune-row">
+                <div class="tune-header">
+                    <span>Hip shift (°)</span>
+                    <span class="tune-val" id="tvWsHip">0.0</span>
+                </div>
+                <input type="range" id="slWsHip" min="-30" max="30" step="0.5" value="0"
+                       oninput="updateWSTuneLabel('hip', this.value); sendWSTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Stance leg only. 0 = disabled. Flip sign if wrong direction.
+                </div>
+            </div>
+
+            <div class="wshift-tune-row">
+                <div class="tune-header">
+                    <span>Torso shift (°)</span>
+                    <span class="tune-val" id="tvWsTorso">0.0</span>
+                </div>
+                <input type="range" id="slWsTorso" min="-20" max="20" step="0.5" value="0"
+                       oninput="updateWSTuneLabel('torso', this.value); sendWSTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Direction unverified — keep 0 until torso_roll confirmed.
+                </div>
+            </div>
+
+        </div><!-- /.wshift-tune-grid -->
+    </div><!-- /.wshift-body -->
+</div><!-- /.wshift-panel -->
 
 <div class="preset-box">
         <span style="color:#aaa;font-size:12px;">Saved Presets:</span><br>
@@ -908,8 +1032,11 @@ function initWebSocket() {
                 document.getElementById("btnSignPos_r").className = "btn-sign" + (signR >= 0 ? " btn-sign-active" : "");
                 document.getElementById("btnSignNeg_r").className = "btn-sign" + (signR <  0 ? " btn-sign-active" : "");
             }
+            // Weight shift progress bar — driven by ws_prog field in BALANCE: packet.
+            if (v["ws_prog"] !== undefined) {
+                updateWShiftProgress(parseFloat(v["ws_prog"]), v["ws_ramp"] === "1");
+            }
         }
-        // --- ADD END ---
     };
 }
 
@@ -1196,6 +1323,64 @@ function parseSpeeds(csv) {
                 pct + '% (' + Math.round(degS) + ' °/s)';
         }
     });
+}
+
+// =============================================================================
+//  WEIGHT SHIFT PANEL
+// =============================================================================
+
+function toggleWShiftPanel() {
+    const body    = document.getElementById("wshiftBody");
+    const chevron = document.getElementById("wshiftChevron");
+    const open    = body.style.display !== "none";
+    body.style.display = open ? "none" : "block";
+    chevron.classList.toggle("open", !open);
+}
+
+const _wsTuneMap = {
+    setpoint: { el: "tvWsSp",    decimals: 1 },
+    ramp:     { el: "tvWsRamp",  decimals: 0 },
+    hip:      { el: "tvWsHip",   decimals: 1 },
+    torso:    { el: "tvWsTorso", decimals: 1 },
+};
+
+function updateWSTuneLabel(id, rawVal) {
+    const m = _wsTuneMap[id];
+    if (m) document.getElementById(m.el).textContent =
+        parseFloat(rawVal).toFixed(m.decimals);
+}
+
+// Debounced send — converts setpoint from degrees to radians before sending.
+function sendWSTune() {
+    clearTimeout(sendWSTune._t);
+    sendWSTune._t = setTimeout(() => {
+        const spDeg  = parseFloat(document.getElementById("slWsSp").value);
+        const spRad  = (spDeg * Math.PI / 180).toFixed(5);
+        const hip    = document.getElementById("slWsHip").value;
+        const torso  = document.getElementById("slWsTorso").value;
+        const ramp   = document.getElementById("slWsRamp").value;
+        const msg = `CMD:WEIGHT_SHIFT_TUNE:setpoint=${spRad},hip=${hip},torso=${torso},ramp=${ramp}`;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(msg);
+            console.log("[WS TX]", msg);
+        }
+    }, 80);
+}
+
+// Update progress bar from BALANCE: packet (ws_prog field) or any future WSHIFT: packet.
+// progress: -1.0 to +1.0 → bar position: 0% to 100% (center = 50%).
+function updateWShiftProgress(progress, ramping) {
+    const bar   = document.getElementById("wshiftBar");
+    const label = document.getElementById("wshiftLabel");
+    if (!bar) return;
+    const pct = (progress + 1.0) / 2.0 * 100;
+    bar.style.width      = pct.toFixed(1) + "%";
+    bar.style.background = ramping     ? "#ffa726" :
+                           progress > 0.05  ? "#7e57c2" :
+                           progress < -0.05 ? "#c2577e" : "#555";
+    const dir = progress > 0.05  ? "← LEFT  " :
+                progress < -0.05 ? "RIGHT →" : "center";
+    label.textContent = "Progress: " + dir + "  (" + (progress * 100).toFixed(0) + "%)";
 }
 
 window.onload = () => { buildUI(); buildSpeedPanel(); initWebSocket(); };

@@ -43,7 +43,7 @@ struct BalanceConfig;
 //   NONE  =  0 → progress ramps to  0.0 (return to center)
 // ---------------------------------------------------------------------------
 enum class ShiftDirection : int8_t {
-    NONE  =  0,
+    NONE  =  0,   // "center" in WebSocket protocol — returns to zero lean
     LEFT  =  1,
     RIGHT = -1,
 };
@@ -124,7 +124,8 @@ private:
     MotionManager*     _mm             = nullptr;
     WeightShiftConfig  _cfg;
     WeightShiftState   _state;
-    float              _targetProgress = 0.0f;  // ramp target: −1, 0, or +1
+    float              _targetProgress        = 0.0f;   // ramp target: −1, 0, or +1
+    float              _lastInjectedSetpointRad = 0.0f;  // prevents redundant setConfig() calls
 };
 
 #endif // WEIGHT_SHIFT_H

@@ -32,7 +32,8 @@ void WeightShift::init(BalanceController* bal, MotionManager* mm) {
     _bal   = bal;
     _mm    = mm;
     _state = {};
-    _targetProgress = 0.0f;
+    _targetProgress             = 0.0f;
+    _lastInjectedSetpointRad    = 0.0f;
     Serial.println("[WeightShift] Initialized.");
 }
 
@@ -70,11 +71,27 @@ void WeightShift::update(float dt_s) {
     }
 
     // ── 1. Roll setpoint injection ────────────────────────────────────────
-    // Invert progress sign: LEFT(+1) → lean left → negative setpoint.
-    // See SIGN CONVENTIONS in file header.
-    BalanceConfig cfg          = _bal->getConfig();
-    cfg.roll_setpoint_rad      = -_state.progress * _cfg.setpoint_shift_rad;
-    _bal->setConfig(cfg);
+    // Only write when the setpoint actually changes — prevents WeightShift from
+    // overwriting any manual trim the user applies via the UI roll setpoint slider
+    // while progress = 0 (fully centered).
+    //
+    // Magnitude is clamped to [0, ∞) here: a negative setpoint_shift_rad would
+    // reverse LEFT/RIGHT semantics, which is user error. Clamp enforces the
+    // convention that setpoint_shift_rad is always a magnitude.
+    //
+    // Sign convention: progress = +1 (full LEFT shift) → lean left → negative setpoint.
+    //   roll_setpoint = −progress × |setpoint_shift_rad|
+    const float shiftMag       = fabsf(_cfg.setpoint_shift_rad);  // enforce magnitude
+    const float newSetpointRad = -_state.progress * shiftMag;
+
+    // Threshold: only write if offset changed by more than 0.5 mrad.
+    // This suppresses the every-tick overwrite while still tracking the ramp accurately.
+    if (fabsf(newSetpointRad - _lastInjectedSetpointRad) > 0.0005f) {
+        BalanceConfig cfg     = _bal->getConfig();
+        cfg.roll_setpoint_rad = newSetpointRad;
+        _bal->setConfig(cfg);
+        _lastInjectedSetpointRad = newSetpointRad;
+    }
 
     // ── 2. Stance-leg hip roll command (SOURCE_GAIT) ──────────────────────
     // Only the STANCE leg receives this command. The other leg floats.

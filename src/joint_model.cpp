@@ -7,13 +7,13 @@
 
 JointModel::JointModel()
     : _driver(nullptr),
-      deadband(4.0f),
       _lastUpdateMs(0)
 {
     for (int i = 0; i < NUM_JOINTS; i++) {
         _currentPulse[i]   = (float)SD_USMIN;
         _targetPulse[i]    = (uint16_t)SD_USMIN;
         _speedDegPerSec[i] = JOINT_SPEED_DEFAULT_DEG_S;
+        deadband[i]        = 4.0f;  // µs — 0.54° for 270° servo, 0.36° for 180°
     }
 }
 
@@ -165,7 +165,7 @@ void JointModel::update() {
 
         // Deadband: skip write if already close enough. Reduces I2C bus
         // traffic and prevents audible servo buzz at rest.
-        if (fabsf(diff) <= deadband) continue;
+       if (fabsf(diff) <= deadband[i]) continue;
 
         // Convert this joint's deg/s speed to a µs step for this tick.
         // MUST use JOINT_CONFIG[i].rangeDeg, not SD_ANGLE_RANGE:
@@ -256,4 +256,10 @@ void JointModel::setAllJointsSpeed(float speedDegPerSec) {
 float JointModel::getJointSpeed(uint8_t jointId) const {
     if (jointId >= NUM_JOINTS) return JOINT_SPEED_DEFAULT_DEG_S;
     return _speedDegPerSec[jointId];
+}
+
+void JointModel::setDeadband(uint8_t jointId, float deadbandUs) {
+    if (jointId >= NUM_JOINTS) return;
+    if (deadbandUs < 1.0f) deadbandUs = 1.0f;  // floor prevents silent zero-deadband bug
+    deadband[jointId] = deadbandUs;
 }

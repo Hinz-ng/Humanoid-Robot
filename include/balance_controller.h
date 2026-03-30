@@ -102,6 +102,12 @@ struct BalanceConfig {
     // Do not raise above 0.70 rad (~40°) — the physics don't support recovery there.
     float fall_threshold_rad   = 0.524f;
 
+    // Number of consecutive ticks above fall_threshold_rad required before ESTOP fires.
+    // At 400 Hz: 3 ticks = 7.5 ms — long enough to reject single-tick spikes,
+    // short enough to catch real falls before servo damage.
+    // Do NOT raise above 10 (25 ms) — recovery range diminishes fast past 30°.
+    uint8_t fall_confirm_ticks = 3;
+
 // =========================================================================
     //  ROLL CONTROLLER PARAMETERS
     //  Mirror of the pitch fields above. Tune after pitch is stable.
@@ -183,6 +189,7 @@ private:
     // Falls back to direct ServoControl writes when MotionManager is absent
     // (preserves the pre-MotionManager behaviour for compatibility/testing).
     void _applyPitchCorrection(float ankle_deg, float hip_deg, float torso_deg);
+    uint8_t _fallTickCount = 0;  // consecutive ticks above fall_threshold — see fall_confirm_ticks
 
     // Applies computed ankle/hip/torso roll corrections.
     // Identical routing logic to _applyPitchCorrection — uses roll IDX constants.

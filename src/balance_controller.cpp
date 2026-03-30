@@ -72,18 +72,31 @@ BalanceState BalanceController::update(const IMUState& state) {
     // --- Fall detection (pitch OR roll exceeding threshold triggers ESTOP) ---
     // Covers both axes: if the robot falls forward, backward, or laterally,
     // it is past recoverable range. Torque-holding against the floor damages servos.
-    if (fabsf(state.pitch) > _cfg.fall_threshold_rad ||
+     if (fabsf(state.pitch) > _cfg.fall_threshold_rad ||
         fabsf(state.roll)  > _cfg.fall_threshold_rad) {
-        oe_estop();
-        // Reset servo state while OE is HIGH so no stale commands apply on re-enable.
-        if (_servo != nullptr) {
-            _servo->resetToNeutral();
+        _fallTickCount++;
+        if (_fallTickCount >= _cfg.fall_confirm_ticks) {
+            _fallTickCount = 0;
+            oe_estop();
+            if (_servo != nullptr) {
+                _servo->resetToNeutral();
+            }
+            out.fell = true;
+            Serial.printf("[BalanceController] FALL CONFIRMED (%u ticks): "
+                          "pitch=%.3f roll=%.3f rad  threshold=%.3f → ESTOP\n",
+                          _cfg.fall_confirm_ticks,
+                          state.pitch, state.roll, _cfg.fall_threshold_rad);
+            _lastState = out;
+            return out;
         }
-        out.fell = true;
-        Serial.printf("[BalanceController] FALL DETECTED: pitch=%.3f roll=%.3f rad  threshold=%.3f → ESTOP\n",
-                      state.pitch, state.roll, _cfg.fall_threshold_rad);
-        _lastState = out;
-        return out;
+        // Not yet confirmed — log the pending count but do not estop.
+        Serial.printf("[BalanceController] Fall candidate tick %u/%u: "
+                      "pitch=%.3f roll=%.3f\n",
+                      _fallTickCount, _cfg.fall_confirm_ticks,
+                      state.pitch, state.roll);
+    } else {
+        // Reset counter on any tick within safe range.
+        _fallTickCount = 0;
     }
 
     // =========================================================================

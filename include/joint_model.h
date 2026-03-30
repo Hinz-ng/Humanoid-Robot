@@ -124,7 +124,8 @@ public:
     // elapsed dt so speed tracking is accurate even if the update rate drifts.
 
     // Set movement speed for one joint (deg/s).
-    // Clamped to [JOINT_SPEED_MIN_DEG_S, JOINT_SPEED_MAX_DEG_S] from project_wide_defs.h.
+     // Floor: JOINT_SPEED_MIN_DEG_S (project_wide_defs.h).
+    // Ceiling: JointConfig::noLoadSpeedDegS for this channel (joint_config.h).
     void  setJointSpeed(uint8_t jointId, float speedDegPerSec);
 
     // Set the same speed for every joint at once. Useful for UI "apply all".
@@ -133,11 +134,14 @@ public:
     // Query current configured speed for one joint.
     float getJointSpeed(uint8_t jointId) const;
 
-    // deadband: µs gap below which no hardware write occurs (default 4).
-    // Prevents constant tiny PWM jitter at rest.
-    // stepSize is DEPRECATED — use setJointSpeed() instead. Left in place so
-    // any legacy call sites still compile; it is no longer read by update().
-    float deadband;
+    // Per-channel deadband (µs). Write only occurs when |target - current| > deadband[ch].
+    // Default 4 µs for all channels. Increase for channels with known oscillation
+    // (e.g., torso pitch when running under balance control).
+    // Tune: 4 µs ≈ 0.54° for 270° servo. 8 µs ≈ 1.08°.
+    float deadband[NUM_JOINTS];
+
+    // Set deadband for one channel (µs). Minimum 1 µs to prevent zero-deadband jitter.
+    void setDeadband(uint8_t jointId, float deadbandUs);
 
 private:
     ServoDriver* _driver;  // Pointer to Layer 1 — set by init(), never owned

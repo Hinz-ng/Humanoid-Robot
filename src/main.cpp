@@ -70,12 +70,11 @@ void oe_estop() {
 }
 
 void oe_clear() {
-    // CRITICAL ORDER: reset servo state BEFORE enabling outputs.
-    // Any stale target values accumulated during estop (balance corrections,
-    // UI slider commands, fall-detection peaks) would otherwise snap all
-    // joints simultaneously the moment OE goes LOW.
     servoController.resetToNeutral();
-
+    // Reset weight shift to center so no stale lean is applied on re-enable.
+    // Must run before OE goes LOW to prevent the injected setpoint from triggering
+    // an immediate balance correction toward the pre-estop lean target.
+    weightShift.trigger(ShiftDirection::NONE);
     _oe_estopped = false;
     _oe_released = true;
     digitalWrite(OE_PIN, LOW);

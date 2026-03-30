@@ -34,7 +34,11 @@ void ServoControl::init() {
 
     // Step 3: Link the joint model to the hardware driver.
     _model.init(&_driver);
-
+    
+    // Torso pitch has balance controller writing at 400 Hz.
+// Wider deadband suppresses oscillatory writes that produce visible jitter.
+// 10 µs ≈ 1.35° for 270° servo — wide enough to damp, tight enough to track setpoint.
+_model.setDeadband(IDX_TORSO_PITCH, 10.0f);
     // Step 4: Drive all joints to neutral immediately (no smooth stepping).
     //         The OE pin is still held high at this point, so servos receive
     //         the pulse but won't move until oe_loop() releases the OE hold.

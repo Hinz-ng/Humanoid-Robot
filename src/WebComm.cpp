@@ -469,6 +469,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         String key = pair.substring(0, eq);
                         float  val = pair.substring(eq + 1).toFloat();
                         if      (key == "setpoint") cfg.setpoint_shift_rad = val;
+                        else if (key == "ankle")    cfg.ankle_shift_deg    = val;
                         else if (key == "hip")      cfg.hip_shift_deg      = val;
                         else if (key == "torso")    cfg.torso_shift_deg    = val;
                         else if (key == "ramp")     cfg.ramp_ms            = val;

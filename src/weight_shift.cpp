@@ -113,6 +113,20 @@ void WeightShift::update(float dt_s) {
         }
     }
 
+    // ── 2b. Ankle roll feedforward (SOURCE_GAIT) ─────────────────────────
+    // Primary CoM shift driver. Commands both ankle roll joints directly,
+    // proportional to progress. The balance controller must have
+    // ankle_roll_ratio=0 or it will override these via SOURCE_BALANCE (priority 2).
+    //
+    // Sign: mirrors balance_controller._applyRollCorrection() negate convention.
+    //   progress > 0 (LEFT): lean left → L_ankle = +cmd, R_ankle = -cmd.
+    //   This is the same command the balance controller issues to correct a right lean.
+    if (fabsf(_cfg.ankle_shift_deg) > 0.01f && fabsf(_state.progress) > 0.01f) {
+        float cmd = _state.progress * _cfg.ankle_shift_deg;
+        _mm->submit(SOURCE_GAIT, IDX_L_ANKLE_ROLL,  cmd);
+        _mm->submit(SOURCE_GAIT, IDX_R_ANKLE_ROLL, -cmd);
+    }
+
     // ── 3. Torso roll command (SOURCE_GAIT) ───────────────────────────────
     // Direction unverified on hardware — keep torso_shift_deg = 0 until confirmed.
     // If torso moves wrong way, negate torso_shift_deg in the UI.

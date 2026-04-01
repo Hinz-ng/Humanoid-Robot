@@ -61,9 +61,23 @@ struct WeightShiftConfig {
     //   0.05 rad ≈ 2.9°. Start here. Do not exceed 0.10 rad until stability is confirmed.
     float setpoint_shift_rad = 0.050f;  // rad — magnitude; sign applied per direction
 
+    // Ankle roll feedforward (degrees from neutral), applied to BOTH ankles.
+    // This is the PRIMARY CoM shift driver. Set ankle_roll_ratio=0 in
+    // BalanceConfig when using this — SOURCE_BALANCE (priority 2) overrides
+    // SOURCE_GAIT (priority 1) on the same joint if that ratio is non-zero.
+    //
+    // Sign convention mirrors _applyRollCorrection() in balance_controller.cpp:
+    //   progress > 0 (LEFT shift): IDX_L_ANKLE_ROLL = +cmd, IDX_R_ANKLE_ROLL = -cmd
+    // Flip sign via the UI if shift direction is wrong on hardware.
+    //
+    // Tuning path:
+    //   1. Confirm setpoint-only shift works (leave this at 0).
+    //   2. Set ankle_roll_ratio=0 in BalanceConfig (UI slider).
+    //   3. Start at 5°, verify direction, increase toward ~13°.
+    float ankle_shift_deg    = 0.0f;   // deg — 0 = disabled; ~13° for single-leg stance
+
     // Hip roll command sent to STANCE-SIDE hip only (degrees from neutral).
-    // The swing leg's hip roll is deliberately NOT commanded by this module.
-    // Start at 0 (disabled). Enable only after ankle-only shift is stable.
+    // Enable only after ankle feedforward shift is stable.
     // If correction goes the wrong way, negate this value.
     float hip_shift_deg      = 0.0f;   // deg — 0 = disabled
 

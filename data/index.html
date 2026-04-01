@@ -580,6 +580,23 @@
 
             <div class="wshift-tune-row">
                 <div class="tune-header">
+                    <span>Ankle shift (°)</span>
+                    <span class="tune-val" id="tvWsAnkle">0.0</span>
+                </div>
+                <input type="range" id="slWsAnkle" min="0" max="20" step="0.5" value="0"
+                       oninput="updateWSTuneLabel('ankle', this.value); sendWSTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Primary shift driver. Set ankle_roll_ratio=0 in Balance panel first.
+                    Start at 5°, verify direction, increase toward 13°.
+                </div>
+            </div>
+
+            <div class="wshift-tune-row">
+                <div class="tune-header">
+                    <span>Hip shift (°)</span>
+
+            <div class="wshift-tune-row">
+                <div class="tune-header">
                     <span>Hip shift (°)</span>
                     <span class="tune-val" id="tvWsHip">0.0</span>
                 </div>
@@ -1338,10 +1355,11 @@ function toggleWShiftPanel() {
 }
 
 const _wsTuneMap = {
-    setpoint: { el: "tvWsSp",    decimals: 1 },
-    ramp:     { el: "tvWsRamp",  decimals: 0 },
-    hip:      { el: "tvWsHip",   decimals: 1 },
-    torso:    { el: "tvWsTorso", decimals: 1 },
+    setpoint: { el: "tvWsSp",     decimals: 1 },
+    ramp:     { el: "tvWsRamp",   decimals: 0 },
+    ankle:    { el: "tvWsAnkle",  decimals: 1 },
+    hip:      { el: "tvWsHip",    decimals: 1 },
+    torso:    { el: "tvWsTorso",  decimals: 1 },
 };
 
 function updateWSTuneLabel(id, rawVal) {
@@ -1356,10 +1374,11 @@ function sendWSTune() {
     sendWSTune._t = setTimeout(() => {
         const spDeg  = parseFloat(document.getElementById("slWsSp").value);
         const spRad  = (spDeg * Math.PI / 180).toFixed(5);
+        const ankle  = document.getElementById("slWsAnkle").value;
         const hip    = document.getElementById("slWsHip").value;
         const torso  = document.getElementById("slWsTorso").value;
         const ramp   = document.getElementById("slWsRamp").value;
-        const msg = `CMD:WEIGHT_SHIFT_TUNE:setpoint=${spRad},hip=${hip},torso=${torso},ramp=${ramp}`;
+        const msg = `CMD:WEIGHT_SHIFT_TUNE:setpoint=${spRad},ankle=${ankle},hip=${hip},torso=${torso},ramp=${ramp}`;
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(msg);
             console.log("[WS TX]", msg);

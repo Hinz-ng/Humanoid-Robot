@@ -123,8 +123,8 @@ void WeightShift::update(float dt_s) {
     //   This is the same command the balance controller issues to correct a right lean.
     if (fabsf(_cfg.ankle_shift_deg) > 0.01f && fabsf(_state.progress) > 0.01f) {
         float cmd = _state.progress * _cfg.ankle_shift_deg;
-        _mm->submit(SOURCE_GAIT, IDX_L_ANKLE_ROLL,  cmd);
-        _mm->submit(SOURCE_GAIT, IDX_R_ANKLE_ROLL, -cmd);
+        _mm->submit(SOURCE_GAIT, IDX_L_ANKLE_ROLL, -cmd);
+        _mm->submit(SOURCE_GAIT, IDX_R_ANKLE_ROLL,  cmd);
     }
 
     // ── 3. Torso roll command (SOURCE_GAIT) ───────────────────────────────
@@ -132,8 +132,54 @@ void WeightShift::update(float dt_s) {
     // If torso moves wrong way, negate torso_shift_deg in the UI.
     // TODO(FSR): when foot contact is available, condition torso command on
     //            confirmed single-support phase rather than motion command.
+    
     if (fabsf(_cfg.torso_shift_deg) > 0.01f && fabsf(_state.progress) > 0.01f) {
         _mm->submit(SOURCE_GAIT, IDX_TORSO_ROLL,
                      _state.progress * _cfg.torso_shift_deg);
+    }
+
+    // ── 4. Swing leg lift (SOURCE_GAIT) ──────────────────────────────────
+    // Raises the swing leg once sufficient weight is on the stance leg.
+    //
+    // lift_scale: linearly ramps from 0 at swing_lift_threshold to 1 at
+    // |progress|=1.0. Submitting 0° (liftScale=0) as progress returns toward
+    // zero issues a "go to neutral" command that the smooth-stepper tracks.
+    //
+    // SOURCE_GAIT (1) < SOURCE_BALANCE (2): documented conflict guard in config.
+    {
+        // Constrain threshold away from 1.0 to prevent division by zero.
+        const float th = constrain(_cfg.swing_lift_threshold, 0.0f, 0.95f);
+
+        float absProgress = fabsf(_state.progress);
+        float liftScale   = 0.0f;
+
+        if (absProgress > th) {
+            // Linear ramp from 0 at threshold to 1 at full shift.
+            liftScale = (absProgress - th) / (1.0f - th);
+            liftScale = constrain(liftScale, 0.0f, 1.0f);
+        }
+
+        // Submit whenever the shift is active. submitting 0° during the return
+        // ramp commands the joints back to neutral via the smooth-stepper.
+        if (absProgress > 0.01f) {
+            uint8_t swingHipCh, swingKneeCh;
+            if (_state.progress > 0.0f) {
+                // Shifting LEFT → right leg is swing.
+                swingHipCh  = IDX_R_HIP_PITCH;
+                swingKneeCh = IDX_R_KNEE_PITCH;
+            } else {
+                // Shifting RIGHT → left leg is swing.
+                swingHipCh  = IDX_L_HIP_PITCH;
+                swingKneeCh = IDX_L_KNEE_PITCH;
+            }
+
+            // Hip extension: negative joint angle (joint convention: positive = flexion).
+            // Knee flexion:  positive joint angle.
+            float hipCmd  = -liftScale * _cfg.swing_hip_extension_deg;
+            float kneeCmd =  liftScale * _cfg.swing_knee_flexion_deg;
+
+            _mm->submit(SOURCE_GAIT, swingHipCh,  hipCmd);
+            _mm->submit(SOURCE_GAIT, swingKneeCh, kneeCmd);
+        }
     }
 }

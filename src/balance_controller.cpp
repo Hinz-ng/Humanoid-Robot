@@ -106,23 +106,44 @@ BalanceState BalanceController::update(const IMUState& state) {
     //                   Verify empirically before first enable.
     // =========================================================================
     if (_cfg.pitch_enabled) {
-        float error     = state.pitch - _cfg.pitch_setpoint_rad;
-        float u_raw     = (_cfg.Kp * error + _cfg.Kd * state.pitchRate) * _cfg.correction_sign;
-        float u_clamped = constrain(u_raw, -_cfg.max_correction_deg, _cfg.max_correction_deg);
+        float error = state.pitch - _cfg.pitch_setpoint_rad;
 
-        float ankle_cmd = u_clamped * _cfg.ankle_ratio;
-        float hip_cmd   = u_clamped * _cfg.hip_ratio;
-        float torso_cmd = u_clamped * _cfg.torso_ratio;
+        // IIR low-pass on pitchRate — updated every tick regardless of deadband.
+        // Keeping the filter state warm prevents a step transient when the robot
+        // moves outside the deadband: the filtered rate is already tracking the
+        // true rate, so Kd gets a smooth value immediately.
+        // Without this, Kd × raw gyro noise at 400 Hz produces visible servo buzz
+        // even when the robot is nearly upright.
+        _pitchRateFiltered = _cfg.derivative_lpf_alpha * _pitchRateFiltered
+                           + (1.0f - _cfg.derivative_lpf_alpha) * state.pitchRate;
 
-        _applyPitchCorrection(ankle_cmd, hip_cmd, torso_cmd);
+        out.pitch_active = true;
+        out.pitch_error  = error;
 
-        out.pitch_active  = true;
-        out.pitch_error   = error;
-        out.u_raw         = u_raw;
-        out.u_clamped     = u_clamped;
-        out.ankle_cmd_deg = ankle_cmd;
-        out.hip_cmd_deg   = hip_cmd;
-        out.torso_cmd_deg = torso_cmd;
+        // Deadband: suppress correction when error is below threshold.
+        // Near equilibrium the Kd×rate term dominates (error ≈ 0), driving
+        // noise-sourced limit cycles. Deadband breaks this without affecting
+        // the transient response where error >> deadband.
+        if (fabsf(error) >= _cfg.pitch_deadband_rad) {
+            float u_raw     = (_cfg.Kp * error + _cfg.Kd * _pitchRateFiltered)
+                              * _cfg.correction_sign;
+            float u_clamped = constrain(u_raw, -_cfg.max_correction_deg,
+                                               _cfg.max_correction_deg);
+
+            float ankle_cmd = u_clamped * _cfg.ankle_ratio;
+            float hip_cmd   = u_clamped * _cfg.hip_ratio;
+            float torso_cmd = u_clamped * _cfg.torso_ratio;
+
+            _applyPitchCorrection(ankle_cmd, hip_cmd, torso_cmd);
+
+            out.u_raw         = u_raw;
+            out.u_clamped     = u_clamped;
+            out.ankle_cmd_deg = ankle_cmd;
+            out.hip_cmd_deg   = hip_cmd;
+            out.torso_cmd_deg = torso_cmd;
+        }
+        // Within deadband: no command issued this tick. out.u_* remain 0.
+        // The telemetry still shows pitch_error and pitch_active=true — visible in UI.
     }
 
     // =========================================================================
@@ -238,10 +259,15 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg, flo
                    "using direct servo write for roll. Wire setMotionManager() in setup().");
     _servo->setJointAngleDirect(IDX_R_ANKLE_ROLL, -ankle_deg); // direction opposite to left
     _servo->setJointAngleDirect(IDX_L_ANKLE_ROLL, ankle_deg);
-    if (fabsf(hip_deg) > 0.01f) {
-        _servo->setJointAngleDirect(IDX_R_HIP_ROLL, hip_deg);
-        _servo->setJointAngleDirect(IDX_L_HIP_ROLL, hip_deg);
-    }
+        if (fabsf(hip_deg) > 0.01f) {
+            // Hip pitch correction is mechanically opposite to ankle pitch.
+            // Positive u_clamped (forward lean) must dorsi-flex ankles AND
+            // extend hips — but hip extension maps to a negative joint angle
+            // in this servo's configuration. Negation here mirrors the existing
+            // torso pitch pattern (_applyPitchCorrection, torso block).
+            _motionManager->submit(SOURCE_BALANCE, IDX_R_HIP_PITCH, hip_deg);
+            _motionManager->submit(SOURCE_BALANCE, IDX_L_HIP_PITCH, hip_deg);
+        }
     if (fabsf(torso_deg) > 0.01f) {
         _servo->setJointAngleDirect(IDX_TORSO_ROLL, torso_deg);
     }

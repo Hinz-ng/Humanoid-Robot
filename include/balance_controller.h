@@ -65,12 +65,33 @@ struct BalanceConfig {
 
     // --- PD gains ---
     // Units: Kp is deg/rad, Kd is deg/(rad/s).
-    // Because error is in radians (small numbers), Kp must be large to produce
-    // visible corrections. At 10° lean (0.175 rad), Kp=10 gives only 1.75° output.
-    // Useful range for this robot: Kp=50–120, Kd=0.5–3.0.
-    // Tuning order: set Kd=0, increase Kp to edge of oscillation, then add Kd to damp.
-    float Kp                   = 10.0f;   // deg/rad
-    float Kd                   = 0.5f;    // deg/(rad/s)
+    // At 10° lean (0.175 rad), Kp=10 → u_raw = 1.75°. This is a meaningful correction.
+    //
+    // GAIN RANGE FOR THIS ROBOT (35-40cm, ~50ms actuator lag):
+    //   Critical Kp ≈ 1/(ω × delay) ≈ 1/(6.3 × 0.05) ≈ 3 in normalized units.
+    //   In deg/rad: Kp = 5–20. DO NOT START above 20 — the phase margin is already
+    //   thin with 50ms servo delay. Kp=50+ will oscillate immediately on hardware.
+    //   Kd: 0.1–0.8 effective range. Beyond 1.0, derivative noise dominates.
+    //
+    // Tuning order: Kd=0, increase Kp until just oscillates, back off 20%, then add Kd.
+    float Kp                   = 10.0f;   // deg/rad — start here, max ~20 for this robot
+    float Kd                   = 0.3f;    // deg/(rad/s)
+
+    // --- Error deadband ---
+    // Corrections below this pitch error are suppressed entirely.
+    // Near equilibrium, the Kd×pitchRate term dominates and drives noise into the
+    // ankles at 400 Hz — producing a software limit cycle indistinguishable from
+    // hardware jitter. This deadband breaks that cycle.
+    // 0.02 rad ≈ 1.15°. Widen if residual buzz persists; tighten if response is sluggish.
+    float pitch_deadband_rad   = 0.02f;   // rad
+
+    // --- Derivative low-pass filter coefficient ---
+    // Applied to pitchRate before Kd multiplication (IIR: y = α×y_prev + (1-α)×x).
+    // Attenuates 400 Hz gyro shot noise from the derivative term.
+    // 0.0 = no filtering (raw rate). 0.8 = moderate smoothing. Start at 0.70.
+    // Recalculate if IMU_LOOP_HZ changes: α = 1 - (1 / (τ_sec × IMU_LOOP_HZ))
+    // where τ_sec is the desired derivative time constant.
+    float derivative_lpf_alpha = 0.70f;   // dimensionless, [0.0, 1.0)
    
     // --- Joint distribution ---
     // Three ratios must sum to 1.0. Firmware normalises after every BALANCE_TUNE.
@@ -188,9 +209,10 @@ private:
     // Routes through MotionManager when wired (priority arbitration).
     // Falls back to direct ServoControl writes when MotionManager is absent
     // (preserves the pre-MotionManager behaviour for compatibility/testing).
+   // NEW:
     void _applyPitchCorrection(float ankle_deg, float hip_deg, float torso_deg);
-    uint8_t _fallTickCount = 0;  // consecutive ticks above fall_threshold — see fall_confirm_ticks
-
+    uint8_t _fallTickCount     = 0;
+    float   _pitchRateFiltered = 0.0f;  // IIR state for filtered derivative term
     // Applies computed ankle/hip/torso roll corrections.
     // Identical routing logic to _applyPitchCorrection — uses roll IDX constants.
     void _applyRollCorrection(float ankle_deg, float hip_deg, float torso_deg);

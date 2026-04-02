@@ -90,6 +90,30 @@ struct WeightShiftConfig {
     // Short ramp → large impulse → fall risk.
     // Start at 500 ms. Reduce only after the full shift is stable.
     float ramp_ms            = 500.0f;  // ms
+
+    // ── Swing leg lift ────────────────────────────────────────────────────
+    // Feedforward lift applied to the swing leg (opposite to shift direction)
+    // via SOURCE_GAIT. No UI sliders — tune here before reflashing.
+    //
+    // Clearance model (from robot_geometry.h):
+    //   L_THIGH=96mm, L_SHANK=95.4mm, L_ANKLE_TO_SOLE=15.4mm → neutral=206.8mm
+    //   formula: clearance = 206.8 − (L_THIGH×cos(θh) + L_SHANK×cos(θh−θk) + 15.4)
+    //   θh=15°, θk=40° → clearance = 12.2mm (flat floor adequate).
+    //   If leg geometry changes, recalculate before changing these values.
+    //
+    // PRIORITY CONFLICT GUARD:
+    //   SOURCE_GAIT (1) < SOURCE_BALANCE (2). If BalanceConfig::hip_ratio > 0,
+    //   the balance controller overrides the swing hip pitch command.
+    //   Keep hip_ratio = 0 in BalanceConfig while using swing leg lift.
+    //   Knee joints are never touched by the balance controller — no conflict there.
+    float swing_hip_extension_deg = -20.0f;  // deg — magnitude; applied as negative joint angle
+    float swing_knee_flexion_deg  = 45.0f;  // deg — magnitude; applied as positive joint angle
+
+    // Progress fraction at which the lift begins, in [0, 1).
+    // lift_scale ramps linearly from 0 at threshold to 1 at |progress|=1.0.
+    // Ensures sufficient weight transfer before the foot leaves the ground.
+    // Start at 0.5 — raise toward 0.7 if the initial lift destabilises the shift.
+    float swing_lift_threshold    = 0.50f;  // dimensionless
 };
 
 // ---------------------------------------------------------------------------

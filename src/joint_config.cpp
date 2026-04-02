@@ -23,26 +23,26 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
 // ▼  RIGHT LEG  ──────────────────────────────────────────────────────────────────────
 
     //  Ankle Roll  — 270° servo, 0.18 s/60° → 333 °/s
-    {  0,  "right_ankle_roll",    130.0f,  +1,  -30.0f,  +30.0f,  270.0f,  333.0f  },  // TUNE
+    {  0,  "right_ankle_roll",    133.0f,  +1,  -30.0f,  +30.0f,  270.0f,  333.0f  },  // TUNE
 
     //  Ankle Pitch (QY3242BLS)  — 180° servo, 0.085 s/60° → 706 °/s
     {  1,  "right_ankle_pitch",   138.0f,  +1,  -60.0f,  +60.0f,  180.0f,  706.0f  },  // TUNE
 
     //  Knee Pitch (same servo as hip roll)  — 270° servo, 0.12 s/60° → 500 °/s
-    {  2,  "right_knee_pitch",    138.0f,  -1,  0.0f, +100.0f,  270.0f,  500.0f  },  // TUNE
+    {  2,  "right_knee_pitch",    139.0f,  -1,  0.0f, +100.0f,  270.0f,  500.0f  },  // TUNE
 
     //  Hip Roll (same servo as knee pitch)  — 270° servo, 0.12 s/60° → 500 °/s
-    {  3,  "right_hip_roll",      135.0f,  +1,  -20.0f,  +80.0f,  270.0f,  500.0f  },  // TUNE
+    {  3,  "right_hip_roll",      140.0f,  +1,  -20.0f,  +80.0f,  270.0f,  500.0f  },  // TUNE
 
     //  Hip Yaw  — 180° servo, 0.09 s/60° → 667 °/s
-    {  4,  "right_hip_yaw",       135.0f,  +1,  -50.0f,  +50.0f,  180.0f,  667.0f  },  // TUNE
+    {  4,  "right_hip_yaw",       130.0f,  +1,  -50.0f,  +50.0f,  180.0f,  667.0f  },  // TUNE
 
     //  Hip Pitch  — 270° servo, 0.11 s/60° → 545 °/s
     {  5,  "right_hip_pitch",     128.0f,  +1,  -25.0f,  +90.0f,  270.0f,  545.0f  },  // TUNE
 
 // ▼  LEFT LEG  ───────────────────────────────────────────────────────────────────────
 
-    {  6,  "left_hip_pitch",      135.0f,  -1,  -25.0f,  +90.0f,  270.0f,  545.0f  },  // TUNE
+    {  6,  "left_hip_pitch",      134.0f,  -1,  -25.0f,  +90.0f,  270.0f,  545.0f  },  // TUNE
     {  7,  "left_hip_yaw",        130.0f,  -1,  -50.0f,  +50.0f,  180.0f,  667.0f  },  // TUNE
 
 // ▼  TORSO  ──────────────────────────────────────────────────────────────────────────
@@ -58,8 +58,8 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
 
     { 12,  "left_hip_roll",       130.0f,  -1,  -20.0f,  +80.0f,  270.0f,  500.0f  },  // TUNE
     { 13,  "left_knee_pitch",     140.0f,  +1,  0.0f, +100.0f,  270.0f,  500.0f  },  // TUNE
-    { 14,  "left_ankle_pitch",    130.0f,  -1,  -60.0f,  +60.0f,  180.0f,  706.0f  },  // TUNE
-    { 15,  "left_ankle_roll",     137.0f,  -1,  -30.0f,  +30.0f,  270.0f,  333.0f  },  // TUNE
+    { 14,  "left_ankle_pitch",    128.0f,  -1,  -60.0f,  +60.0f,  180.0f,  706.0f  },  // TUNE
+    { 15,  "left_ankle_roll",     138.0f,  -1,  -30.0f,  +30.0f,  270.0f,  333.0f  },  // TUNE
 
 };
 // Guard: array length must match NUM_JOINTS. If you add or remove a joint,

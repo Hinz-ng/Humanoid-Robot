@@ -468,11 +468,16 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     if (eq != -1) {
                         String key = pair.substring(0, eq);
                         float  val = pair.substring(eq + 1).toFloat();
-                        if      (key == "setpoint") cfg.setpoint_shift_rad = val;
-                        else if (key == "ankle")    cfg.ankle_shift_deg    = val;
-                        else if (key == "hip")      cfg.hip_shift_deg      = val;
-                        else if (key == "torso")    cfg.torso_shift_deg    = val;
-                        else if (key == "ramp")     cfg.ramp_ms            = val;
+                        if      (key == "setpoint")    cfg.setpoint_shift_rad      = val;
+                        else if (key == "ankle")        cfg.ankle_shift_deg         = val;
+                        else if (key == "hip")          cfg.hip_shift_deg           = val;
+                        else if (key == "torso")        cfg.torso_shift_deg         = val;
+                        else if (key == "ramp")         cfg.ramp_ms                 = val;
+                        // Swing lift — no UI sliders; tune via raw WS or reflash config.
+                        // Example: CMD:WEIGHT_SHIFT_TUNE:swing_hip=15.0,swing_knee=40.0
+                        else if (key == "swing_hip")    cfg.swing_hip_extension_deg = val;
+                        else if (key == "swing_knee")   cfg.swing_knee_flexion_deg  = val;
+                        else if (key == "swing_thresh") cfg.swing_lift_threshold = val;
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
@@ -503,6 +508,8 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         if      (key == "Kp")       cfg.Kp                 = val;
                         else if (key == "Kd")       cfg.Kd                 = val;
                         else if (key == "setpoint") cfg.pitch_setpoint_rad = val;
+                        else if (key == "deadband") cfg.pitch_deadband_rad = val;
+                        else if (key == "d_lpf")    cfg.derivative_lpf_alpha = val;
                         else if (key == "ankle")    cfg.ankle_ratio        = val;
                         else if (key == "hip")      cfg.hip_ratio          = val;
                         else if (key == "torso")    cfg.torso_ratio        = val;

@@ -76,6 +76,17 @@ struct WeightShiftConfig {
     //   3. Start at 5°, verify direction, increase toward ~13°.
     float ankle_shift_deg    = 0.0f;   // deg — 0 = disabled; ~13° for single-leg stance
 
+    // Forward ankle pitch tilt applied during weight shift (degrees, joint-relative).
+    // Scaled by |progress| so it ramps in smoothly with the weight shift.
+    // Applied equally to both ankles regardless of shift direction (left or right).
+    // JointModel direction fields (+1 right, -1 left) produce symmetric motion
+    // automatically — do NOT negate for one side manually.
+    //
+    // To adjust: change ANKLE_PITCH_FORWARD_TILT_DEG in project_wide_defs.h.
+    // To reverse direction: set a negative value here or negate the constant.
+    // To disable: set to 0.0f.
+    float ankle_pitch_tilt_deg = ANKLE_PITCH_FORWARD_TILT_DEG;  // deg — default 3.0°
+
     // Hip roll command sent to STANCE-SIDE hip only (degrees from neutral).
     // Enable only after ankle feedforward shift is stable.
     // If correction goes the wrong way, negate this value.
@@ -106,8 +117,8 @@ struct WeightShiftConfig {
     //   the balance controller overrides the swing hip pitch command.
     //   Keep hip_ratio = 0 in BalanceConfig while using swing leg lift.
     //   Knee joints are never touched by the balance controller — no conflict there.
-    float swing_hip_extension_deg = -20.0f;  // deg — magnitude; applied as negative joint angle
-    float swing_knee_flexion_deg  = 45.0f;  // deg — magnitude; applied as positive joint angle
+    float swing_hip_extension_deg = -0.0f;  // deg — magnitude; applied as negative joint angle
+    float swing_knee_flexion_deg  = 60.0f;  // deg — magnitude; applied as positive joint angle
 
     // Progress fraction at which the lift begins, in [0, 1).
     // lift_scale ramps linearly from 0 at threshold to 1 at |progress|=1.0.

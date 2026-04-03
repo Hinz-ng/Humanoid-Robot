@@ -127,6 +127,26 @@ void WeightShift::update(float dt_s) {
         _mm->submit(SOURCE_GAIT, IDX_R_ANKLE_ROLL,  cmd);
     }
 
+    // ── 2c. Ankle pitch forward tilt (SOURCE_GAIT) ───────────────────────
+    // Tilts both ankles forward proportionally to |progress| during weight shift.
+    // Uses |progress| (not signed progress) because the forward lean preparation
+    // applies equally for left and right shifts — it is a sagittal-plane effect
+    // independent of the frontal-plane CoM translation.
+    //
+    // JointModel maps the same joint-relative angle to symmetric physical motion
+    // on both sides via the direction field (right=+1, left=-1). No manual
+    // sign flip per channel is needed or correct here.
+    //
+    // SOURCE_GAIT (1) < SOURCE_BALANCE (2): if balance pitch correction is active
+    // on ankle pitch joints, SOURCE_BALANCE wins this tick and the tilt is not
+    // applied. To use tilt independently, reduce ankle_ratio in BalanceConfig.
+    if (fabsf(_cfg.ankle_pitch_tilt_deg) > 0.01f && fabsf(_state.progress) > 0.01f) {
+        // Scale smoothly with |progress|: 0 at center, full at ±1.0.
+        float tiltCmd = fabsf(_state.progress) * _cfg.ankle_pitch_tilt_deg;
+        _mm->submit(SOURCE_GAIT, IDX_R_ANKLE_PITCH, tiltCmd);
+        _mm->submit(SOURCE_GAIT, IDX_L_ANKLE_PITCH, tiltCmd);
+    }
+
     // ── 3. Torso roll command (SOURCE_GAIT) ───────────────────────────────
     // Direction unverified on hardware — keep torso_shift_deg = 0 until confirmed.
     // If torso moves wrong way, negate torso_shift_deg in the UI.

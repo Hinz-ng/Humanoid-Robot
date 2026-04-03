@@ -83,7 +83,7 @@ struct BalanceConfig {
     // ankles at 400 Hz — producing a software limit cycle indistinguishable from
     // hardware jitter. This deadband breaks that cycle.
     // 0.02 rad ≈ 1.15°. Widen if residual buzz persists; tighten if response is sluggish.
-    float pitch_deadband_rad   = 0.02f;   // rad
+    float pitch_deadband_rad   = 0.035f;   // rad
 
     // --- Derivative low-pass filter coefficient ---
     // Applied to pitchRate before Kd multiplication (IIR: y = α×y_prev + (1-α)×x).
@@ -91,8 +91,26 @@ struct BalanceConfig {
     // 0.0 = no filtering (raw rate). 0.8 = moderate smoothing. Start at 0.70.
     // Recalculate if IMU_LOOP_HZ changes: α = 1 - (1 / (τ_sec × IMU_LOOP_HZ))
     // where τ_sec is the desired derivative time constant.
-    float derivative_lpf_alpha = 0.70f;   // dimensionless, [0.0, 1.0)
-   
+    float derivative_lpf_alpha = 0.85f;   // dimensionless, [0.0, 1.0)
+
+    // --- Smith predictor (servo lag compensation) ---
+    // Advances the pitch error estimate by one servo lag period to partially
+    // cancel the ~30–50ms mechanical delay, raising the effective phase margin.
+    // predicted_pitch = pitch + pitchRate × tau
+    // Tune via WebSocket: CMD:BALANCE_TUNE:tau=0.030
+    // Too high → overcorrects and oscillates. Too low → no benefit.
+    // Start at 0.030s. Increase in 0.005s steps while watching telemetry.
+    // Set to 0.0 to disable (pure proportional-derivative, no prediction).
+    float servo_lag_compensation_s = 0.030f;  // seconds
+
+    // --- Ankle pitch output rate limit ---
+    // Maximum ankle pitch command change per control tick (deg/tick at 400 Hz).
+    // Prevents impulsive step commands from exciting leg structural resonance.
+    // 0.5 deg/tick × 400 Hz = 200 deg/s — above the ankle servo no-load speed
+    // (706 deg/s), so steady-state tracking is never artificially constrained.
+    // Only sharp transient inputs are clipped. Set to a large value to disable.
+    float max_output_rate_deg_per_tick = 0.5f;  // deg/tick
+
     // --- Joint distribution ---
     // Three ratios must sum to 1.0. Firmware normalises after every BALANCE_TUNE.
     //
@@ -121,7 +139,7 @@ struct BalanceConfig {
     // If |pitch| exceeds this, the robot has fallen past recoverable range.
     // Triggers ESTOP to protect servos. ~30° = 0.524 rad.
     // Do not raise above 0.70 rad (~40°) — the physics don't support recovery there.
-    float fall_threshold_rad   = 0.524f;
+    float fall_threshold_rad   = 0.70f;
 
     // Number of consecutive ticks above fall_threshold_rad required before ESTOP fires.
     // At 400 Hz: 3 ticks = 7.5 ms — long enough to reject single-tick spikes,
@@ -213,6 +231,7 @@ private:
     void _applyPitchCorrection(float ankle_deg, float hip_deg, float torso_deg);
     uint8_t _fallTickCount     = 0;
     float   _pitchRateFiltered = 0.0f;  // IIR state for filtered derivative term
+    float   _prevAnkleCmd      = 0.0f;  // previous ankle pitch output for rate limiting
     // Applies computed ankle/hip/torso roll corrections.
     // Identical routing logic to _applyPitchCorrection — uses roll IDX constants.
     void _applyRollCorrection(float ankle_deg, float hip_deg, float torso_deg);

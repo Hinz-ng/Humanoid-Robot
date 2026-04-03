@@ -468,8 +468,10 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     if (eq != -1) {
                         String key = pair.substring(0, eq);
                         float  val = pair.substring(eq + 1).toFloat();
+                        // NEW:
                         if      (key == "setpoint")    cfg.setpoint_shift_rad      = val;
                         else if (key == "ankle")        cfg.ankle_shift_deg         = val;
+                        else if (key == "pitch_tilt")   cfg.ankle_pitch_tilt_deg    = val;
                         else if (key == "hip")          cfg.hip_shift_deg           = val;
                         else if (key == "torso")        cfg.torso_shift_deg         = val;
                         else if (key == "ramp")         cfg.ramp_ms                 = val;
@@ -505,11 +507,27 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     if (eq != -1) {
                         String key = pair.substring(0, eq);
                         float  val = pair.substring(eq + 1).toFloat();
-                        if      (key == "Kp")       cfg.Kp                 = val;
-                        else if (key == "Kd")       cfg.Kd                 = val;
-                        else if (key == "setpoint") cfg.pitch_setpoint_rad = val;
-                        else if (key == "deadband") cfg.pitch_deadband_rad = val;
-                        else if (key == "d_lpf")    cfg.derivative_lpf_alpha = val;
+                        if      (key == "Kp") {
+                            // Hard ceiling from project_wide_defs.h — prevents
+                            // phase-margin violation from accidental high-gain input.
+                            cfg.Kp = constrain(val, 0.0f, BALANCE_KP_MAX);
+                            if (val > BALANCE_KP_MAX) {
+                                Serial.printf("[WebComm] BALANCE_TUNE: Kp=%.1f clamped "
+                                              "to BALANCE_KP_MAX=%.1f\n", val, BALANCE_KP_MAX);
+                            }
+                        }
+                        else if (key == "Kd") {
+                            cfg.Kd = constrain(val, 0.0f, BALANCE_KD_MAX);
+                            if (val > BALANCE_KD_MAX) {
+                                Serial.printf("[WebComm] BALANCE_TUNE: Kd=%.2f clamped "
+                                              "to BALANCE_KD_MAX=%.2f\n", val, BALANCE_KD_MAX);
+                            }
+                        }
+                        else if (key == "setpoint") cfg.pitch_setpoint_rad        = val;
+                        else if (key == "deadband") cfg.pitch_deadband_rad         = val;
+                        else if (key == "d_lpf")    cfg.derivative_lpf_alpha       = val;
+                        else if (key == "tau")      cfg.servo_lag_compensation_s   = val;
+                        else if (key == "rate")     cfg.max_output_rate_deg_per_tick = val;
                         else if (key == "ankle")    cfg.ankle_ratio        = val;
                         else if (key == "hip")      cfg.hip_ratio          = val;
                         else if (key == "torso")    cfg.torso_ratio        = val;

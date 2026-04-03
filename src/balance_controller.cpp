@@ -37,7 +37,9 @@ BalanceController::BalanceController(ServoControl* servo)
 
 // ---------------------------------------------------------------------------
 void BalanceController::init() {
-    _lastState = {};
+    _lastState         = {};
+    _prevAnkleCmd      = 0.0f;  // reset rate-limiter state on re-init
+    _pitchRateFiltered = 0.0f;  // reset derivative filter state on re-init
     // Log the starting config so it's visible in Serial on boot.
     Serial.printf("[BalanceController] Init. pitch_en=%s  roll_en=%s  Kp=%.1f  Kd=%.2f  sp=%.3f rad\n",
                   _cfg.pitch_enabled ? "true" : "false",
@@ -106,7 +108,13 @@ BalanceState BalanceController::update(const IMUState& state) {
     //                   Verify empirically before first enable.
     // =========================================================================
     if (_cfg.pitch_enabled) {
-        float error = state.pitch - _cfg.pitch_setpoint_rad;
+        // Smith predictor-lite: advance pitch estimate by one servo lag period.
+        // This partially cancels the servo mechanical delay in the phase response,
+        // allowing the same Kp to act with more effective authority before the
+        // gain margin is exhausted. tau=0 disables prediction (safe default).
+        float predictedPitch = state.pitch
+                               + state.pitchRate * _cfg.servo_lag_compensation_s;
+        float error = predictedPitch - _cfg.pitch_setpoint_rad;
 
         // IIR low-pass on pitchRate — updated every tick regardless of deadband.
         // Keeping the filter state warm prevents a step transient when the robot
@@ -189,8 +197,16 @@ BalanceState BalanceController::update(const IMUState& state) {
 void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg, float torso_deg) {
     // ── Path A: MotionManager is wired (normal runtime path) ─────────────────
     if (_motionManager) {
-        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_PITCH, ankle_deg);
-        _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_PITCH, ankle_deg);
+        // Rate-limit ankle pitch: clamp the per-tick change to suppress step inputs
+        // that excite leg resonance. The limit (0.5 deg/tick) is above the servo
+        // slew ceiling so it never constrains normal tracking — only clips spikes.
+        float ankleRateLimited = constrain(ankle_deg,
+                                           _prevAnkleCmd - _cfg.max_output_rate_deg_per_tick,
+                                           _prevAnkleCmd + _cfg.max_output_rate_deg_per_tick);
+        _prevAnkleCmd = ankleRateLimited;  // update state for next tick
+
+        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_PITCH, ankleRateLimited);
+        _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_PITCH, ankleRateLimited);
         if (fabsf(hip_deg) > 0.01f) {
             _motionManager->submit(SOURCE_BALANCE, IDX_R_HIP_PITCH, hip_deg);
             _motionManager->submit(SOURCE_BALANCE, IDX_L_HIP_PITCH, hip_deg);
@@ -210,8 +226,12 @@ void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg, fl
     if (!_servo) return;
     Serial.println("[BalanceController] WARNING: MotionManager not wired — "
                    "using direct servo write. Wire setMotionManager() in setup().");
-    _servo->setJointAngleDirect(IDX_R_ANKLE_PITCH, ankle_deg);
-    _servo->setJointAngleDirect(IDX_L_ANKLE_PITCH, ankle_deg);
+    float ankleRateLimited = constrain(ankle_deg,
+                                       _prevAnkleCmd - _cfg.max_output_rate_deg_per_tick,
+                                       _prevAnkleCmd + _cfg.max_output_rate_deg_per_tick);
+    _prevAnkleCmd = ankleRateLimited;
+    _servo->setJointAngleDirect(IDX_R_ANKLE_PITCH, ankleRateLimited);
+    _servo->setJointAngleDirect(IDX_L_ANKLE_PITCH, ankleRateLimited);
     if (fabsf(hip_deg) > 0.01f) {
         _servo->setJointAngleDirect(IDX_R_HIP_PITCH, hip_deg);
         _servo->setJointAngleDirect(IDX_L_HIP_PITCH, hip_deg);

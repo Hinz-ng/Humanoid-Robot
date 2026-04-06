@@ -41,6 +41,8 @@ void BalanceController::init() {
     _pitchRateFiltered = 0.0f;
     _rollRateFiltered  = 0.0f;
     _fallTickCount     = 0;
+    _prevPitchEnabled = _cfg.pitch_enabled;
+    _prevRollEnabled  = _cfg.roll_enabled;
 
     // Zero all per-joint output shaping state.
     // This ensures IIR seeds at zero on startup and after any ESTOP clear,
@@ -60,6 +62,16 @@ void BalanceController::init() {
                   _cfg.output_iir_alpha,
                   _cfg.max_output_rate_deg_per_tick,
                   _cfg.output_damping_kv);
+}
+
+// ---------------------------------------------------------------------------
+void BalanceController::_resetJointStateRange(uint8_t first, uint8_t last) {
+    if (first >= BJI_COUNT) return;
+    if (last >= BJI_COUNT) last = BJI_COUNT - 1;
+    if (first > last) return;
+    for (uint8_t i = first; i <= last; i++) {
+        _jointState[i] = {};
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -92,9 +104,12 @@ float BalanceController::_shapeOutput(uint8_t jIdx, float rawCmd, float angularR
     // Step 1: Delta clamp — limit per-tick command change to avoid step inputs.
     // Reference is filtered_cmd_deg (smoothed trajectory), not rawCmd from last tick,
     // so the clamp bounds follow the actual servo position estimate.
-    float clamped = constrain(rawCmd,
-        s.filtered_cmd_deg - _cfg.max_output_rate_deg_per_tick,
-        s.filtered_cmd_deg + _cfg.max_output_rate_deg_per_tick);
+    float clamped = 0.0f;
+    if (fabsf(rawCmd) > 1e-4f) {
+        clamped = constrain(rawCmd,
+            s.filtered_cmd_deg - _cfg.max_output_rate_deg_per_tick,
+            s.filtered_cmd_deg + _cfg.max_output_rate_deg_per_tick);
+    }
 
     // Step 2: IIR smoothing — low-pass filter the clamped command.
     // alpha=0 → no smoothing.  alpha→1 → command frozen.  Default 0.60.
@@ -110,12 +125,49 @@ float BalanceController::_shapeOutput(uint8_t jIdx, float rawCmd, float angularR
     // Step 3: Velocity damping — subtract angular-rate term AFTER smoothing.
     // This does not perturb the IIR state, so damping does not cause drift in
     // the smoothed trajectory on the next tick. Kv=0 disables this entirely.
-    return smoothed - _cfg.output_damping_kv * angularRate_rs;
+    float maxCmdDeg = fmaxf(_cfg.max_correction_deg, _cfg.max_roll_correction_deg);
+    float damped    = smoothed - _cfg.output_damping_kv * angularRate_rs;
+    return constrain(damped, -maxCmdDeg, maxCmdDeg);
 }
 
 // ---------------------------------------------------------------------------
 BalanceState BalanceController::update(const IMUState& state) {
     BalanceState out = {};
+
+    // Fall detection must run whenever state is valid and outputs are live,
+    // even if both balance axes are currently disabled.
+    if (state.valid && !oe_is_estopped()) {
+        if (fabsf(state.pitch) > _cfg.fall_threshold_rad ||
+            fabsf(state.roll)  > _cfg.fall_threshold_rad) {
+            _fallTickCount++;
+            if (_fallTickCount >= _cfg.fall_confirm_ticks) {
+                _fallTickCount = 0;
+                oe_estop();
+                if (_servo != nullptr) _servo->resetToNeutral();
+                out.fell = true;
+                Serial.printf("[BalanceController] FALL: pitch=%.3f roll=%.3f "
+                              "threshold=%.3f → ESTOP\n",
+                              state.pitch, state.roll, _cfg.fall_threshold_rad);
+                _lastState = out;
+                return out;
+            }
+        } else {
+            _fallTickCount = 0;
+        }
+    }
+
+    // On enabled->disabled transitions, clear stale shaping/derivative states so
+    // re-enabling an axis starts cleanly from zero.
+    if (_prevPitchEnabled && !_cfg.pitch_enabled) {
+        _resetJointStateRange(BJI_R_ANKLE_PITCH, BJI_TORSO_PITCH);
+        _pitchRateFiltered = 0.0f;
+    }
+    if (_prevRollEnabled && !_cfg.roll_enabled) {
+        _resetJointStateRange(BJI_R_ANKLE_ROLL, BJI_TORSO_ROLL);
+        _rollRateFiltered = 0.0f;
+    }
+    _prevPitchEnabled = _cfg.pitch_enabled;
+    _prevRollEnabled  = _cfg.roll_enabled;
 
     // Gate 1: at least one controller must be enabled.
     if (!_cfg.pitch_enabled && !_cfg.roll_enabled) {
@@ -133,30 +185,6 @@ BalanceState BalanceController::update(const IMUState& state) {
     if (oe_is_estopped()) {
         _lastState = out;
         return out;
-    }
-
-    // -------------------------------------------------------------------------
-    //  Fall detection — checked every tick regardless of which controllers are on.
-    //  Both |pitch| and |roll| can trigger ESTOP independently.
-    //  fall_confirm_ticks consecutive ticks above threshold required to fire,
-    //  preventing single-tick IMU spikes from triggering ESTOP prematurely.
-    // -------------------------------------------------------------------------
-    if (fabsf(state.pitch) > _cfg.fall_threshold_rad ||
-        fabsf(state.roll)  > _cfg.fall_threshold_rad) {
-        _fallTickCount++;
-        if (_fallTickCount >= _cfg.fall_confirm_ticks) {
-            _fallTickCount = 0;
-            oe_estop();
-            if (_servo != nullptr) _servo->resetToNeutral();
-            out.fell = true;
-            Serial.printf("[BalanceController] FALL: pitch=%.3f roll=%.3f "
-                          "threshold=%.3f → ESTOP\n",
-                          state.pitch, state.roll, _cfg.fall_threshold_rad);
-            _lastState = out;
-            return out;
-        }
-    } else {
-        _fallTickCount = 0;
     }
 
     // =========================================================================

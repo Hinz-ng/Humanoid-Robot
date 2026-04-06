@@ -257,6 +257,13 @@ private:
     // Indexed by BalanceJointIdx. All entries zeroed in init() and on ESTOP.
     JointOutputState _jointState[BJI_COUNT];
 
+    // Track enable transitions so we can clear stale shaper state when an axis
+    // is turned off from WebComm.
+    bool _prevPitchEnabled = false;
+    bool _prevRollEnabled  = false;
+
+    void _resetJointStateRange(uint8_t first, uint8_t last);
+
     // -------------------------------------------------------------------------
     //  _shapeOutput() — single output shaping pipeline for every balance joint.
     //

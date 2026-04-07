@@ -40,13 +40,13 @@
 // Kp above 20 deg/rad eliminates phase margin entirely. Kd above 1.0 amplifies
 // gyro shot noise faster than it damps the pendulum.
 // Recalculate if CoM height or servo model changes.
-#define BALANCE_KP_MAX   20.0f   // deg/rad — do not raise without re-measuring servo lag
+#define BALANCE_KP_MAX   30.0f   // deg/rad — do not raise without re-measuring servo lag
 #define BALANCE_KD_MAX    1.0f   // deg/(rad/s)
 
 // --- Weight shift ankle pitch forward tilt ---
 // Joint-relative ankle pitch offset applied during weight shift (degrees).
 // Positive = forward lean direction. Negate to reverse. Set to 0 to disable.
 // Both ankles receive this value; JointModel direction fields produce symmetry.
-#define ANKLE_PITCH_FORWARD_TILT_DEG  -5.0f
+#define ANKLE_PITCH_FORWARD_TILT_DEG  -10.0f
 
 #endif // PROJECT_WIDE_DEFS_H

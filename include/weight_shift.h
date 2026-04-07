@@ -117,7 +117,7 @@ struct WeightShiftConfig {
     //   the balance controller overrides the swing hip pitch command.
     //   Keep hip_ratio = 0 in BalanceConfig while using swing leg lift.
     //   Knee joints are never touched by the balance controller — no conflict there.
-    float swing_hip_extension_deg = 15.0f;  // deg — magnitude; applied as negative joint angle
+    float swing_hip_extension_deg = -45.0f;  // deg — magnitude; applied as negative joint angle
     float swing_knee_flexion_deg  = 60.0f;  // deg — magnitude; applied as positive joint angle
 
     // Progress fraction at which the lift begins, in [0, 1).

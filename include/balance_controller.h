@@ -62,14 +62,14 @@ struct BalanceConfig {
     //   Kp: 5–20.  Above 20 eliminates phase margin — do NOT exceed.
     //   Kd: 0.1–0.8.  Above 1.0, gyro shot noise dominates.
     // Ceiling enforced by BALANCE_KP_MAX / BALANCE_KD_MAX in project_wide_defs.h.
-    float Kp = 10.0f;   // deg/rad
+    float Kp = 20.0f;   // deg/rad
     float Kd = 0.3f;    // deg/(rad/s)
 
     // --- Pitch error deadband ---
     // Corrections below this pitch error are suppressed.
     // Sized to match servo backlash (1–3°). UVC uses 0.033 rad; matched here.
     // Wider → less jitter at rest. Narrower → more responsive to small lean.
-    float pitch_deadband_rad = 0.035f;  // rad (≈ 2°)
+    float pitch_deadband_rad = 0.033f;  // rad (≈ 2°)
 
     // --- Pitch derivative LPF ---
     // IIR on pitchRate before Kd multiplication. Attenuates 400 Hz gyro noise.
@@ -101,7 +101,7 @@ struct BalanceConfig {
     // --- Fall detection ---
     // If |pitch| OR |roll| exceeds threshold for fall_confirm_ticks consecutive
     // ticks, ESTOP fires. Do not raise above 0.70 rad (~40°).
-    float  fall_threshold_rad  = 0.70f;  // rad
+    float  fall_threshold_rad  = 0.90f;  // rad
     uint8_t fall_confirm_ticks = 3;      // ticks at 400 Hz (~7.5 ms)
 
     // =========================================================================
@@ -144,14 +144,14 @@ struct BalanceConfig {
     //  ankle_roll + hip_roll + torso_roll ratios must sum to 1.0.
     // =========================================================================
 
-    float Kp_roll                  = 5.0f;   // deg/rad  — lower than Kp_pitch; smaller stability margin
+    float Kp_roll                  = 20.0f;   // deg/rad  — lower than Kp_pitch; smaller stability margin
     float Kd_roll                  = 0.2f;   // deg/(rad/s)
     float roll_setpoint_rad        = 0.0f;   // rad — target roll (0 = upright)
     float roll_correction_sign     = 1.0f;   // ±1 — verify empirically before enabling
     float ankle_roll_ratio         = 1.0f;   // dimensionless
     float hip_roll_ratio           = 0.0f;   // dimensionless
     float torso_roll_ratio         = 0.0f;   // dimensionless
-    float max_roll_correction_deg  = 8.0f;   // deg — tighter than pitch (smaller stability margin)
+    float max_roll_correction_deg  = 10.0f;   // deg — tighter than pitch (smaller stability margin)
 
     // Roll parity fields — brought to feature parity with pitch controller.
     // Without these, roll had no derivative filtering or deadband, causing

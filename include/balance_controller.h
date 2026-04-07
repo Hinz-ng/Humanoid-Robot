@@ -228,6 +228,10 @@ public:
     // Call once in setup() after servoController.init().
     void init();
 
+    // Reset runtime controller state (IIR buffers, filters, fall counters) while
+    // preserving the current tuning config.
+    void resetState();
+
     // Main entry point — call every tick inside the 400 Hz gate in main.cpp,
     // AFTER stateEstimator.update() has run.
     BalanceState update(const IMUState& state);

@@ -37,6 +37,7 @@ BalanceController::BalanceController(ServoControl* servo)
 
 // ---------------------------------------------------------------------------
 void BalanceController::init() {
+    resetState();
     _lastState         = {};
     _pitchRateFiltered = 0.0f;
     _rollRateFiltered  = 0.0f;
@@ -62,6 +63,23 @@ void BalanceController::init() {
                   _cfg.output_iir_alpha,
                   _cfg.max_output_rate_deg_per_tick,
                   _cfg.output_damping_kv);
+}
+
+// ---------------------------------------------------------------------------
+void BalanceController::resetState() {
+    _lastState         = {};
+    _pitchRateFiltered = 0.0f;
+    _rollRateFiltered  = 0.0f;
+    _fallTickCount     = 0;
+    _prevPitchEnabled  = false;
+    _prevRollEnabled   = false;
+
+    // Zero all per-joint output shaping state.
+    // This ensures IIR seeds at zero on startup and after any ESTOP clear,
+    // preventing the smoother from starting with a stale pre-ESTOP command.
+    for (uint8_t i = 0; i < BJI_COUNT; i++) {
+        _jointState[i] = {};
+    }
 }
 
 // ---------------------------------------------------------------------------

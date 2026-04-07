@@ -534,14 +534,29 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         else if (key == "max")      cfg.max_correction_deg = val;
                         else if (key == "sign")     cfg.correction_sign        = val;
                         // ── Roll fields ───────────────────────────────────────
-                        else if (key == "Kp_r")     cfg.Kp_roll                = val;
-                        else if (key == "Kd_r")     cfg.Kd_roll                = val;
+                        else if (key == "Kp_r") {
+                            cfg.Kp_roll = constrain(val, 0.0f, BALANCE_KP_MAX);
+                            if (val > BALANCE_KP_MAX) {
+                                Serial.printf("[WebComm] BALANCE_TUNE: Kp_r=%.1f clamped "
+                                              "to BALANCE_KP_MAX=%.1f\n", val, BALANCE_KP_MAX);
+                            }
+                        }
+                        else if (key == "Kd_r") {
+                            cfg.Kd_roll = constrain(val, 0.0f, BALANCE_KD_MAX);
+                            if (val > BALANCE_KD_MAX) {
+                                Serial.printf("[WebComm] BALANCE_TUNE: Kd_r=%.2f clamped "
+                                              "to BALANCE_KD_MAX=%.2f\n", val, BALANCE_KD_MAX);
+                            }
+                        }
                         else if (key == "sp_r")     cfg.roll_setpoint_rad      = val;
                         else if (key == "a_roll")   cfg.ankle_roll_ratio       = val;
                         else if (key == "h_roll")   cfg.hip_roll_ratio         = val;
                         else if (key == "t_roll")   cfg.torso_roll_ratio       = val;
                         else if (key == "max_r")    cfg.max_roll_correction_deg = val;
                         else if (key == "sign_r")   cfg.roll_correction_sign   = val;
+                        else if (key == "iir")      cfg.output_iir_alpha = constrain(val, 0.0f, 0.99f);
+                        else if (key == "roll_db")  cfg.roll_deadband_rad = constrain(val, 0.0f, 0.20f);
+                        else if (key == "roll_dlpf") cfg.roll_derivative_lpf_alpha = constrain(val, 0.0f, 0.99f);
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }

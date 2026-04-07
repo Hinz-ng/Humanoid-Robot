@@ -65,12 +65,16 @@ void oe_loop() {
 
 void oe_estop() {
     _oe_estopped = true;
+    // Push neutral targets before disabling OE so the last register state is
+    // benign if signal lines float while OE is high.
+    servoController.resetToNeutral();
     digitalWrite(OE_PIN, HIGH);
     Serial.println("[OE] *** EMERGENCY STOP *** Outputs DISABLED (OE=HIGH).");
 }
 
 void oe_clear() {
     servoController.resetToNeutral();
+    balanceController.resetState();
     // Reset weight shift to center so no stale lean is applied on re-enable.
     // Must run before OE goes LOW to prevent the injected setpoint from triggering
     // an immediate balance correction toward the pre-estop lean target.

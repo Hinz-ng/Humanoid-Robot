@@ -228,6 +228,10 @@ public:
     // Call once in setup() after servoController.init().
     void init();
 
+    // Reset runtime controller state (IIR buffers, filters, fall counters) while
+    // preserving the current tuning config.
+    void resetState();
+
     // Main entry point — call every tick inside the 400 Hz gate in main.cpp,
     // AFTER stateEstimator.update() has run.
     BalanceState update(const IMUState& state);
@@ -256,6 +260,13 @@ private:
     // --- Per-joint output shaping state ---
     // Indexed by BalanceJointIdx. All entries zeroed in init() and on ESTOP.
     JointOutputState _jointState[BJI_COUNT];
+
+    // Track enable transitions so we can clear stale shaper state when an axis
+    // is turned off from WebComm.
+    bool _prevPitchEnabled = false;
+    bool _prevRollEnabled  = false;
+
+    void _resetJointStateRange(uint8_t first, uint8_t last);
 
     // -------------------------------------------------------------------------
     //  _shapeOutput() — single output shaping pipeline for every balance joint.

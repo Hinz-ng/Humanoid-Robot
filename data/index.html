@@ -429,6 +429,50 @@
     </div>
 </div>
 
+<!-- Nonlinear gain boost — pitch -->
+<div style="font-size:10px; color:#888; text-transform:uppercase;
+            letter-spacing:0.5px; margin:12px 0 6px;
+            border-top:1px solid #2e4a2e; padding-top:8px;">
+    Nonlinear Gain Boost (Pitch)
+    <span style="color:#555; font-weight:normal; margin-left:6px;">
+        Kp below threshold=base, above threshold=Kp×factor
+    </span>
+</div>
+<div class="bal-tune-grid" style="margin-bottom:0;">
+    <div class="bal-tune-row">
+        <div class="tune-header">
+            <span>Boost Threshold (°)</span>
+            <span class="tune-val" id="tvBoostThresh">5.7</span>
+        </div>
+        <!-- slider in degrees; sent as radians -->
+        <input type="range" id="slBoostThresh" min="1" max="20" step="0.5" value="5.7"
+               oninput="updateBoostLabel('boost_thresh', this.value); sendBoostTune()">
+        <div style="font-size:10px; color:#555; margin-top:3px;">
+            Above this error (°) the boost kicks in. Set > oscillation amplitude.
+        </div>
+    </div>
+    <div class="bal-tune-row">
+        <div class="tune-header">
+            <span>Boost Factor</span>
+            <span class="tune-val" id="tvBoostFactor">2.0</span>
+        </div>
+        <input type="range" id="slBoostFactor" min="1.0" max="4.0" step="0.1" value="2.0"
+               oninput="updateBoostLabel('boost_factor', this.value); sendBoostTune()">
+        <div style="font-size:10px; color:#555; margin-top:3px;">
+            Kp multiplier at large errors. 1.0 = disabled. Start at 2.0.
+        </div>
+    </div>
+    <div class="bal-tune-row">
+        <div class="tune-header">
+            <span>Effective Kp (live)</span>
+            <span class="tune-val" id="tvEffKp">—</span>
+        </div>
+        <div style="font-size:10px; color:#555;">
+            Actual Kp used last tick (base × boost factor at current error).
+        </div>
+    </div>
+</div>
+
         </div><!-- /.bal-tune-grid -->
 
          <!-- ── Roll tuning sliders ──────────────────────────────────────────── -->
@@ -578,7 +622,19 @@
                 </div>
             </div>
 
+
             <div class="wshift-tune-row">
+                <div class="tune-header">
+                    <span>Phase delay (ms)</span>
+                    <span class="tune-val" id="tvWsPhaseDelay">500</span>
+                </div>
+                <input type="range" id="slWsPhaseDelay" min="0" max="2000" step="50" value="500"
+                       oninput="updateWSTuneLabel('phase_delay', this.value); sendWSTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Swing ankle starts first; stance ankle follows after this delay.
+                    0 = simultaneous (no phasing).
+                </div>
+            </div>            <div class="wshift-tune-row">
                 <div class="tune-header">
                     <span>Ankle shift (°)</span>
                     <span class="tune-val" id="tvWsAnkle">0.0</span>
@@ -995,6 +1051,11 @@ function initWebSocket() {
             const Kd      = parseFloat(v["Kd"]    || "0");
             const spRad   = parseFloat(v["sp"]    || "0");
 
+            // Parse effective Kp from BALANCE packet
+            const effKp = parseFloat(v["eff_kp"] || "0");
+            const effKpEl = document.getElementById("tvEffKp");
+            if (effKpEl) effKpEl.textContent = effKp.toFixed(2);
+
             document.getElementById("bfErr").textContent  = pErrRad.toFixed(4);
             document.getElementById("bfErr2").textContent = pErrRad.toFixed(4);
             document.getElementById("bfKp").textContent   = Kp.toFixed(2);
@@ -1226,6 +1287,33 @@ function sendTune() {
     }, 80);
 }
 
+const _boostMap = {
+    boost_thresh:   { el: "tvBoostThresh",  decimals: 1 },
+    boost_factor:   { el: "tvBoostFactor",  decimals: 1 },
+    boost_thresh_r: { el: "tvBoostThreshR", decimals: 1 },
+    boost_factor_r: { el: "tvBoostFactorR", decimals: 1 },
+};
+function updateBoostLabel(id, val) {
+    _setTuneActive();
+    const m = _boostMap[id];
+    if (m && document.getElementById(m.el)) {
+        document.getElementById(m.el).textContent = parseFloat(val).toFixed(m.decimals);
+    }
+}
+function sendBoostTune() {
+    clearTimeout(sendBoostTune._t);
+    sendBoostTune._t = setTimeout(() => {
+        const thresh  = parseFloat(document.getElementById("slBoostThresh").value);
+        const factor  = document.getElementById("slBoostFactor").value;
+        const threshRad = (thresh * Math.PI / 180).toFixed(5);
+        const msg = `CMD:BALANCE_TUNE:boost_thresh=${threshRad},boost_factor=${factor}`;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(msg);
+            console.log("[WS TX]", msg);
+        }
+    }, 80);
+}
+
 // ── Sync a slider to firmware state without triggering sendTune() ─────────────
 // Only updates if the difference exceeds the slider's own step size.
 function _syncSlider(sliderId, labelId, newVal, decimals) {
@@ -1355,11 +1443,12 @@ function toggleWShiftPanel() {
 }
 
 const _wsTuneMap = {
-    setpoint: { el: "tvWsSp",     decimals: 1 },
-    ramp:     { el: "tvWsRamp",   decimals: 0 },
-    ankle:    { el: "tvWsAnkle",  decimals: 1 },
-    hip:      { el: "tvWsHip",    decimals: 1 },
-    torso:    { el: "tvWsTorso",  decimals: 1 },
+    setpoint:    { el: "tvWsSp",         decimals: 1 },
+    ramp:        { el: "tvWsRamp",       decimals: 0 },
+    phase_delay: { el: "tvWsPhaseDelay", decimals: 0 },
+    ankle:       { el: "tvWsAnkle",      decimals: 1 },
+    hip:         { el: "tvWsHip",        decimals: 1 },
+    torso:       { el: "tvWsTorso",      decimals: 1 },
 };
 
 function updateWSTuneLabel(id, rawVal) {
@@ -1375,10 +1464,10 @@ function sendWSTune() {
         const spDeg  = parseFloat(document.getElementById("slWsSp").value);
         const spRad  = (spDeg * Math.PI / 180).toFixed(5);
         const ankle  = document.getElementById("slWsAnkle").value;
-        const hip    = document.getElementById("slWsHip").value;
-        const torso  = document.getElementById("slWsTorso").value;
-        const ramp   = document.getElementById("slWsRamp").value;
-        const msg = `CMD:WEIGHT_SHIFT_TUNE:setpoint=${spRad},ankle=${ankle},hip=${hip},torso=${torso},ramp=${ramp}`;
+        const hip    = document.getElementById("slWsHip").value;        const torso      = document.getElementById("slWsTorso").value;
+        const ramp       = document.getElementById("slWsRamp").value;
+        const phaseDelay = document.getElementById("slWsPhaseDelay")?.value ?? "500";
+        const msg = `CMD:WEIGHT_SHIFT_TUNE:setpoint=${spRad},ankle=${ankle},hip=${hip},torso=${torso},ramp=${ramp},phase_delay=${phaseDelay}`;
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(msg);
             console.log("[WS TX]", msg);

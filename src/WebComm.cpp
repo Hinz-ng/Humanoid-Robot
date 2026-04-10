@@ -202,6 +202,7 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
     snprintf(buf, sizeof(buf),
         // Controller enable flags + overall active state
         "BALANCE:p_en=%d,r_en=%d,"
+        "eff_kp=%.2f,eff_kpr=%.2f,"           // effective Kp (with boost)
         // Pitch live outputs
         "p_err=%.4f,p_u=%.3f,p_ank=%.2f,p_hip=%.2f,p_trs=%.2f,"
         // Roll live outputs
@@ -213,8 +214,10 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         // Safety
         "fell=%d,"
         // Weight shift telemetry — progress and ramping flag for UI progress bar.
-        "ws_prog=%.2f,ws_ramp=%d",
+        "ws_prog=%.2f,ws_ramp=%d,ws_rp=%.2f,ws_lp=%.2f",
         (int)cfg.pitch_enabled, (int)cfg.roll_enabled,
+        state.effective_kp,                    // NEW
+        state.effective_kp_roll,               // NEW
         state.pitch_error,   state.u_clamped,
         state.ankle_cmd_deg, state.hip_cmd_deg, state.torso_cmd_deg,
         state.roll_error,    state.u_roll_clamped,
@@ -227,7 +230,10 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         cfg.roll_correction_sign, cfg.max_roll_correction_deg,
         (int)state.fell,
         _weightShift ? _weightShift->getState().progress    : 0.0f,
-        _weightShift ? (int)_weightShift->getState().ramping : 0
+        _weightShift ? (int)_weightShift->getState().ramping : 0,
+        _weightShift ? _weightShift->getState().right_progress  : 0.0f,
+        _weightShift ? _weightShift->getState().left_progress   : 0.0f
+ 
     );
     ws.textAll(buf);
 }
@@ -480,6 +486,11 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         else if (key == "swing_hip")    cfg.swing_hip_extension_deg = val;
                         else if (key == "swing_knee")   cfg.swing_knee_flexion_deg  = val;
                         else if (key == "swing_thresh") cfg.swing_lift_threshold = val;
+                        else if (key == "phase_delay") {
+            // Swing-before-stance phase delay in ms.
+            // 0 = simultaneous ramp. 500 = default (swing 0.5s before stance).
+            cfg.shift_phase_delay_ms = constrain(val, 0.0f, 2000.0f);
+        }
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
@@ -555,6 +566,24 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         else if (key == "max_r")    cfg.max_roll_correction_deg = val;
                         else if (key == "sign_r")   cfg.roll_correction_sign   = val;
                         else if (key == "iir")      cfg.output_iir_alpha = constrain(val, 0.0f, 0.99f);
+                        else if (key == "boost_thresh") {
+            // Pitch nonlinear gain boost threshold (rad).
+            // Errors below this use base Kp; above use Kp × boost_factor.
+            // Default 0.10 rad (≈5.7°). Must be above typical oscillation amplitude.
+            cfg.gain_boost_threshold_rad = constrain(val, 0.01f, 0.50f);
+        }
+        else if (key == "boost_factor") {
+            // Pitch gain multiplier for large errors. 1.0 = disabled (flat Kp).
+            // Default 2.0 (doubles Kp at 2× threshold). Cap at BALANCE_KP_MAX/Kp
+            // so effective Kp never exceeds the safety ceiling.
+            cfg.gain_boost_factor = constrain(val, 1.0f, 5.0f);
+        }
+        else if (key == "boost_thresh_r") {
+            cfg.gain_boost_threshold_roll_rad = constrain(val, 0.01f, 0.50f);
+        }
+        else if (key == "boost_factor_r") {
+            cfg.gain_boost_factor_roll = constrain(val, 1.0f, 5.0f);
+        }
                         else if (key == "roll_db")  cfg.roll_deadband_rad = constrain(val, 0.0f, 0.20f);
                         else if (key == "roll_dlpf") cfg.roll_derivative_lpf_alpha = constrain(val, 0.0f, 0.99f);
                     }

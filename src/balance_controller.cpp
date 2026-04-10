@@ -3,27 +3,7 @@
 // MODULE:  control
 // LAYER:   3 — Balance Controller
 //
-// PURPOSE:
-//   Implements the PD pitch + roll balance control laws and the output shaping
-//   pipeline. Every balance joint command passes through _shapeOutput() before
-//   reaching MotionManager:
-//
-//     control law → magnitude clamp → [_shapeOutput per joint]:
-//       delta_clamp → IIR_smooth → velocity_damp → submit
-//
-//   This decouples command bandwidth from the loop rate, preventing raw 400 Hz
-//   PD outputs from overdriving servos with backlash-amplified chatter.
-//
-// KEY DESIGN CHOICES (justify before changing):
-//   - _shapeOutput() is called every tick even inside the deadband (rawCmd=0).
-//     This lets the IIR decay toward zero smoothly instead of freezing at the
-//     last active command and jumping on deadband exit.
-//   - The filtered angular rate (_pitchRateFiltered, _rollRateFiltered) feeds
-//     both the Kd term AND velocity damping. Using the same filtered signal
-//     avoids the two terms fighting against different noise levels.
-//   - MotionManager is the only submit path. No direct hardware writes.
-//
-// LAST CHANGED: 2026-04-05 | Hinz | Add output shaping pipeline + roll parity
+// LAST CHANGED: 2026-04-08 | Hinz | Task-1 gain boost, Task-2 ankle bias
 // =============================================================================
 
 #include "balance_controller.h"
@@ -37,123 +17,131 @@ BalanceController::BalanceController(ServoControl* servo)
 
 // ---------------------------------------------------------------------------
 void BalanceController::init() {
-    resetState();
-    _lastState         = {};
+    _prevPitchEnabled = _cfg.pitch_enabled;
+    _prevRollEnabled  = _cfg.roll_enabled;
+    resetOutputState();
+}
+
+// ---------------------------------------------------------------------------
+//  resetOutputState() — zero all transient state, preserve config.
+//  Call from oe_clear() in main.cpp after ESTOP to prevent command spikes.
+// ---------------------------------------------------------------------------
+void BalanceController::resetOutputState() {
     _pitchRateFiltered = 0.0f;
     _rollRateFiltered  = 0.0f;
     _fallTickCount     = 0;
+    for (uint8_t i = 0; i < BJI_COUNT; i++) {
+        _jointState[i] = {};
+    }
+    // Reset transition flags to current enabled state so BUG-04 detector
+    // starts clean without a spurious disable-on-first-tick event.
     _prevPitchEnabled = _cfg.pitch_enabled;
     _prevRollEnabled  = _cfg.roll_enabled;
 
-    // Zero all per-joint output shaping state.
-    // This ensures IIR seeds at zero on startup and after any ESTOP clear,
-    // preventing the smoother from starting with a stale pre-ESTOP command.
-    for (uint8_t i = 0; i < BJI_COUNT; i++) {
-        _jointState[i] = {};
-    }
-
-    Serial.printf("[BalanceController] Init.\n"
-                  "  pitch_en=%s  Kp=%.1f  Kd=%.2f  sp=%.3f rad\n"
-                  "  roll_en=%s   Kp_r=%.1f Kd_r=%.2f\n"
-                  "  iir_alpha=%.2f  max_delta=%.2f deg/tick  damping_kv=%.2f\n",
-                  _cfg.pitch_enabled ? "true" : "false",
-                  _cfg.Kp, _cfg.Kd, _cfg.pitch_setpoint_rad,
-                  _cfg.roll_enabled ? "true" : "false",
-                  _cfg.Kp_roll, _cfg.Kd_roll,
-                  _cfg.output_iir_alpha,
-                  _cfg.max_output_rate_deg_per_tick,
-                  _cfg.output_damping_kv);
+    Serial.printf("[BalanceController] Reset. pitch_en=%s roll_en=%s "
+                  "Kp=%.1f(boost×%.1f@%.3f) Kd=%.2f iir=%.2f rate=%.2f\n",
+                  _cfg.pitch_enabled ? "Y" : "N",
+                  _cfg.roll_enabled  ? "Y" : "N",
+                  _cfg.Kp, _cfg.gain_boost_factor, _cfg.gain_boost_threshold_rad,
+                  _cfg.Kd, _cfg.output_iir_alpha,
+                  _cfg.max_output_rate_deg_per_tick);
 }
 
 // ---------------------------------------------------------------------------
-void BalanceController::resetState() {
-    _lastState         = {};
-    _pitchRateFiltered = 0.0f;
-    _rollRateFiltered  = 0.0f;
-    _fallTickCount     = 0;
-    _prevPitchEnabled  = false;
-    _prevRollEnabled   = false;
+//  _computeEffectiveKp() — TASK-1: nonlinear gain boost.
+//
+//  Returns a linearly ramped Kp between baseKp and baseKp × boostFactor:
+//    absError < threshold              → baseKp (no boost)
+//    threshold <= absError < 2×thresh  → linear ramp baseKp → baseKp × factor
+//    absError >= 2 × threshold         → baseKp × boostFactor (full boost)
+//
+//  Physical rationale:
+//    Oscillations occur near equilibrium where |error| < ~0.05 rad. Setting
+//    threshold=0.10 keeps those errors in the flat Kp zone. Disturbances
+//    (pushes, weight shift steps) produce |error| > 0.15 rad, triggering
+//    the boost and providing faster recovery without oscillation risk.
+//
+//    The linear ramp (rather than a step) prevents a discontinuity in the
+//    control law at the threshold crossing, which would itself excite the servo.
+// ---------------------------------------------------------------------------
+/*static*/ float BalanceController::_computeEffectiveKp(float absError,
+                                                          float baseKp,
+                                                          float threshold,
+                                                          float boostFactor) {
+    // If boost is disabled (factor <= 1) or threshold is zero, return flat Kp.
+    if (boostFactor <= 1.0f || threshold < 1e-4f) return baseKp;
 
-    // Zero all per-joint output shaping state.
-    // This ensures IIR seeds at zero on startup and after any ESTOP clear,
-    // preventing the smoother from starting with a stale pre-ESTOP command.
-    for (uint8_t i = 0; i < BJI_COUNT; i++) {
-        _jointState[i] = {};
-    }
+    float excess = absError - threshold;
+    if (excess <= 0.0f) return baseKp;  // below threshold — stable zone
+
+    // Normalise: ramp completes over one additional threshold width.
+    float t = constrain(excess / threshold, 0.0f, 1.0f);
+    return baseKp * (1.0f + t * (boostFactor - 1.0f));
 }
 
 // ---------------------------------------------------------------------------
-void BalanceController::_resetJointStateRange(uint8_t first, uint8_t last) {
-    if (first >= BJI_COUNT) return;
-    if (last >= BJI_COUNT) last = BJI_COUNT - 1;
-    if (first > last) return;
-    for (uint8_t i = first; i <= last; i++) {
-        _jointState[i] = {};
-    }
-}
-
+//  _shapeOutput() — universal output shaping pipeline.
+//
+//  Pipeline: rawCmd → [zero bypass | delta clamp] → IIR → damp → clamp
+//
+//  BUG-01 FIX — zero-case bypass:
+//    When rawCmd=0 (deadband or axis disabled), clamped is set to 0 directly.
+//    Without this, constrain(0, filtered−δ, filtered+δ) returns a non-zero
+//    lower bound, preventing the IIR from ever reaching zero. Result: servos
+//    keep moving smoothly after the controller is "off" until the IIR decays.
+//    With the bypass, the IIR decays at rate (1−alpha)/tick:
+//      alpha=0.60: from 15°, reaches ≈0 in ~30ms at 400Hz.
+//
+//  BUG-05 FIX — clamp after velocity damping:
+//    Without clamp: kv=2.0, rate=−5 rad/s, smoothed=6° → 6+10 = 16° output.
+//    This exceeds max_correction_deg. The final constrain prevents this.
 // ---------------------------------------------------------------------------
-//  _shapeOutput() — universal output shaping pipeline for every balance joint.
-//
-//  This is the core of the oscillation suppression refactor. The three stages:
-//
-//  1. Delta clamp: prevents step-command spikes larger than max_output_rate_deg_per_tick
-//     from reaching the servo in a single tick. Mirrors UVC footCont():
-//       if (2*k0 - HW[s] > 100) k0 = (HW[s] + 100) / 2;
-//     Here we reference filtered_cmd_deg (the smoothed trajectory) so the
-//     clamp bounds track the actual servo position, not the raw PD output.
-//
-//  2. IIR smoother: low-pass filters the delta-clamped command trajectory.
-//     Cuts effective bandwidth to ~38 Hz at alpha=0.60 (400 Hz loop).
-//     Formula: f_c ≈ (1 - alpha) * loop_hz / (2π)
-//     The smoothed state persists across ticks — when rawCmd=0 (inside deadband)
-//     the IIR decays toward zero gracefully rather than freezing.
-//
-//  3. Velocity damping: counteracts angular velocity at the output stage,
-//     AFTER smoothing. Mirrors UVC footCont():
-//       A0W[s] = k0 - x0 - 0.003 * fbAV
-//     Injecting damping here is intentionally separate from the PD Kd term —
-//     Kd acts on filtered rate in the error space; damping acts on filtered rate
-//     in the output space. They are complementary, not redundant.
-// ---------------------------------------------------------------------------
-float BalanceController::_shapeOutput(uint8_t jIdx, float rawCmd, float angularRate_rs) {
+float BalanceController::_shapeOutput(uint8_t jIdx, float rawCmd,
+                                       float angularRate_rs) {
     JointOutputState& s = _jointState[jIdx];
 
-    // Step 1: Delta clamp — limit per-tick command change to avoid step inputs.
-    // Reference is filtered_cmd_deg (smoothed trajectory), not rawCmd from last tick,
-    // so the clamp bounds follow the actual servo position estimate.
-    float clamped = 0.0f;
-    if (fabsf(rawCmd) > 1e-4f) {
+    // ── Step 1: Delta clamp ───────────────────────────────────────────────────
+    float clamped;
+    if (fabsf(rawCmd) < 1e-4f) {
+        // BUG-01 FIX: zero input → free IIR decay, no spike prevention needed.
+        clamped = 0.0f;
+    } else {
+        // Non-zero: limit per-tick rate-of-change to prevent step spikes.
+        // Bounds are relative to current smoothed trajectory (not raw cmd)
+        // so the clamp correctly tracks where the servo actually is.
         clamped = constrain(rawCmd,
-            s.filtered_cmd_deg - _cfg.max_output_rate_deg_per_tick,
-            s.filtered_cmd_deg + _cfg.max_output_rate_deg_per_tick);
+                            s.filtered_cmd_deg - _cfg.max_output_rate_deg_per_tick,
+                            s.filtered_cmd_deg + _cfg.max_output_rate_deg_per_tick);
     }
 
-    // Step 2: IIR smoothing — low-pass filter the clamped command.
-    // alpha=0 → no smoothing.  alpha→1 → command frozen.  Default 0.60.
+    // ── Step 2: IIR smoothing ─────────────────────────────────────────────────
+    // f_c ≈ (1−alpha) × loop_hz / (2π). alpha=0.60 → f_c ≈ 38 Hz.
+    // filtered_cmd_deg is the IIR state — tracks the smoothed trajectory.
     float smoothed = _cfg.output_iir_alpha * s.filtered_cmd_deg
                    + (1.0f - _cfg.output_iir_alpha) * clamped;
+    s.prev_cmd_deg     = clamped;   // pre-IIR, for diagnostics
+    s.filtered_cmd_deg = smoothed;  // IIR state for next tick
 
-    // Persist state for next tick.
-    // filtered_cmd_deg is the IIR state — it must track smoothed, not clamped,
-    // so the IIR history correctly represents the output trajectory.
-    s.prev_cmd_deg     = clamped;   // delta-clamped value (for diagnostics)
-    s.filtered_cmd_deg = smoothed;  // IIR state (for next tick's clamp reference + blend)
+    // ── Step 3: Velocity damping ───────────────────────────────────────────────
+    // Mirrors UVC footCont(): A0W[s] = k0 − x0 − 0.003 * fbAV
+    // Applied after IIR so it does not perturb the smoothed trajectory state.
+    // kv=0 (default) disables entirely.
+    float damped = smoothed - _cfg.output_damping_kv * angularRate_rs;
 
-    // Step 3: Velocity damping — subtract angular-rate term AFTER smoothing.
-    // This does not perturb the IIR state, so damping does not cause drift in
-    // the smoothed trajectory on the next tick. Kv=0 disables this entirely.
-    float maxCmdDeg = fmaxf(_cfg.max_correction_deg, _cfg.max_roll_correction_deg);
-    float damped    = smoothed - _cfg.output_damping_kv * angularRate_rs;
-    return constrain(damped, -maxCmdDeg, maxCmdDeg);
+    // ── Step 4 (BUG-05 FIX): Clamp to correction budget ──────────────────────
+    // Both pitch and roll joints pass through here; use the larger limit.
+    float maxDeg = fmaxf(_cfg.max_correction_deg, _cfg.max_roll_correction_deg);
+    return constrain(damped, -maxDeg, maxDeg);
 }
 
 // ---------------------------------------------------------------------------
 BalanceState BalanceController::update(const IMUState& state) {
     BalanceState out = {};
 
-    // Fall detection must run whenever state is valid and outputs are live,
-    // even if both balance axes are currently disabled.
+    // =========================================================================
+    //  FALL DETECTION — BUG-03 FIX: runs before the enabled/disabled gate.
+    //  The robot can fall while both controllers are off. ESTOP must fire.
+    // =========================================================================
     if (state.valid && !oe_is_estopped()) {
         if (fabsf(state.pitch) > _cfg.fall_threshold_rad ||
             fabsf(state.roll)  > _cfg.fall_threshold_rad) {
@@ -164,7 +152,7 @@ BalanceState BalanceController::update(const IMUState& state) {
                 if (_servo != nullptr) _servo->resetToNeutral();
                 out.fell = true;
                 Serial.printf("[BalanceController] FALL: pitch=%.3f roll=%.3f "
-                              "threshold=%.3f → ESTOP\n",
+                              "thr=%.3f → ESTOP\n",
                               state.pitch, state.roll, _cfg.fall_threshold_rad);
                 _lastState = out;
                 return out;
@@ -174,138 +162,138 @@ BalanceState BalanceController::update(const IMUState& state) {
         }
     }
 
-    // On enabled->disabled transitions, clear stale shaping/derivative states so
-    // re-enabling an axis starts cleanly from zero.
+    // =========================================================================
+    //  BUG-04: Axis disable transition — zero IIR before Gate 1.
+    //  Must precede Gate 1 so the "both disabled" case is handled:
+    //  if pitch transitions true→false while roll is already false, Gate 1
+    //  exits early, never reaching a post-gate check.
+    // =========================================================================
     if (_prevPitchEnabled && !_cfg.pitch_enabled) {
-        _resetJointStateRange(BJI_R_ANKLE_PITCH, BJI_TORSO_PITCH);
+        for (uint8_t i = BJI_R_ANKLE_PITCH; i <= BJI_TORSO_PITCH; i++) {
+            _jointState[i] = {};
+        }
         _pitchRateFiltered = 0.0f;
+        Serial.println("[BalanceController] Pitch disabled — IIR/filter zeroed.");
     }
     if (_prevRollEnabled && !_cfg.roll_enabled) {
-        _resetJointStateRange(BJI_R_ANKLE_ROLL, BJI_TORSO_ROLL);
+        for (uint8_t i = BJI_R_ANKLE_ROLL; i <= BJI_TORSO_ROLL; i++) {
+            _jointState[i] = {};
+        }
         _rollRateFiltered = 0.0f;
+        Serial.println("[BalanceController] Roll disabled — IIR/filter zeroed.");
     }
     _prevPitchEnabled = _cfg.pitch_enabled;
     _prevRollEnabled  = _cfg.roll_enabled;
 
-    // Gate 1: at least one controller must be enabled.
-    if (!_cfg.pitch_enabled && !_cfg.roll_enabled) {
-        _lastState = out;
-        return out;
-    }
-
-    // Gate 2: estimator must be valid (calibration done, no I²C error).
-    if (!state.valid) {
-        _lastState = out;
-        return out;
-    }
-
-    // Gate 3: hardware must not be in ESTOP.
-    if (oe_is_estopped()) {
-        _lastState = out;
-        return out;
-    }
+    // ── Gate 1: enabled ───────────────────────────────────────────────────────
+    if (!_cfg.pitch_enabled && !_cfg.roll_enabled) { _lastState = out; return out; }
+    // ── Gate 2: valid IMU ─────────────────────────────────────────────────────
+    if (!state.valid)     { _lastState = out; return out; }
+    // ── Gate 3: hardware live ─────────────────────────────────────────────────
+    if (oe_is_estopped()) { _lastState = out; return out; }
 
     // =========================================================================
-    //  PITCH PD — sagittal plane (forward/back)
-    //
-    //  Pipeline:
-    //    predictedPitch (Smith) → error → deadband gate → PD law →
-    //    magnitude clamp → ratio split → _applyPitchCorrection (shaping + submit)
-    //
-    //  _shapeOutput() is called via _applyPitchCorrection for every pitch joint
-    //  on EVERY tick, including when inside the deadband (rawCmd=0). This lets
-    //  the IIR decay toward zero smoothly on deadband entry.
+    //  PITCH PD
     // =========================================================================
     if (_cfg.pitch_enabled) {
-        // Derivative filter — updated every tick to keep IIR state warm.
-        // A cold IIR state causes a Kd spike on deadband exit; staying warm avoids it.
+        // Derivative filter — updated every tick to keep IIR warm.
+        // A cold state causes a Kd spike on deadband exit.
         _pitchRateFiltered = _cfg.derivative_lpf_alpha * _pitchRateFiltered
                            + (1.0f - _cfg.derivative_lpf_alpha) * state.pitchRate;
 
-        // Smith predictor: advance pitch estimate by one servo lag period.
-        // Partially cancels servo mechanical delay in the phase response.
-        // tau=0 disables prediction safely.
+        // Smith predictor: predict future pitch to partially cancel servo lag.
         float predictedPitch = state.pitch
-                               + state.pitchRate * _cfg.servo_lag_compensation_s;
+                             + state.pitchRate * _cfg.servo_lag_compensation_s;
         float error = predictedPitch - _cfg.pitch_setpoint_rad;
 
         out.pitch_active = true;
         out.pitch_error  = error;
 
-        // Control law — zero inside deadband so IIR decays rather than holding.
-        float u_raw     = 0.0f;
-        float u_clamped = 0.0f;
+        float u_raw = 0.0f, u_clamped = 0.0f;
+        float effKp = _cfg.Kp;  // default (inside deadband or boost disabled)
+
         if (fabsf(error) >= _cfg.pitch_deadband_rad) {
-            u_raw     = (_cfg.Kp * error + _cfg.Kd * _pitchRateFiltered)
-                        * _cfg.correction_sign;
+            // TASK-1: Compute nonlinear effective Kp.
+            effKp  = _computeEffectiveKp(fabsf(error), _cfg.Kp,
+                                          _cfg.gain_boost_threshold_rad,
+                                          _cfg.gain_boost_factor);
+            u_raw  = (effKp * error + _cfg.Kd * _pitchRateFiltered)
+                     * _cfg.correction_sign;
             u_clamped = constrain(u_raw,
                                   -_cfg.max_correction_deg,
                                    _cfg.max_correction_deg);
         }
 
-        // Ratio split — zero commands flow through shaping on deadband (IIR decay).
         float ankle_cmd = u_clamped * _cfg.ankle_ratio;
         float hip_cmd   = u_clamped * _cfg.hip_ratio;
         float torso_cmd = u_clamped * _cfg.torso_ratio;
 
-        // Shape and submit all pitch joints.
-        // _pitchRateFiltered passed as angular rate for velocity damping stage.
         _applyPitchCorrection(ankle_cmd, hip_cmd, torso_cmd, _pitchRateFiltered);
 
-        // Telemetry reports pre-shaping values — reflects raw PD math for tuning.
+        // Telemetry: pre-shaping values + effective_kp for UI transparency.
         out.u_raw         = u_raw;
         out.u_clamped     = u_clamped;
+        out.effective_kp  = effKp;
         out.ankle_cmd_deg = ankle_cmd;
         out.hip_cmd_deg   = hip_cmd;
         out.torso_cmd_deg = torso_cmd;
     }
 
     // =========================================================================
-    //  ROLL PD — frontal plane (left/right)
-    //
-    //  Feature parity with pitch: Smith predictor, derivative LPF, deadband,
-    //  magnitude clamp, ratio split, same _shapeOutput pipeline.
-    //  Roll uses separate gains (Kp_roll, Kd_roll) and separate IIR state
-    //  (_rollRateFiltered, BJI_R_ANKLE_ROLL ... BJI_TORSO_ROLL).
+    //  ROLL PD
     // =========================================================================
     if (_cfg.roll_enabled) {
-        // Derivative filter — same pattern as pitch; updated every tick.
-        // roll_derivative_lpf_alpha defaults to 0.85 (matches pitch LPF).
         _rollRateFiltered = _cfg.roll_derivative_lpf_alpha * _rollRateFiltered
-                          + (1.0f - _cfg.roll_derivative_lpf_alpha) * state.rollRate;
+                         + (1.0f - _cfg.roll_derivative_lpf_alpha) * state.rollRate;
 
-        // Smith predictor for roll — same servo lag constant as pitch.
-        // Both axes share the same servo hardware delay.
         float predictedRoll = state.roll
-                              + state.rollRate * _cfg.servo_lag_compensation_s;
+                            + state.rollRate * _cfg.servo_lag_compensation_s;
         float roll_error = predictedRoll - _cfg.roll_setpoint_rad;
 
         out.roll_active = true;
         out.roll_error  = roll_error;
 
-        float u_roll_raw     = 0.0f;
-        float u_roll_clamped = 0.0f;
+        float u_roll_raw = 0.0f, u_roll_clamped = 0.0f;
+        float effKpRoll  = _cfg.Kp_roll;
+
         if (fabsf(roll_error) >= _cfg.roll_deadband_rad) {
-            u_roll_raw     = (_cfg.Kp_roll * roll_error + _cfg.Kd_roll * _rollRateFiltered)
-                             * _cfg.roll_correction_sign;
+            effKpRoll    = _computeEffectiveKp(fabsf(roll_error), _cfg.Kp_roll,
+                                               _cfg.gain_boost_threshold_roll_rad,
+                                               _cfg.gain_boost_factor_roll);
+            u_roll_raw   = (effKpRoll * roll_error
+                            + _cfg.Kd_roll * _rollRateFiltered)
+                           * _cfg.roll_correction_sign;
             u_roll_clamped = constrain(u_roll_raw,
                                        -_cfg.max_roll_correction_deg,
                                         _cfg.max_roll_correction_deg);
         }
 
-        float ankle_roll_cmd = u_roll_clamped * _cfg.ankle_roll_ratio;
-        float hip_roll_cmd   = u_roll_clamped * _cfg.hip_roll_ratio;
-        float torso_roll_cmd = u_roll_clamped * _cfg.torso_roll_ratio;
+        float ankle_r = u_roll_clamped * _cfg.ankle_roll_ratio;
+        float hip_r   = u_roll_clamped * _cfg.hip_roll_ratio;
+        float torso_r = u_roll_clamped * _cfg.torso_roll_ratio;
 
-        // Shape and submit all roll joints.
-        _applyRollCorrection(ankle_roll_cmd, hip_roll_cmd, torso_roll_cmd,
-                             _rollRateFiltered);
+        _applyRollCorrection(ankle_r, hip_r, torso_r, _rollRateFiltered);
 
         out.u_roll_raw         = u_roll_raw;
         out.u_roll_clamped     = u_roll_clamped;
-        out.ankle_roll_cmd_deg = ankle_roll_cmd;
-        out.hip_roll_cmd_deg   = hip_roll_cmd;
-        out.torso_roll_cmd_deg = torso_roll_cmd;
+        out.effective_kp_roll  = effKpRoll;
+        out.ankle_roll_cmd_deg = ankle_r;
+        out.hip_roll_cmd_deg   = hip_r;
+        out.torso_roll_cmd_deg = torso_r;
+
+    } else if (fabsf(_cfg.ankle_roll_bias_l_deg) > 0.01f ||
+               fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f) {
+        // C-02 FIX: Roll PD is disabled, but WeightShift has injected a non-zero
+        // ankle roll bias. Without this branch, _applyRollCorrection() is never
+        // called, so the bias is never submitted to MotionManager and weight shift
+        // has no effect on ankle roll when roll controller is off.
+        //
+        // We call _applyRollCorrection() with zero PD correction (ankle/hip/torso=0,
+        // rate=0) so only the bias is applied. The IIR shaping for roll joints
+        // receives rawCmd=0, which the BUG-01 fix handles correctly: IIR decays
+        // toward zero, and the bias is added post-shaping at submission time.
+        // Velocity damping is also zero (rollRate_rs=0) — correct for bias-only mode.
+        _applyRollCorrection(0.0f, 0.0f, 0.0f, 0.0f);
     }
 
     out.active = out.pitch_active || out.roll_active;
@@ -316,35 +304,22 @@ BalanceState BalanceController::update(const IMUState& state) {
 
 // ---------------------------------------------------------------------------
 //  _applyPitchCorrection
-//
-//  Shapes and submits all pitch balance joints through _shapeOutput().
-//  All 5 joints are shaped every tick — even joints with ratio=0 receive a
-//  rawCmd=0, which lets their IIR decay gracefully instead of cold-starting
-//  when a ratio is enabled mid-session via WebSocket.
-//
-//  Torso pitch negation: the torso pitch servo's mechanical direction is
-//  opposite to ankle/hip for the same correction intent. The negation is
-//  applied before _shapeOutput so the IIR state tracks the actual mechanical
-//  output (not the inverted PD command).
+//  All 5 pitch joints shaped every tick (even ratio=0) so the IIR for unused
+//  joints stays at zero rather than cold-starting on ratio change.
 // ---------------------------------------------------------------------------
 void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg,
                                                float torso_deg, float pitchRate_rs) {
-    // ── Path A: MotionManager wired (normal runtime path) ────────────────────
     if (_motionManager) {
-        // Shape all 5 pitch joints unconditionally.
-        float r_ankle = _shapeOutput(BJI_R_ANKLE_PITCH,  ankle_deg,  pitchRate_rs);
-        float l_ankle = _shapeOutput(BJI_L_ANKLE_PITCH,  ankle_deg,  pitchRate_rs);
-        float r_hip   = _shapeOutput(BJI_R_HIP_PITCH,    hip_deg,    pitchRate_rs);
-        float l_hip   = _shapeOutput(BJI_L_HIP_PITCH,    hip_deg,    pitchRate_rs);
-        // Torso negated before shaping — IIR tracks actual mechanical output.
-        float torso   = _shapeOutput(BJI_TORSO_PITCH,   -torso_deg,  pitchRate_rs);
+        float r_ank = _shapeOutput(BJI_R_ANKLE_PITCH,  ankle_deg,  pitchRate_rs);
+        float l_ank = _shapeOutput(BJI_L_ANKLE_PITCH,  ankle_deg,  pitchRate_rs);
+        float r_hip = _shapeOutput(BJI_R_HIP_PITCH,    hip_deg,    pitchRate_rs);
+        float l_hip = _shapeOutput(BJI_L_HIP_PITCH,    hip_deg,    pitchRate_rs);
+        // Torso pitch negated: pushes CoM opposite direction to ankle/hip.
+        // Negation before shaping so IIR tracks actual mechanical output direction.
+        float torso = _shapeOutput(BJI_TORSO_PITCH,   -torso_deg,  pitchRate_rs);
 
-        // Always submit ankle — primary balance joint.
-        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_PITCH, r_ankle);
-        _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_PITCH, l_ankle);
-
-        // Submit hip and torso only if ratio is configured.
-        // IIR is still updated above (ratio=0 → zero rawCmd → IIR decays).
+        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_PITCH, r_ank);
+        _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_PITCH, l_ank);
         if (_cfg.hip_ratio > 0.001f) {
             _motionManager->submit(SOURCE_BALANCE, IDX_R_HIP_PITCH, r_hip);
             _motionManager->submit(SOURCE_BALANCE, IDX_L_HIP_PITCH, l_hip);
@@ -355,24 +330,20 @@ void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg,
         return;
     }
 
-    // ── Path B: MotionManager absent — direct fallback (log warning once) ────
     if (!_servo) return;
-    static bool _fallbackWarned = false;
-    if (!_fallbackWarned) {
-        Serial.println("[BalanceController] WARNING: MotionManager not wired — "
-                       "direct servo fallback active. Wire setMotionManager() in setup().");
-        _fallbackWarned = true;
+    static bool _warned = false;
+    if (!_warned) {
+        Serial.println("[BalanceController] WARNING: MotionManager not wired.");
+        _warned = true;
     }
-
-    float r_ankle = _shapeOutput(BJI_R_ANKLE_PITCH,  ankle_deg,  pitchRate_rs);
-    float l_ankle = _shapeOutput(BJI_L_ANKLE_PITCH,  ankle_deg,  pitchRate_rs);
-    float r_hip   = _shapeOutput(BJI_R_HIP_PITCH,    hip_deg,    pitchRate_rs);
-    float l_hip   = _shapeOutput(BJI_L_HIP_PITCH,    hip_deg,    pitchRate_rs);
-    float torso   = _shapeOutput(BJI_TORSO_PITCH,   -torso_deg,  pitchRate_rs);
-
-    _servo->setJointAngleDirect(IDX_R_ANKLE_PITCH, r_ankle);
-    _servo->setJointAngleDirect(IDX_L_ANKLE_PITCH, l_ankle);
-    if (_cfg.hip_ratio > 0.001f) {
+    float r_ank = _shapeOutput(BJI_R_ANKLE_PITCH,  ankle_deg,  pitchRate_rs);
+    float l_ank = _shapeOutput(BJI_L_ANKLE_PITCH,  ankle_deg,  pitchRate_rs);
+    float r_hip = _shapeOutput(BJI_R_HIP_PITCH,    hip_deg,    pitchRate_rs);
+    float l_hip = _shapeOutput(BJI_L_HIP_PITCH,    hip_deg,    pitchRate_rs);
+    float torso = _shapeOutput(BJI_TORSO_PITCH,   -torso_deg,  pitchRate_rs);
+    _servo->setJointAngleDirect(IDX_R_ANKLE_PITCH, r_ank);
+    _servo->setJointAngleDirect(IDX_L_ANKLE_PITCH, l_ank);
+    if (_cfg.hip_ratio   > 0.001f) {
         _servo->setJointAngleDirect(IDX_R_HIP_PITCH, r_hip);
         _servo->setJointAngleDirect(IDX_L_HIP_PITCH, l_hip);
     }
@@ -382,35 +353,57 @@ void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg,
 }
 
 // ---------------------------------------------------------------------------
-//  _applyRollCorrection
+//  _applyRollCorrection — TASK-2: adds ankle roll bias AFTER shaping.
 //
-//  Mirrors _applyPitchCorrection exactly — same shaping, same submit pattern.
+//  The shaped balance correction alone would completely override the weight
+//  shift ankle position (SOURCE_BALANCE > SOURCE_GAIT in MotionManager).
+//  Instead, WeightShift no longer submits ankle roll via MotionManager.
+//  It sets ankle_roll_bias_l/r_deg in BalanceConfig each tick. Here we add
+//  those baseline offsets after the IIR smoother so:
+//    final_l = shaped_correction_l + bias_l
+//    final_r = shaped_correction_r + bias_r
 //
-//  Right ankle roll negation: IDX_R_ANKLE_ROLL's mechanical correction direction
-//  is opposite to IDX_L_ANKLE_ROLL for the same roll error sign. The JointModel
-//  direction field partially compensates, but the roll correction axis requires
-//  an explicit negation for the right side. Applied before _shapeOutput so the
-//  IIR state tracks the actual mechanical command.
+//  The balance controller corrections are now additive ON TOP of the shift.
+//  When the roll error equals the setpoint (robot achieved target lean),
+//  u_roll ≈ 0, and the only submission is the bias — robot holds the lean.
+//  When roll error diverges, correction is added/subtracted around the bias.
 //
-//  Bug fix vs original: the original fallback path referenced _motionManager
-//  instead of _servo for hip commands. That is corrected here.
+//  Bias sign convention (matches the negation applied to right ankle):
+//    For leftward tilt: bias_l > 0, bias_r < 0
+//    Both produce the same physical tilt direction (verified via balance sign).
 // ---------------------------------------------------------------------------
 void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg,
                                               float torso_deg, float rollRate_rs) {
-    // ── Path A: MotionManager wired ───────────────────────────────────────────
     if (_motionManager) {
-        // Right ankle is negated — see comment above.
-        float r_ankle = _shapeOutput(BJI_R_ANKLE_ROLL, -ankle_deg, rollRate_rs);
-        float l_ankle = _shapeOutput(BJI_L_ANKLE_ROLL,  ankle_deg, rollRate_rs);
-        float r_hip   = _shapeOutput(BJI_R_HIP_ROLL,    hip_deg,   rollRate_rs);
-        float l_hip   = _shapeOutput(BJI_L_HIP_ROLL,    hip_deg,   rollRate_rs);
-        // Torso roll: direction currently assumed +1 (not yet verified on hardware).
-        // If correction worsens the lean, set roll_correction_sign = -1 from UI.
-        float torso   = _shapeOutput(BJI_TORSO_ROLL,    torso_deg, rollRate_rs);
+        // Shape correction (right negated for consistent physical direction).
+        float shaped_r = _shapeOutput(BJI_R_ANKLE_ROLL, -ankle_deg, rollRate_rs);
+        float shaped_l = _shapeOutput(BJI_L_ANKLE_ROLL,  ankle_deg, rollRate_rs);
+        float r_hip    = _shapeOutput(BJI_R_HIP_ROLL,    hip_deg,   rollRate_rs);
+        float l_hip    = _shapeOutput(BJI_L_HIP_ROLL,    hip_deg,   rollRate_rs);
+        float torso    = _shapeOutput(BJI_TORSO_ROLL,    torso_deg, rollRate_rs);
 
-        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_ROLL, r_ankle);
-        _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_ROLL, l_ankle);
+        // TASK-2: Add weight shift baseline AFTER shaping.
+        // IIR history (filtered_cmd_deg) still tracks only the balance correction;
+        // the bias is applied at submission time so it does not drift the IIR state.
+        float final_r = shaped_r + _cfg.ankle_roll_bias_r_deg;
+        float final_l = shaped_l + _cfg.ankle_roll_bias_l_deg;
 
+        // Final clamp: combined bias + correction must not exceed joint limits.
+        // JointModel enforces hard limits, but this prevents unnecessary chatter
+        // against those limits from balance vs. weight shift contention.
+        // M-04 FIX: headroom must accommodate the LARGER of the two biases.
+        // The previous code only used left bias; if right is larger (asymmetric
+        // shift), the right clamp was too tight and could fight the weight shift.
+        float maxBias  = fmaxf(fabsf(_cfg.ankle_roll_bias_l_deg),
+                                fabsf(_cfg.ankle_roll_bias_r_deg));
+        float maxAnkle = fmaxf(_cfg.max_correction_deg, _cfg.max_roll_correction_deg)
+                         + maxBias;
+        maxAnkle = constrain(maxAnkle, 1.0f, 30.0f);
+        final_r  = constrain(final_r, -maxAnkle, maxAnkle);
+        final_l  = constrain(final_l, -maxAnkle, maxAnkle);
+
+        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_ROLL, final_r);
+        _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_ROLL, final_l);
         if (_cfg.hip_roll_ratio > 0.001f) {
             _motionManager->submit(SOURCE_BALANCE, IDX_R_HIP_ROLL, r_hip);
             _motionManager->submit(SOURCE_BALANCE, IDX_L_HIP_ROLL, l_hip);
@@ -421,19 +414,26 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg,
         return;
     }
 
-    // ── Path B: MotionManager absent — direct fallback ────────────────────────
     if (!_servo) return;
-    // (Warning already printed by _applyPitchCorrection fallback path.)
+    float shaped_r = _shapeOutput(BJI_R_ANKLE_ROLL, -ankle_deg, rollRate_rs);
+    float shaped_l = _shapeOutput(BJI_L_ANKLE_ROLL,  ankle_deg, rollRate_rs);
+    float r_hip    = _shapeOutput(BJI_R_HIP_ROLL,    hip_deg,   rollRate_rs);
+    float l_hip    = _shapeOutput(BJI_L_HIP_ROLL,    hip_deg,   rollRate_rs);
+    float torso    = _shapeOutput(BJI_TORSO_ROLL,    torso_deg, rollRate_rs);
 
-    float r_ankle = _shapeOutput(BJI_R_ANKLE_ROLL, -ankle_deg, rollRate_rs);
-    float l_ankle = _shapeOutput(BJI_L_ANKLE_ROLL,  ankle_deg, rollRate_rs);
-    float r_hip   = _shapeOutput(BJI_R_HIP_ROLL,    hip_deg,   rollRate_rs);
-    float l_hip   = _shapeOutput(BJI_L_HIP_ROLL,    hip_deg,   rollRate_rs);
-    float torso   = _shapeOutput(BJI_TORSO_ROLL,    torso_deg, rollRate_rs);
+    float final_r = shaped_r + _cfg.ankle_roll_bias_r_deg;
+    float final_l = shaped_l + _cfg.ankle_roll_bias_l_deg;
+        float maxBias  = fmaxf(fabsf(_cfg.ankle_roll_bias_l_deg),
+                                fabsf(_cfg.ankle_roll_bias_r_deg));
+        float maxAnkle = fmaxf(_cfg.max_correction_deg, _cfg.max_roll_correction_deg)
+                         + maxBias;
+        maxAnkle = constrain(maxAnkle, 1.0f, 30.0f);
+    final_r = constrain(final_r, -maxAnkle, maxAnkle);
+    final_l = constrain(final_l, -maxAnkle, maxAnkle);
 
-    _servo->setJointAngleDirect(IDX_R_ANKLE_ROLL, r_ankle);
-    _servo->setJointAngleDirect(IDX_L_ANKLE_ROLL, l_ankle);
-    if (_cfg.hip_roll_ratio > 0.001f) {
+    _servo->setJointAngleDirect(IDX_R_ANKLE_ROLL, final_r);
+    _servo->setJointAngleDirect(IDX_L_ANKLE_ROLL, final_l);
+    if (_cfg.hip_roll_ratio   > 0.001f) {
         _servo->setJointAngleDirect(IDX_R_HIP_ROLL, r_hip);
         _servo->setJointAngleDirect(IDX_L_HIP_ROLL, l_hip);
     }

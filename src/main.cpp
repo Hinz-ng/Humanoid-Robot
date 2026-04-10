@@ -67,7 +67,9 @@ void oe_estop() {
     _oe_estopped = true;
     // Push neutral targets before disabling OE so the last register state is
     // benign if signal lines float while OE is high.
-    servoController.resetToNeutral();
+    servoController.resetToNeutral();   // pre-zero to prevent violent snap
+    balanceController.resetOutputState();  // was resetOutputState() — method renamed
+
     digitalWrite(OE_PIN, HIGH);
     Serial.println("[OE] *** EMERGENCY STOP *** Outputs DISABLED (OE=HIGH).");
 }

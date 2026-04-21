@@ -7,6 +7,8 @@
 #include "balance_controller.h"
 #include "motion_manager.h"        // joint authority layer
 #include "weight_shift.h"          // gait: CoM lateral shift
+#include "leg_ik.h"
+#include <math.h>
 
 // =============================================================================
 //  GLOBAL OBJECTS
@@ -104,6 +106,45 @@ void setup() {
     webComm.setStateEstimator(&stateEstimator);
     balanceController.init();
 
+    // Validate IK roundtrip - create FootTarget objects explicitly
+    FootTarget target1;
+    target1.x_mm = 0.0f;
+    target1.h_sagittal_mm = 160.0f;
+    target1.y_mm = 0.0f;
+    target1.h_frontal_mm = 0.0f;
+    target1.isRightLeg = true;
+    LegIK::validateRoundtrip(target1, 0.5f);
+
+    FootTarget target2;
+    target2.x_mm = 20.0f;
+    target2.h_sagittal_mm = 155.0f;
+    target2.y_mm = 15.0f;
+    target2.h_frontal_mm = 0.0f;
+    target2.isRightLeg = true;
+    LegIK::validateRoundtrip(target2, 0.5f);
+    // Replace with measured physical angles once you have them:
+    // LegIK::validateNeutral(hip_meas, knee_meas, ankle_meas, 1.5f);
+
+    // Gait target parameters (define before use)
+    float cpg_x = 0.0f;       // forward position (mm)
+    float h_nominal = 160.0f; // nominal height (mm)
+    float cpg_y = 0.0f;       // lateral position (mm)
+
+    FootTarget gaitTarget;
+    gaitTarget.x_mm = cpg_x;
+    gaitTarget.h_sagittal_mm = h_nominal;
+    gaitTarget.y_mm = cpg_y;
+    gaitTarget.h_frontal_mm = 0.0f;
+    gaitTarget.isRightLeg = true;
+    LegIKResult ik = LegIK::solve(gaitTarget);
+    if (ik.ok()) {
+        motionManager.submit(SOURCE_GAIT, IDX_R_HIP_PITCH,   ik.hip_pitch_deg);
+        motionManager.submit(SOURCE_GAIT, IDX_R_KNEE_PITCH,  ik.knee_pitch_deg);
+        motionManager.submit(SOURCE_GAIT, IDX_R_ANKLE_PITCH, ik.ankle_pitch_deg);
+        motionManager.submit(SOURCE_GAIT, IDX_R_HIP_ROLL,    ik.hip_roll_deg);
+        motionManager.submit(SOURCE_GAIT, IDX_R_ANKLE_ROLL,  ik.ankle_roll_deg);
+    }
+
     // Wire MotionManager — must come after servoController.init() because
     // init() stores a pointer to servoController (no hardware calls yet).
     motionManager.init(&servoController);
@@ -121,7 +162,6 @@ void setup() {
 // =============================================================================
 
 void loop() {
-    webComm.cleanupClients();
     oe_loop();
     servoController.update();
 

@@ -12,6 +12,7 @@
 // Forward declarations — only pointers are stored; full types in respective headers.
 class MotionManager;
 class WeightShift;
+class GaitController;   // forward declare — only pointer stored
 
 class WebComm {
 public:    // ctor can be invoked at global scope; it simply stores the servo pointer.
@@ -19,6 +20,7 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // Pass both controllers at construction. stateEst used for on-connect CALIB push.
     WebComm(ServoControl* servo = nullptr);
     void setStateEstimator(StateEstimator* stateEst);  // call before init()
+    void setGaitController(GaitController* gc);
     void init();
     void cleanupClients();
     void broadcastState();
@@ -47,6 +49,7 @@ private:
     uint32_t           _lastBalanceBroadcast_us = 0;
     MotionManager*     _motionManager   = nullptr;  // joint authority layer
     WeightShift*       _weightShift     = nullptr;  // gait: CoM lateral shift
+    GaitController*    _gaitCtrl       = nullptr;
     
     void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
     void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);

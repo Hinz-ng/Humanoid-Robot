@@ -117,10 +117,19 @@ LegIK::SagittalSol LegIK::solveSagittal(float x_mm, float h_mm) {
     // Verification: x=0, some knee bend → hip = 0 + γ > 0 (thigh forward). ✓
     sol.hip_pitch_deg = (phi_reach + gamma) * RAD_TO_DEG;
 
-    // ── Step 3: Ankle (flat-foot constraint) ──────────────────────────────────
-    // Shank angle from vertical = hip − knee. Negative = shank backward.
-    // Ankle cancels this: ankle = knee − hip = +dorsiflexion to compensate. ✓
-    sol.ankle_pitch_deg = sol.knee_pitch_deg - sol.hip_pitch_deg;
+    // ── Step 3: Ankle pitch (flat-foot constraint) ──────────────────────────────
+    // Shank angle from vertical = hip − knee (negative = shank tilts backward).
+    // Geometrically, ankle = knee − hip keeps the foot flat.
+    // Hardware sign correction: the physical ankle pitch servo produces
+    // plantar flexion for positive joint angles (confirmed on hardware — the
+    // direction=+1 in joint_config maps increasing pulse to plantar flexion,
+    // opposite to the assumed convention). Negating the IK output aligns
+    // the geometric constraint with the hardware sign:
+    //   ankleGeometric = +(knee − hip) → requires plantar flexion
+    //   ankleHardware  = -(knee − hip) → produces dorsiflexion ✓
+    // If the robot is re-calibrated and direction is flipped in joint_config,
+    // remove this negation and restore the positive formula.
+    sol.ankle_pitch_deg = -(sol.knee_pitch_deg - sol.hip_pitch_deg);
 
     // ── Step 4: Soft limits ───────────────────────────────────────────────────
     bool clamped = false;

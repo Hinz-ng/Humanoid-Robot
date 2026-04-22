@@ -5,6 +5,8 @@
 #include "servo_driver.h"
 #include "motion_manager.h"    // MotionSource, MotionManager::submit()
 #include "weight_shift.h"      // WeightShift, ShiftDirection, WeightShiftConfig
+#include "leg_ik.h"            // LegIK, FootTarget, LegIKResult — IK test commands
+#include "gait_controller.h"
 
 // Constructor ---------------------------------------------------------------
 WebComm::WebComm(ServoControl* servo)
@@ -25,6 +27,10 @@ void WebComm::setMotionManager(MotionManager* mm) {
 
 void WebComm::setWeightShift(WeightShift* ws) {
     _weightShift = ws;
+}
+
+void WebComm::setGaitController(GaitController* gc) {
+    _gaitCtrl = gc;
 }
 
 // ---------------------------------------------------------------------------
@@ -502,6 +508,57 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             }
         }
         
+// -----------------------------------------------------------------
+//  Gait start / stop
+// -----------------------------------------------------------------
+else if (cmd == "GAIT_START") {
+    if (_gaitCtrl) {
+        _gaitCtrl->start();
+        Serial.println("[WebComm] CMD: GAIT_START");
+    }
+}
+else if (cmd == "GAIT_STOP") {
+    if (_gaitCtrl) {
+        _gaitCtrl->stop();
+        Serial.println("[WebComm] CMD: GAIT_STOP");
+    }
+}
+// -----------------------------------------------------------------
+//  Gait tuning
+//  Protocol: CMD:GAIT_TUNE:step_len=20.0,step_h=15.0,h=160.0,
+//                          width=25.0,lat=12.0,period=1.6,ds=0.20
+// -----------------------------------------------------------------
+else if (cmd.startsWith("GAIT_TUNE:")) {
+    if (_gaitCtrl) {
+        GaitConfig cfg = _gaitCtrl->getConfig();
+        String params = cmd.substring(10);
+        int start = 0;
+        while (start < (int)params.length()) {
+            int comma = params.indexOf(',', start);
+            String pair = (comma == -1) ? params.substring(start)
+                                        : params.substring(start, comma);
+            int eq = pair.indexOf('=');
+            if (eq != -1) {
+                String key = pair.substring(0, eq);
+                float  val = pair.substring(eq + 1).toFloat();
+                if      (key == "step_len") cfg.step_length_mm      = val;
+                else if (key == "step_h")   cfg.step_height_mm      = val;
+                else if (key == "h")        cfg.stance_height_mm    = val;
+                else if (key == "width")    cfg.stance_width_mm     = val;
+                else if (key == "lat")      cfg.lateral_shift_mm    = constrain(val, 0.0f, 15.0f);
+                else if (key == "period")   cfg.cycle_period_s      = constrain(val, 0.5f, 5.0f);
+                else if (key == "ds")       cfg.double_support_frac = constrain(val, 0.0f, 0.39f);
+            }
+            start = (comma == -1) ? params.length() : comma + 1;
+        }
+        _gaitCtrl->setConfig(cfg);
+        Serial.printf("[WebComm] GAIT_TUNE: step_len=%.1f step_h=%.1f h=%.1f "
+                      "lat=%.1f period=%.2f ds=%.2f\n",
+                      cfg.step_length_mm, cfg.step_height_mm, cfg.stance_height_mm,
+                      cfg.lateral_shift_mm, cfg.cycle_period_s, cfg.double_support_frac);
+    }
+}
+
         // ---------------------------------------------------------------------
         //  Balance tuning — parses key=value pairs, normalises ratios
         // ---------------------------------------------------------------------
@@ -586,6 +643,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         }
                         else if (key == "roll_db")  cfg.roll_deadband_rad = constrain(val, 0.0f, 0.20f);
                         else if (key == "roll_dlpf") cfg.roll_derivative_lpf_alpha = constrain(val, 0.0f, 0.99f);
+                        else if (key == "fall_det")  cfg.fall_detection_enabled     = (val > 0.5f);
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
@@ -659,7 +717,195 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             ws.textAll("ESTOP:CLEAR");
             Serial.println("[WebComm] CMD: CLEAR_ESTOP received — outputs enabled");
         }
+        // ─────────────────────────────────────────────────────────────────────
+        //  IK TEST COMMANDS
+        //
+        //  These commands expose LegIK functions to the UI so tests can be
+        //  triggered without serial access.
+        //
+        //  Validate commands (IK_VALIDATE, IK_NEUTRAL):
+        //    Print full diagnostics to Serial; broadcast a summary to the UI.
+        //    Do NOT move servos.
+        //
+        //  Motion commands (IK_CROUCH, IK_FRONTAL_R/L, IK_SOLVE with submit=1):
+        //    Submit angles to MotionManager via SOURCE_GAIT.
+        //    SOURCE_BALANCE (balance controller) will override if active.
+        //    DISABLE BALANCE CONTROLLER BEFORE RUNNING MOTION TESTS.
+        //
+        //  Response format (broadcast to all clients):
+        //    IK_RESULT:status=N,hip=X,knee=X,ankle=X,h_roll=X,a_roll=X,
+        //              reach=X,ff=X,pos_err=X,sub=0|1
+        //    IK_ERROR:reason
+        // ─────────────────────────────────────────────────────────────────────
+        else if (cmd.startsWith("IK_")) {
+
+            // Inline broadcast: packs result into one WS message.
+            // pos_err: sagittal FK roundtrip error in mm (0 if not computed).
+            // submitted: true if angles were dispatched to MotionManager.
+            auto broadcastIK = [&](const LegIKResult& r, float pos_err, bool submitted) {
+                char buf[256];
+                snprintf(buf, sizeof(buf),
+                    "IK_RESULT:status=%d,hip=%.3f,knee=%.3f,ankle=%.3f,"
+                    "h_roll=%.3f,a_roll=%.3f,reach=%.1f,ff=%.4f,pos_err=%.5f,sub=%d",
+                    static_cast<int>(r.status),
+                    r.hip_pitch_deg, r.knee_pitch_deg, r.ankle_pitch_deg,
+                    r.hip_roll_deg,  r.ankle_roll_deg,
+                    r.sagittal_reach_pct, r.flat_foot_error_deg,
+                    pos_err, static_cast<int>(submitted));
+                ws.textAll(buf);
+            };
+
+            // FK roundtrip position error helper.
+            // Returns the Euclidean distance (mm) between the IK target and
+            // the foot position recovered from the computed angles via FK.
+            auto fkError = [](const LegIKResult& r, float x_mm, float h_mm) -> float {
+                float fk_x, fk_h;
+                LegIK::forwardSagittal(r.hip_pitch_deg, r.knee_pitch_deg, fk_x, fk_h);
+                const float dx = fk_x - x_mm;
+                const float dh = fk_h - h_mm;
+                return sqrtf(dx*dx + dh*dh);
+            };
+
+            // Reusable key=value parser — same pattern as BALANCE_TUNE.
+            struct KVParams {
+                float x = 0.0f, h = 160.0f, y = 0.0f;
+                float hip = 0.0f, knee = 0.0f, ankle = 0.0f;
+                String leg = "both";
+                bool submit = false;
+            };
+            auto parseKV = [](const String& params) -> KVParams {
+                KVParams p;
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    String pair = (comma == -1) ? params.substring(start)
+                                                : params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq != -1) {
+                        String key = pair.substring(0, eq);
+                        String val = pair.substring(eq + 1);
+                        if      (key == "x")      p.x      = val.toFloat();
+                        else if (key == "h")      p.h      = val.toFloat();
+                        else if (key == "y")      p.y      = val.toFloat();
+                        else if (key == "hip")    p.hip    = val.toFloat();
+                        else if (key == "knee")   p.knee   = val.toFloat();
+                        else if (key == "ankle")  p.ankle  = val.toFloat();
+                        else if (key == "leg")    p.leg    = val;
+                        else if (key == "submit") p.submit = (val.toInt() == 1);
+                    }
+                    start = (comma == -1) ? params.length() : comma + 1;
+                }
+                return p;
+            };
+
+            // ── IK_VALIDATE:x=...,h=...,y=... ────────────────────────────────
+            // Runs validateRoundtrip (full diagnostics to Serial).
+            // Broadcasts angle summary and FK position error to UI.
+            // Does NOT move any servos.
+            if (cmd.startsWith("IK_VALIDATE:")) {
+                KVParams p = parseKV(cmd.substring(12));
+                FootTarget t; t.x_mm = p.x; t.h_sagittal_mm = p.h; t.y_mm = p.y;
+                LegIK::validateRoundtrip(t, 0.5f);  // detailed output → Serial
+                LegIKResult r = LegIK::solve(t);
+                broadcastIK(r, fkError(r, p.x, p.h), false);
+            }
+            // ── IK_NEUTRAL:hip=...,knee=...,ankle=... ────────────────────────
+            // Runs validateNeutral against measured calibration angles.
+            // Broadcasts the IK result at the implied foot position.
+            // Does NOT move any servos.
+            else if (cmd.startsWith("IK_NEUTRAL:")) {
+                KVParams p = parseKV(cmd.substring(11));
+                LegIK::validateNeutral(p.hip, p.knee, p.ankle, 1.5f);  // → Serial
+                // Compute foot position implied by these angles via FK, then
+                // solve IK so the UI sees what the geometry predicts.
+                float x_impl, h_impl;
+                LegIK::forwardSagittal(p.hip, p.knee, x_impl, h_impl);
+                FootTarget t; t.x_mm = x_impl; t.h_sagittal_mm = h_impl;
+                LegIKResult r = LegIK::solve(t);
+                broadcastIK(r, fkError(r, x_impl, h_impl), false);
+            }
+            // ── IK_CROUCH ─────────────────────────────────────────────────────
+            // Sagittal sign test: x=0 mm, h=160 mm, y=0 mm, both legs.
+            // With balance OFF, robot should lower into a symmetric crouch.
+            // If it arches backward, flip correction_sign in balance_controller.
+            else if (cmd == "IK_CROUCH") {
+                if (!_motionManager) { ws.textAll("IK_ERROR:MotionManager not wired"); return; }
+                FootTarget t; t.x_mm = 0.0f; t.h_sagittal_mm = 160.0f; t.y_mm = 0.0f;
+                LegIKResult r = LegIK::solve(t);
+                if (r.ok()) {
+                    _motionManager->submit(SOURCE_GAIT, IDX_R_HIP_PITCH,   r.hip_pitch_deg);
+                    _motionManager->submit(SOURCE_GAIT, IDX_R_KNEE_PITCH,  r.knee_pitch_deg);
+                    _motionManager->submit(SOURCE_GAIT, IDX_R_ANKLE_PITCH, r.ankle_pitch_deg);
+                    _motionManager->submit(SOURCE_GAIT, IDX_L_HIP_PITCH,   r.hip_pitch_deg);
+                    _motionManager->submit(SOURCE_GAIT, IDX_L_KNEE_PITCH,  r.knee_pitch_deg);
+                    _motionManager->submit(SOURCE_GAIT, IDX_L_ANKLE_PITCH, r.ankle_pitch_deg);
+                    broadcastIK(r, fkError(r, 0.0f, 160.0f), true);
+                    Serial.printf("[WebComm] IK_CROUCH: hip=%.2f knee=%.2f ankle=%.2f\n",
+                                  r.hip_pitch_deg, r.knee_pitch_deg, r.ankle_pitch_deg);
+                } else {
+                    ws.textAll("IK_ERROR:DOMAIN_ERROR in sagittal solve");
+                }
+            }
+            // ── IK_FRONTAL_R / IK_FRONTAL_L ──────────────────────────────────
+            // Frontal sign test: y=20 mm outward on one leg. Balance must be OFF.
+            // Expected: sole tilts outward (inversion) on the commanded leg.
+            // If sole tilts inward: flip ankle_roll_deg sign in solveFrontal().
+            // If asymmetric L vs R: check direction=−1 on left ankle roll in
+            // joint_config.cpp.
+            else if (cmd == "IK_FRONTAL_R" || cmd == "IK_FRONTAL_L") {
+                if (!_motionManager) { ws.textAll("IK_ERROR:MotionManager not wired"); return; }
+                const bool isRight = (cmd == "IK_FRONTAL_R");
+                FootTarget t; t.x_mm = 0.0f; t.h_sagittal_mm = 160.0f; t.y_mm = 20.0f;
+                LegIKResult r = LegIK::solve(t);
+                if (r.ok()) {
+                    const uint8_t hipCh   = isRight ? IDX_R_HIP_ROLL   : IDX_L_HIP_ROLL;
+                    const uint8_t ankleCh = isRight ? IDX_R_ANKLE_ROLL : IDX_L_ANKLE_ROLL;
+                    _motionManager->submit(SOURCE_GAIT, hipCh,   r.hip_roll_deg);
+                    _motionManager->submit(SOURCE_GAIT, ankleCh, r.ankle_roll_deg);
+                    broadcastIK(r, 0.0f, true);
+                    Serial.printf("[WebComm] IK_FRONTAL_%c: h_roll=%.2f a_roll=%.2f\n",
+                                  isRight ? 'R' : 'L', r.hip_roll_deg, r.ankle_roll_deg);
+                } else {
+                    ws.textAll("IK_ERROR:DOMAIN_ERROR in frontal solve");
+                }
+            }
+            // ── IK_SOLVE:x=...,h=...,y=...,leg=right|left|both,submit=0|1 ────
+            // Custom foot target from the UI panel.
+            // submit=0: compute and display only (no servo movement).
+            // submit=1: also dispatches to MotionManager — MOVES SERVOS.
+            else if (cmd.startsWith("IK_SOLVE:")) {
+                KVParams p = parseKV(cmd.substring(9));
+                FootTarget t; t.x_mm = p.x; t.h_sagittal_mm = p.h; t.y_mm = p.y;
+                LegIKResult r = LegIK::solve(t);
+                bool submitted = false;
+                if (p.submit && r.ok() && _motionManager) {
+                    const bool doRight = (p.leg == "right" || p.leg == "both");
+                    const bool doLeft  = (p.leg == "left"  || p.leg == "both");
+                    if (doRight) {
+                        _motionManager->submit(SOURCE_GAIT, IDX_R_HIP_PITCH,   r.hip_pitch_deg);
+                        _motionManager->submit(SOURCE_GAIT, IDX_R_KNEE_PITCH,  r.knee_pitch_deg);
+                        _motionManager->submit(SOURCE_GAIT, IDX_R_ANKLE_PITCH, r.ankle_pitch_deg);
+                        _motionManager->submit(SOURCE_GAIT, IDX_R_HIP_ROLL,    r.hip_roll_deg);
+                        _motionManager->submit(SOURCE_GAIT, IDX_R_ANKLE_ROLL,  r.ankle_roll_deg);
+                    }
+                    if (doLeft) {
+                        _motionManager->submit(SOURCE_GAIT, IDX_L_HIP_PITCH,   r.hip_pitch_deg);
+                        _motionManager->submit(SOURCE_GAIT, IDX_L_KNEE_PITCH,  r.knee_pitch_deg);
+                        _motionManager->submit(SOURCE_GAIT, IDX_L_ANKLE_PITCH, r.ankle_pitch_deg);
+                        _motionManager->submit(SOURCE_GAIT, IDX_L_HIP_ROLL,    r.hip_roll_deg);
+                        _motionManager->submit(SOURCE_GAIT, IDX_L_ANKLE_ROLL,  r.ankle_roll_deg);
+                    }
+                    submitted = true;
+                }
+                broadcastIK(r, fkError(r, p.x, p.h), submitted);
+                Serial.printf("[WebComm] IK_SOLVE: x=%.1f h=%.1f y=%.1f leg=%s "
+                              "submit=%d status=%d\n",
+                              p.x, p.h, p.y, p.leg.c_str(), (int)p.submit,
+                              static_cast<int>(r.status));
+            }
+        }
     }
+    
     // -------------------------------------------------------------------------
     //  Pose save
     // -------------------------------------------------------------------------

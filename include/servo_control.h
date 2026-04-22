@@ -67,6 +67,14 @@ public:
     // Use ONLY from real-time control loops (balance controller).
     // angleDeg: degrees FROM neutral, same frame as setJointAngle().
     void setJointAngleDirect(uint8_t channel, float angleDeg);
+
+    // Immediate=false equivalent of setJointAngleDirect.
+    // Enqueues a joint-relative command into the smooth-stepper so it ramps
+    // at the per-joint speed set by setJointSpeed(). Use for SOURCE_GAIT
+    // (IK panel, gait modules) where large one-shot moves must not be abrupt.
+    // The balance controller must continue to use setJointAngleDirect (immediate)
+    // because it runs at 400 Hz and smooth-stepper lag is unacceptable there.
+    void setJointAngleSmooth(uint8_t channel, float angleDeg);
     
     // Set a joint by raw pulse width (µs). Limits are still enforced.
     void setTargetPulse(uint8_t channel, int pulse_us, bool immediate = false);

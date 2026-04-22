@@ -8,6 +8,7 @@
 #include "motion_manager.h"        // joint authority layer
 #include "weight_shift.h"          // gait: CoM lateral shift
 #include "leg_ik.h"
+#include "gait_controller.h"
 #include <math.h>
 
 // =============================================================================
@@ -25,6 +26,7 @@ StateEstimator    stateEstimator;
 BalanceController balanceController(&servoController);
 MotionManager     motionManager;   // joint authority layer — wired in setup()
 WeightShift       weightShift;     // gait: CoM lateral shift — wired in setup()
+GaitController    gaitController;   // open-loop walking gait
 
 // =============================================================================
 //  OE CONTROL IMPLEMENTATION
@@ -125,26 +127,6 @@ void setup() {
     // Replace with measured physical angles once you have them:
     // LegIK::validateNeutral(hip_meas, knee_meas, ankle_meas, 1.5f);
 
-    // Gait target parameters (define before use)
-    float cpg_x = 0.0f;       // forward position (mm)
-    float h_nominal = 160.0f; // nominal height (mm)
-    float cpg_y = 0.0f;       // lateral position (mm)
-
-    FootTarget gaitTarget;
-    gaitTarget.x_mm = cpg_x;
-    gaitTarget.h_sagittal_mm = h_nominal;
-    gaitTarget.y_mm = cpg_y;
-    gaitTarget.h_frontal_mm = 0.0f;
-    gaitTarget.isRightLeg = true;
-    LegIKResult ik = LegIK::solve(gaitTarget);
-    if (ik.ok()) {
-        motionManager.submit(SOURCE_GAIT, IDX_R_HIP_PITCH,   ik.hip_pitch_deg);
-        motionManager.submit(SOURCE_GAIT, IDX_R_KNEE_PITCH,  ik.knee_pitch_deg);
-        motionManager.submit(SOURCE_GAIT, IDX_R_ANKLE_PITCH, ik.ankle_pitch_deg);
-        motionManager.submit(SOURCE_GAIT, IDX_R_HIP_ROLL,    ik.hip_roll_deg);
-        motionManager.submit(SOURCE_GAIT, IDX_R_ANKLE_ROLL,  ik.ankle_roll_deg);
-    }
-
     // Wire MotionManager — must come after servoController.init() because
     // init() stores a pointer to servoController (no hardware calls yet).
     motionManager.init(&servoController);
@@ -153,6 +135,8 @@ void setup() {
     webComm.setMotionManager(&motionManager);
     weightShift.init(&balanceController, &motionManager);
     webComm.setWeightShift(&weightShift);
+    gaitController.init(&motionManager, &weightShift);
+    webComm.setGaitController(&gaitController);
     webComm.init();
     Serial.println("System Ready.");
 }
@@ -199,6 +183,8 @@ void loop() {
             // WeightShift must run BEFORE balanceController so the injected
             // roll_setpoint_rad is used by balance on this same tick.
             weightShift.update(dt);
+
+            gaitController.update(dt);
 
             BalanceState balState = balanceController.update(state);
 

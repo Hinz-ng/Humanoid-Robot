@@ -139,10 +139,13 @@ BalanceState BalanceController::update(const IMUState& state) {
     BalanceState out = {};
 
     // =========================================================================
-    //  FALL DETECTION — BUG-03 FIX: runs before the enabled/disabled gate.
-    //  The robot can fall while both controllers are off. ESTOP must fire.
+    //  FALL DETECTION
+    //  Gated by fall_detection_enabled (default: false).
+    //  Enable via CMD:BALANCE_TUNE:fall_det=1 once the robot stands stably.
+    //  Kept before the enabled/disabled gate so it fires even when both
+    //  controllers are off — but only when explicitly armed.
     // =========================================================================
-    if (state.valid && !oe_is_estopped()) {
+    if (_cfg.fall_detection_enabled && state.valid && !oe_is_estopped()) {
         if (fabsf(state.pitch) > _cfg.fall_threshold_rad ||
             fabsf(state.roll)  > _cfg.fall_threshold_rad) {
             _fallTickCount++;
@@ -160,6 +163,9 @@ BalanceState BalanceController::update(const IMUState& state) {
         } else {
             _fallTickCount = 0;
         }
+    } else if (!_cfg.fall_detection_enabled) {
+        // Keep counter clean so it doesn't carry state when detection is re-armed.
+        _fallTickCount = 0;
     }
 
     // =========================================================================

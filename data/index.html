@@ -205,6 +205,55 @@
 .wshift-tune-row .tune-header { display: flex; justify-content: space-between; margin-bottom: 3px; }
 .wshift-tune-row .tune-val    { color: #ce93d8; font-weight: bold; font-family: monospace; }
 .wshift-tune-row input[type="range"] { width: 100%; margin: 0; }
+
+/* ── IK Test Panel ───────────────────────────────────────────────────── */
+.ik-panel { background: #1a2a2a; border: 1px solid #1a4a4a;
+            border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
+.ik-header { display: flex; justify-content: space-between; align-items: center;
+             padding: 12px 16px; cursor: pointer;
+             -webkit-user-select: none; -ms-user-select: none; user-select: none; }
+.ik-header h3 { margin: 0; font-size: 13px; text-transform: uppercase;
+                letter-spacing: 1px; color: #4dd0e1; }
+.ik-chevron { font-size: 11px; color: #888; transition: transform 0.2s; }
+.ik-chevron.open { transform: rotate(180deg); }
+.ik-body { padding: 0 16px 16px; }
+
+.ik-section-label { font-size: 10px; color: #888; text-transform: uppercase;
+                    letter-spacing: 0.5px; margin: 12px 0 6px;
+                    border-top: 1px solid #1a4a4a; padding-top: 8px; }
+.ik-section-label:first-of-type { border-top: none; margin-top: 4px; }
+
+.ik-result-box { background: #111; border: 1px solid #1a4a4a; border-radius: 4px;
+                 padding: 8px 12px; font-size: 11px; color: #4dd0e1;
+                 font-family: 'Courier New', monospace; margin-bottom: 4px;
+                 min-height: 20px; word-break: break-all; }
+.ik-result-box.pass { color: #4caf50; border-color: #1a4a1a; }
+.ik-result-box.fail { color: #f44336; border-color: #4a1a1a; }
+.ik-result-box.warn { color: #ff9800; border-color: #4a3000; }
+
+.ik-btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.btn-ik-validate { background: #1a3a3a; color: #4dd0e1; border: 1px solid #1a6a6a;
+                   padding: 7px 12px; border-radius: 4px; cursor: pointer;
+                   font-size: 12px; font-weight: bold; }
+.btn-ik-validate:active { background: #2a5a5a; }
+.btn-ik-motion { background: #3a2000; color: #ff9800; border: 1px solid #7a4000;
+                 padding: 7px 12px; border-radius: 4px; cursor: pointer;
+                 font-size: 12px; font-weight: bold; }
+.btn-ik-motion:active { background: #5a3000; }
+
+.ik-input-row { display: flex; gap: 10px; align-items: flex-end;
+                flex-wrap: wrap; margin-top: 6px; }
+.ik-input-group { display: flex; flex-direction: column; font-size: 10px;
+                  color: #888; gap: 3px; }
+.ik-input-group input { width: 64px; text-align: center; }
+
+.ik-output-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px;
+                  margin-top: 6px; }
+.ik-out-cell { background: #111; border-radius: 4px; padding: 5px 10px; }
+.ik-out-lbl { font-size: 10px; color: #888; text-transform: uppercase;
+              letter-spacing: 0.5px; }
+.ik-out-val { font-size: 14px; font-family: 'Courier New', monospace;
+              font-weight: bold; color: #4dd0e1; }
      </style>
 </head>
 <body>
@@ -703,6 +752,144 @@
         </div>
     </div>
 
+<!-- ── IK Test Panel ──────────────────────────────────────────────────── -->
+<div class="ik-panel">
+    <div class="ik-header" onclick="toggleIKPanel()">
+        <h3>📐 IK Tests</h3>
+        <span class="ik-chevron" id="ikChevron">▼</span>
+    </div>
+    <div class="ik-body" id="ikBody" style="display:none;">
+
+        <!-- Last result summary ─────────────────────────────────────────── -->
+        <div class="ik-result-box" id="ikResultBox">No test run yet.</div>
+
+        <!-- Section 1: Validation — prints to Serial, no servo movement ─── -->
+        <div class="ik-section-label">Validation — no servo movement</div>
+        <div class="ik-btn-row">
+            <button class="btn-ik-validate"
+                    onclick="sendCmd('IK_VALIDATE:x=0,h=160,y=0')">
+                Roundtrip  x=0  h=160
+            </button>
+            <button class="btn-ik-validate"
+                    onclick="sendCmd('IK_VALIDATE:x=20,h=155,y=15')">
+                Roundtrip  x=20  h=155  y=15
+            </button>
+        </div>
+
+        <!-- Neutral validation with editable inputs ─────────────────────── -->
+        <div style="font-size:10px; color:#888; margin:8px 0 4px;">
+            Neutral comparison — supply measured hardware angles
+        </div>
+        <div class="ik-input-row">
+            <div class="ik-input-group">
+                <span>Hip (°)</span>
+                <input type="number" id="ikNeutralHip" value="0" step="0.5">
+            </div>
+            <div class="ik-input-group">
+                <span>Knee (°)</span>
+                <input type="number" id="ikNeutralKnee" value="0" step="0.5">
+            </div>
+            <div class="ik-input-group">
+                <span>Ankle (°)</span>
+                <input type="number" id="ikNeutralAnkle" value="0" step="0.5">
+            </div>
+            <button class="btn-ik-validate" onclick="sendNeutralValidate()"
+                    style="align-self:flex-end;">
+                Validate
+            </button>
+        </div>
+
+        <!-- Section 2: Motion tests — MOVES SERVOS ─────────────────────── -->
+        <div class="ik-section-label" style="color:#ff9800;">
+            Motion tests — disable balance before use — MOVES SERVOS
+        </div>
+        <div class="ik-btn-row">
+            <button class="btn-ik-motion" onclick="sendCmd('IK_CROUCH')">
+                Sagittal crouch  (x=0  h=160  both legs)
+            </button>
+            <button class="btn-ik-motion" onclick="sendCmd('IK_FRONTAL_R')">
+                Frontal right  y=20 mm
+            </button>
+            <button class="btn-ik-motion" onclick="sendCmd('IK_FRONTAL_L')">
+                Frontal left  y=20 mm
+            </button>
+        </div>
+
+        <!-- Section 3: Custom foot target ───────────────────────────────── -->
+        <div class="ik-section-label">Custom foot target</div>
+        <div class="ik-input-row">
+            <div class="ik-input-group">
+                <span>x (mm)</span>
+                <input type="number" id="ikX" value="0" step="1">
+            </div>
+            <div class="ik-input-group">
+                <span>h_sag (mm)</span>
+                <input type="number" id="ikH" value="160" step="1">
+            </div>
+            <div class="ik-input-group">
+                <span>y (mm)</span>
+                <input type="number" id="ikY" value="0" step="1">
+            </div>
+            <div class="ik-input-group">
+                <span>Leg</span>
+                <select id="ikLegSel"
+                        style="background:#333;color:white;border:1px solid #555;
+                               padding:5px;border-radius:4px;">
+                    <option value="both">Both</option>
+                    <option value="right">Right only</option>
+                    <option value="left">Left only</option>
+                </select>
+            </div>
+        </div>
+        <div class="ik-btn-row" style="margin-top:8px;">
+            <button class="btn-ik-validate" onclick="sendCustomIKSolve(false)">
+                Solve only (no movement)
+            </button>
+            <button class="btn-ik-motion" onclick="sendCustomIKSolve(true)">
+                Solve + Submit  (MOVES SERVOS)
+            </button>
+        </div>
+
+        <!-- Section 4: Live IK output ────────────────────────────────────── -->
+        <div class="ik-section-label">Last computed output</div>
+        <div class="ik-output-grid">
+            <div class="ik-out-cell">
+                <div class="ik-out-lbl">Hip pitch</div>
+                <div class="ik-out-val" id="ikOutHip">—</div>
+            </div>
+            <div class="ik-out-cell">
+                <div class="ik-out-lbl">Knee pitch</div>
+                <div class="ik-out-val" id="ikOutKnee">—</div>
+            </div>
+            <div class="ik-out-cell">
+                <div class="ik-out-lbl">Ankle pitch</div>
+                <div class="ik-out-val" id="ikOutAnkle">—</div>
+            </div>
+            <div class="ik-out-cell">
+                <div class="ik-out-lbl">Hip roll</div>
+                <div class="ik-out-val" id="ikOutHRoll">—</div>
+            </div>
+            <div class="ik-out-cell">
+                <div class="ik-out-lbl">Ankle roll</div>
+                <div class="ik-out-val" id="ikOutARoll">—</div>
+            </div>
+            <div class="ik-out-cell">
+                <div class="ik-out-lbl">Reach %</div>
+                <div class="ik-out-val" id="ikOutReach">—</div>
+            </div>
+            <div class="ik-out-cell">
+                <div class="ik-out-lbl">Flat-foot err</div>
+                <div class="ik-out-val" id="ikOutFF">—</div>
+            </div>
+            <div class="ik-out-cell">
+                <div class="ik-out-lbl">Status</div>
+                <div class="ik-out-val" id="ikOutStatus">—</div>
+            </div>
+        </div>
+
+    </div><!-- /.ik-body -->
+</div><!-- /.ik-panel -->
+
     <!-- ── Joint Control Panel ────────────────────────────────────────────────── -->
 <div class="spd-panel" style="border-color:#3a3a3a;">
     <div class="spd-header" onclick="toggleJointPanel()" style="background:#1e1e1e;">
@@ -1111,8 +1298,18 @@ function initWebSocket() {
                 document.getElementById("btnSignNeg_r").className = "btn-sign" + (signR <  0 ? " btn-sign-active" : "");
             }
             // Weight shift progress bar — driven by ws_prog field in BALANCE: packet.
-            if (v["ws_prog"] !== undefined) {
+             if (v["ws_prog"] !== undefined) {
                 updateWShiftProgress(parseFloat(v["ws_prog"]), v["ws_ramp"] === "1");
+            }
+        }
+        else if (msg.startsWith("IK_RESULT:")) {
+            _handleIKResult(msg.substring(10));
+        }
+        else if (msg.startsWith("IK_ERROR:")) {
+            const box = document.getElementById("ikResultBox");
+            if (box) {
+                box.textContent = "⚠ " + msg.substring(9);
+                box.className   = "ik-result-box fail";
             }
         }
     };
@@ -1489,6 +1686,78 @@ function updateWShiftProgress(progress, ramping) {
     const dir = progress > 0.05  ? "← LEFT  " :
                 progress < -0.05 ? "RIGHT →" : "center";
     label.textContent = "Progress: " + dir + "  (" + (progress * 100).toFixed(0) + "%)";
+}
+
+// =============================================================================
+//  IK TEST PANEL
+// =============================================================================
+
+function toggleIKPanel() {
+    const body    = document.getElementById("ikBody");
+    const chevron = document.getElementById("ikChevron");
+    const open    = body.style.display !== "none";
+    body.style.display = open ? "none" : "block";
+    chevron.classList.toggle("open", !open);
+}
+
+function sendNeutralValidate() {
+    const hip   = document.getElementById("ikNeutralHip").value;
+    const knee  = document.getElementById("ikNeutralKnee").value;
+    const ankle = document.getElementById("ikNeutralAnkle").value;
+    sendCmd(`IK_NEUTRAL:hip=${hip},knee=${knee},ankle=${ankle}`);
+}
+
+function sendCustomIKSolve(doSubmit) {
+    const x   = document.getElementById("ikX").value;
+    const h   = document.getElementById("ikH").value;
+    const y   = document.getElementById("ikY").value;
+    const leg = document.getElementById("ikLegSel").value;
+    sendCmd(`IK_SOLVE:x=${x},h=${h},y=${y},leg=${leg},submit=${doSubmit ? 1 : 0}`);
+}
+
+// Parses an IK_RESULT: payload and updates the panel.
+// Called from ws.onmessage — not used elsewhere.
+function _handleIKResult(payload) {
+    const v = {};
+    payload.split(",").forEach(pair => {
+        const eq = pair.indexOf("=");
+        if (eq !== -1) v[pair.substring(0, eq)] = pair.substring(eq + 1);
+    });
+
+    const statusNames = { "0": "OK", "1": "UNREACHABLE", "2": "LIMIT_CLAMPED", "3": "DOMAIN_ERROR" };
+    const statusStr   = statusNames[v["status"]] || "?";
+    const posErr      = parseFloat(v["pos_err"] || "999");
+    const ffErr       = parseFloat(v["ff"]      || "999");
+    const isDomErr    = v["status"] === "3";
+    const isClean     = posErr < 0.5 && ffErr < 0.1 && !isDomErr;
+
+    // Update summary box.
+    const box = document.getElementById("ikResultBox");
+    box.textContent = `${statusStr}  `
+        + `hip=${parseFloat(v["hip"]   ||0).toFixed(2)}°  `
+        + `knee=${parseFloat(v["knee"] ||0).toFixed(2)}°  `
+        + `ankle=${parseFloat(v["ankle"]||0).toFixed(2)}°  `
+        + `reach=${parseFloat(v["reach"]||0).toFixed(1)}%  `
+        + `pos_err=${posErr.toFixed(4)}mm  `
+        + `ff=${ffErr.toFixed(4)}°  `
+        + (v["sub"] === "1" ? "⚡ SUBMITTED" : "solve only");
+    box.className = "ik-result-box "
+        + (isDomErr ? "fail" : isClean ? "pass" : "warn");
+
+    // Update live output cells.
+    const fmt = (key, dec) => (parseFloat(v[key] || 0)).toFixed(dec) + "°";
+    document.getElementById("ikOutHip").textContent    = fmt("hip",    2);
+    document.getElementById("ikOutKnee").textContent   = fmt("knee",   2);
+    document.getElementById("ikOutAnkle").textContent  = fmt("ankle",  2);
+    document.getElementById("ikOutHRoll").textContent  = fmt("h_roll", 2);
+    document.getElementById("ikOutARoll").textContent  = fmt("a_roll", 2);
+    document.getElementById("ikOutReach").textContent  = parseFloat(v["reach"] || 0).toFixed(1) + "%";
+    document.getElementById("ikOutFF").textContent     = ffErr.toFixed(4) + "°";
+    document.getElementById("ikOutStatus").textContent = statusStr;
+
+    // Colour the status cell to match the summary.
+    const statusCell = document.getElementById("ikOutStatus");
+    statusCell.style.color = isDomErr ? "#f44336" : isClean ? "#4caf50" : "#ff9800";
 }
 
 window.onload = () => { buildUI(); buildSpeedPanel(); initWebSocket(); };

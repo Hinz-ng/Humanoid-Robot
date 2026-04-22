@@ -57,13 +57,13 @@ struct BalanceConfig {
     float correction_sign    = 1.0f;   // ±1. WS: "sign"
     float max_correction_deg = 15.0f;  // deg. WS: "max"
 
-    // --- Fall detection ---
-    // DEFAULT CHANGE: threshold reduced from 0.90 → 0.70 rad (~40°).
-    // 0.70 rad is still extreme (robot physically past recovery), but 0.90 was
-    // excessively permissive. If weight shifts produce lean > 40°, raise this
-    // carefully (max recommended: 0.80 rad). Do not exceed 0.90.
-    float   fall_threshold_rad = 0.70f;  // rad. Previous: 0.90
-    uint8_t fall_confirm_ticks = 3;      // at 400 Hz ≈ 7.5 ms
+     // --- Fall detection ---
+    // Disabled by default. Enable only after gains are tuned and the robot
+    // can stand stably — accidental triggers during early testing cause
+    // violent servo snaps. Re-enable via CMD:BALANCE_TUNE:fall_det=1.
+    bool    fall_detection_enabled = false;
+    float   fall_threshold_rad     = 0.70f;  // rad
+    uint8_t fall_confirm_ticks     = 5;      // at 400 Hz ≈ 12.5 ms
 
     // --- Output shaping ---
     float output_iir_alpha             = 0.60f;  // [0,0.99). WS: "iir"

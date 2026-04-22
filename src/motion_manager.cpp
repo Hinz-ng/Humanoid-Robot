@@ -112,12 +112,16 @@ void MotionManager::_applyCommand(uint8_t channel, const MotionCommand& cmd) {
             _servo->setJointAngleDirect(channel, cmd.angleDeg);
             break;
 
-        // ── GAIT (future) ────────────────────────────────────────────────────
+        // ── GAIT ────────────────────────────────────────────────────
         case SOURCE_GAIT:
-            // Joint-relative angle, immediate write — same reasoning as BALANCE.
-            // TODO(gait): if GaitController computes absolute offsets from neutral,
-            //             switch this case to setGaitOffset(channel, cmd.angleDeg).
-            _servo->setJointAngleDirect(channel, cmd.angleDeg);
+            // Joint-relative angle, smooth-stepped write.
+            // Unlike SOURCE_BALANCE (400 Hz closed-loop), gait commands are
+            // one-shot or slowly-ramped. Routing through the smooth-stepper
+            // makes all IK panel and future gait module moves respect the
+            // per-joint speed set via the speed control panel.
+            // WeightShift per-tick deltas are small enough that the stepper
+            // tracks them without meaningful lag.
+            _servo->setJointAngleSmooth(channel, cmd.angleDeg);
             break;
 
         // ── UI ───────────────────────────────────────────────────────────────

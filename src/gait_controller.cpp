@@ -3,55 +3,12 @@
 // MODULE:  gait
 // LAYER:   3.5 — Gait / Motion
 //
-// TRAJECTORY MATH:
-//
-//   SWING FOOT (cosine interpolation):
-//     x_swing = -(L/2) * cos(π * swing_phase)
-//     h_swing = h_stance - h_lift * sin(π * swing_phase)
-//     y_swing = stance_width + lateral_shift * sin(π * phase)
-//
-//     Derivation of x formula:
-//       At swing_phase=0: x = -L/2 * cos(0) = -L/2  (foot at back)
-//       At swing_phase=1: x = -L/2 * cos(π) = +L/2  (foot at front)
-//       Velocity ∝ sin(π*t): zero at endpoints → smooth liftoff and landing. ✓
-//
-//     Derivation of h formula:
-//       sin(0)=0 and sin(π)=0 → foot at ground level at start and end.
-//       sin(π/2)=1 → max clearance at mid-swing. ✓
-//       h DECREASES during swing because h is chain drop (downward positive).
-//       Decreasing h = foot rising. ✓
-//
-//   STANCE FOOT (linear):
-//     x_stance = (L/2) * (1 - 2 * phase)
-//     h_stance = stance_height_mm   (constant — body at fixed height)
-//     y_stance = stance_width - lateral_shift * sin(π * phase)
-//
-//     Physical meaning: body moves forward at constant speed; in body frame
-//     the stance foot moves backward linearly. Linear is correct for constant-
-//     speed motion. Cosine (smooth) would imply sinusoidal body acceleration.
-//
-//   POSITION CONTINUITY (algebraic proof):
-//     At phase=1 (old swing becomes new stance):
-//       x_swing_end   = -(L/2)*cos(π*1) = +L/2
-//       x_stance_start (new phase=0) = (L/2)*(1-0) = +L/2 ✓
-//     At phase=1 (old stance becomes new swing):
-//       x_stance_end  = (L/2)*(1-2*1) = -L/2
-//       x_swing_start (new swing_phase=0) = -(L/2)*cos(0) = -L/2 ✓
-//     No position jump at any transition. ✓
-//
 //   INTERPOLATION:
 //   - Linear: constant velocity between waypoints
 //   - Eased (smoothstep): smooth acceleration/deceleration at endpoints
 //   - Default: eased for smoother motion
 //
-//   DOUBLE-SUPPORT WINDOW:
-//     For phase in [0, ds_frac), swing_phase is clamped to 0.0 so the swing
-//     foot stays at x=-L/2, h=stance_height (on the ground). This prevents
-//     the foot from lifting before the lateral shift has started.
-//     Note: lateral shift DOES begin at phase=0 (sin(0)=0, but increases
-//     immediately), so the body starts leaning as soon as the step begins.
-//
-// LAST CHANGED: 2026-04-22 | Hinz | Initial implementation
+// LAST CHANGED: 2026-04-23 | Hinz | WayPoint Based implementation
 // =============================================================================
 
 #include "gait_controller.h"

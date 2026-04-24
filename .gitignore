@@ -28,3 +28,14 @@ __pycache__/
 .env.local
 *.env.*
 ```
+
+#Wildcards
+*BusIO*
+*README*
+*LICENSE*
+*AsyncTCP*
+*Adafruit*
+*.ino
+
+#Exact Filenames
+integrity.dat

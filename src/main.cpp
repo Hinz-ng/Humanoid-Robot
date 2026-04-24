@@ -135,7 +135,7 @@ void setup() {
     webComm.setMotionManager(&motionManager);
     weightShift.init(&balanceController, &motionManager);
     webComm.setWeightShift(&weightShift);
-    gaitController.init(&motionManager);
+    gaitController.init(&motionManager, &weightShift);
     webComm.setGaitController(&gaitController);
     webComm.init();
     Serial.println("System Ready.");

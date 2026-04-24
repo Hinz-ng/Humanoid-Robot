@@ -890,90 +890,6 @@
     </div><!-- /.ik-body -->
 </div><!-- /.ik-panel -->
 
-<!-- ── Gait Controller Panel (Waypoint-Based) ─────────────────────────────── -->
-<div class="wshift-panel" style="border-color:#3a2a5e;">
-    <div class="wshift-header" onclick="toggleGaitPanel()" style="background:#1e1e2a;cursor:pointer;">
-        <h3 style="color:#ce93d8;margin:0;font-size:13px;text-transform:uppercase;letter-spacing:1px;">🚶 Gait Controller (Waypoint)</h3>
-        <span class="wshift-chevron" id="gaitChevron">▼</span>
-    </div>
-    <div id="gaitBody" style="padding:0 16px 16px;">
-        
-        <!-- Mode buttons -->
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-            <button class="btn-preset" onclick="gaitSetStance()" style="background:#4a1a5e;">🧍 Stance</button>
-            <button class="btn-preset" onclick="gaitRecord()" style="background:#5e1a3a;">● Record WP</button>
-            <button class="btn-preset" onclick="gaitClear()" style="background:#5e3a1a;">🗑 Clear</button>
-            <button class="btn-preset" onclick="gaitPlay()" style="background:#1a5e3a;">▶ Play</button>
-            <button class="btn-preset" onclick="gaitStep()" style="background:#1a4a5e;">⏭ Step</button>
-            <button class="btn-preset" onclick="gaitStop()" style="background:#5e1a1a;">⏹ Stop</button>
-        </div>
-
-        <!-- Telemetry display -->
-        <div style="background:#111;border:1px solid #3a2a5e;border-radius:4px;padding:8px 12px;margin-bottom:10px;">
-            <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Gait State</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px;font-family:'Courier New',monospace;color:#ce93d8;">
-                <div>Mode: <span id="gaitMode">—</span></div>
-                <div>WP Count: <span id="gaitCount">0</span></div>
-                <div>Current: <span id="gaitCurrent">0</span></div>
-                <div>Phase: <span id="gaitPhase">0.00</span></div>
-            </div>
-        </div>
-
-        <!-- Foot target telemetry -->
-        <div style="background:#111;border:1px solid #3a2a5e;border-radius:4px;padding:8px 12px;margin-bottom:10px;">
-            <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Foot Targets (mm)</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;">
-                <div style="color:#64b5f6;">
-                    <div style="font-weight:bold;margin-bottom:4px;">Left Leg</div>
-                    <div>X: <span id="gaitLX">0.0</span></div>
-                    <div>Y: <span id="gaitLY">0.0</span></div>
-                    <div>H: <span id="gaitLH">0.0</span></div>
-                </div>
-                <div style="color:#ff9800;">
-                    <div style="font-weight:bold;margin-bottom:4px;">Right Leg</div>
-                    <div>X: <span id="gaitRX">0.0</span></div>
-                    <div>Y: <span id="gaitRY">0.0</span></div>
-                    <div>H: <span id="gaitRH">0.0</span></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Tuning sliders -->
-        <div style="font-size:11px;color:#aaa;">
-            <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
-                <span>Stance Height (mm)</span>
-                <span class="tune-val" id="gaitStanceHVal">170.0</span>
-            </div>
-            <input type="range" min="130" max="185" step="1" value="170" 
-                   oninput="gaitTune('stance_h',this.value)" style="width:100%;margin-bottom:10px;">
-
-            <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
-                <span>Stance Width (mm)</span>
-                <span class="tune-val" id="gaitWidthVal">25.0</span>
-            </div>
-            <input type="range" min="10" max="50" step="1" value="25" 
-                   oninput="gaitTune('width',this.value)" style="width:100%;margin-bottom:10px;">
-
-            <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
-                <span>Playback Speed</span>
-                <span class="tune-val" id="gaitSpeedVal">1.0</span>
-            </div>
-            <input type="range" min="0.1" max="3.0" step="0.1" value="1.0" 
-                   oninput="gaitTune('speed',this.value)" style="width:100%;margin-bottom:10px;">
-
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                <span style="font-size:11px;color:#aaa;">Eased Interpolation</span>
-                <input type="checkbox" id="gaitEaseChk" checked onchange="gaitTune('ease',this.checked?1:0)">
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span style="font-size:11px;color:#aaa;">Loop Playback</span>
-                <input type="checkbox" id="gaitLoopChk" checked onchange="gaitTune('loop',this.checked?1:0)">
-            </div>
-        </div>
-
-    </div><!-- /#gaitBody -->
-</div><!-- /.gait-panel -->
-
     <!-- ── Joint Control Panel ────────────────────────────────────────────────── -->
 <div class="spd-panel" style="border-color:#3a3a3a;">
     <div class="spd-header" onclick="toggleJointPanel()" style="background:#1e1e1e;">
@@ -1278,9 +1194,6 @@ function initWebSocket() {
             if (done) setTimeout(() => {
                 document.getElementById("calibSection").style.display = "none";
             }, 3000);
-        }
-        else if (msg.startsWith("GAIT_INFO:")) {
-            parseGaitInfo(msg);
         }
         else if (msg.startsWith("BALANCE:")) {
             // Parse compact key=value pairs from firmware broadcastBalanceState().
@@ -1615,59 +1528,6 @@ function toggleJointPanel() {
     const open    = body.style.display !== "none";
     body.style.display = open ? "none" : "block";
     chevron.classList.toggle("open", !open);
-}
-
-// =============================================================================
-//  GAIT CONTROLLER PANEL (WAYPOINT-BASED)
-// =============================================================================
-
-function toggleGaitPanel() {
-    const body    = document.getElementById("gaitBody");
-    const chevron = document.getElementById("gaitChevron");
-    const open    = body.style.display !== "none";
-    body.style.display = open ? "none" : "block";
-    chevron.classList.toggle("open", !open);
-}
-
-// Gait command helpers
-function gaitSetStance()   { if(ws) ws.send("CMD:GAIT_SET_STANCE"); }
-function gaitRecord()      { if(ws) ws.send("CMD:GAIT_RECORD_WAYPOINT"); }
-function gaitClear()       { if(ws) ws.send("CMD:GAIT_CLEAR"); }
-function gaitPlay()        { if(ws) ws.send("CMD:GAIT_PLAY"); }
-function gaitStep()        { if(ws) ws.send("CMD:GAIT_STEP"); }
-function gaitStop()        { if(ws) ws.send("CMD:GAIT_STOP"); }
-
-function gaitTune(key, val) {
-    // Update displayed value
-    if (key === 'stance_h') document.getElementById('gaitStanceHVal').textContent = parseFloat(val).toFixed(1);
-    if (key === 'width')    document.getElementById('gaitWidthVal').textContent    = parseFloat(val).toFixed(1);
-    if (key === 'speed')    document.getElementById('gaitSpeedVal').textContent    = parseFloat(val).toFixed(1);
-    
-    if (ws) ws.send(`CMD:GAIT_TUNE:${key}=${val}`);
-}
-
-// Parse GAIT_INFO telemetry from ESP32
-function parseGaitInfo(msg) {
-    // Format: GAIT_INFO:count=N,current=M,phase=P.PP,lx=X,ly=Y,lh=H,rx=X,ry=Y,rh=H
-    const parts = msg.substring(9).split(',');
-    const data = {};
-    parts.forEach(p => {
-        const eq = p.indexOf('=');
-        if (eq > 0) data[p.substring(0, eq)] = p.substring(eq + 1);
-    });
-    
-    if (data.count !== undefined) document.getElementById('gaitCount').textContent   = data.count;
-    if (data.current !== undefined) document.getElementById('gaitCurrent').textContent = data.current;
-    if (data.phase !== undefined) document.getElementById('gaitPhase').textContent   = parseFloat(data.phase).toFixed(2);
-    if (data.mode !== undefined) document.getElementById('gaitMode').textContent     = data.mode;
-    
-    // Foot targets
-    if (data.lx !== undefined) document.getElementById('gaitLX').textContent = parseFloat(data.lx).toFixed(1);
-    if (data.ly !== undefined) document.getElementById('gaitLY').textContent = parseFloat(data.ly).toFixed(1);
-    if (data.lh !== undefined) document.getElementById('gaitLH').textContent = parseFloat(data.lh).toFixed(1);
-    if (data.rx !== undefined) document.getElementById('gaitRX').textContent = parseFloat(data.rx).toFixed(1);
-    if (data.ry !== undefined) document.getElementById('gaitRY').textContent = parseFloat(data.ry).toFixed(1);
-    if (data.rh !== undefined) document.getElementById('gaitRH').textContent = parseFloat(data.rh).toFixed(1);
 }
 
 // =============================================================================

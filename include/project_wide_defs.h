@@ -49,4 +49,13 @@
 // Both ankles receive this value; JointModel direction fields produce symmetry.
 #define ANKLE_PITCH_FORWARD_TILT_DEG  -5.0f
 
+// ============================================================
+// GAIT PARAMETERS — GaitController (weight_shift evolution)
+// ============================================================
+constexpr float GAIT_PHASE_RATE_HZ          = 0.4f;   // start slow; cycles/sec
+constexpr float GAIT_STEP_HEIGHT_MM         = 20.0f;  // swing foot clearance
+constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
+constexpr float GAIT_STEP_LENGTH_MM         = 30.0f;  // Phase 3+; forward stride
+constexpr float GAIT_WEIGHT_SHIFT_THRESHOLD_RAD = 0.10f; // ~5.7° — min roll before lift
+
 #endif // PROJECT_WIDE_DEFS_H

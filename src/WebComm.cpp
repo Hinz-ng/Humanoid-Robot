@@ -513,8 +513,8 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
 // -----------------------------------------------------------------
 else if (cmd == "GAIT_START") {
     if (_gaitCtrl) {
-        _gaitCtrl->start();
-        Serial.println("[WebComm] CMD: GAIT_START");
+        _gaitCtrl->start(GaitMode::PLAYBACK);
+        Serial.println("[WebComm] CMD: GAIT_START (PLAYBACK)");
     }
 }
 else if (cmd == "GAIT_STOP") {
@@ -524,9 +524,74 @@ else if (cmd == "GAIT_STOP") {
     }
 }
 // -----------------------------------------------------------------
+//  Gait stance mode — crouched stable posture
+// -----------------------------------------------------------------
+else if (cmd == "GAIT_SET_STANCE") {
+    if (_gaitCtrl) {
+        _gaitCtrl->start(GaitMode::STANCE);
+        Serial.println("[WebComm] CMD: GAIT_SET_STANCE");
+    }
+}
+// -----------------------------------------------------------------
+//  Gait recording — capture current pose as waypoint
+// -----------------------------------------------------------------
+else if (cmd == "GAIT_RECORD_WAYPOINT") {
+    if (_gaitCtrl) {
+        _gaitCtrl->recordWaypoint("ui_recorded");
+        // Broadcast updated waypoint count
+        char buf[64];
+        snprintf(buf, sizeof(buf), "GAIT_INFO:count=%d,current=%d,mode=recording",
+                 _gaitCtrl->getState().waypoint_count,
+                 _gaitCtrl->getState().current_waypoint);
+        ws.textAll(buf);
+    }
+}
+// -----------------------------------------------------------------
+//  Gait clear — remove all waypoints
+// -----------------------------------------------------------------
+else if (cmd == "GAIT_CLEAR") {
+    if (_gaitCtrl) {
+        _gaitCtrl->clearWaypoints();
+        Serial.println("[WebComm] CMD: GAIT_CLEAR");
+        ws.textAll("GAIT_INFO:count=0,current=0,mode=cleared");
+    }
+}
+// -----------------------------------------------------------------
+//  Gait play — start playback of recorded sequence
+// -----------------------------------------------------------------
+else if (cmd == "GAIT_PLAY") {
+    if (_gaitCtrl) {
+        _gaitCtrl->start(GaitMode::PLAYBACK);
+        Serial.println("[WebComm] CMD: GAIT_PLAY");
+    }
+}
+// -----------------------------------------------------------------
+//  Gait step — advance one waypoint (for STEPPING mode)
+// -----------------------------------------------------------------
+else if (cmd == "GAIT_STEP") {
+    if (_gaitCtrl) {
+        if (_gaitCtrl->getState().mode == GaitMode::STEPPING) {
+            _gaitCtrl->advanceWaypoint();
+        } else {
+            // Auto-start stepping mode if not already active
+            _gaitCtrl->start(GaitMode::STEPPING);
+            _gaitCtrl->advanceWaypoint();
+        }
+        // Broadcast current state
+        const GaitState& st = _gaitCtrl->getState();
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+            "GAIT_INFO:count=%d,current=%d,phase=%.2f,mode=stepping,"
+            "lx=%.1f,ly=%.1f,lh=%.1f,rx=%.1f,ry=%.1f,rh=%.1f",
+            st.waypoint_count, st.current_waypoint, st.phase,
+            st.x_left_mm, st.y_left_mm, st.h_left_mm,
+            st.x_right_mm, st.y_right_mm, st.h_right_mm);
+        ws.textAll(buf);
+    }
+}
+// -----------------------------------------------------------------
 //  Gait tuning
-//  Protocol: CMD:GAIT_TUNE:step_len=20.0,step_h=15.0,h=160.0,
-//                          width=25.0,lat=12.0,period=1.6,ds=0.20
+//  Protocol: CMD:GAIT_TUNE:stance_h=170.0,width=25.0,speed=1.0,ease=1
 // -----------------------------------------------------------------
 else if (cmd.startsWith("GAIT_TUNE:")) {
     if (_gaitCtrl) {
@@ -541,21 +606,19 @@ else if (cmd.startsWith("GAIT_TUNE:")) {
             if (eq != -1) {
                 String key = pair.substring(0, eq);
                 float  val = pair.substring(eq + 1).toFloat();
-                if      (key == "step_len") cfg.step_length_mm      = val;
-                else if (key == "step_h")   cfg.step_height_mm      = val;
-                else if (key == "h")        cfg.stance_height_mm    = val;
-                else if (key == "width")    cfg.stance_width_mm     = val;
-                else if (key == "lat")      cfg.lateral_shift_mm    = constrain(val, 0.0f, 15.0f);
-                else if (key == "period")   cfg.cycle_period_s      = constrain(val, 0.5f, 5.0f);
-                else if (key == "ds")       cfg.double_support_frac = constrain(val, 0.0f, 0.39f);
+                if      (key == "stance_h") cfg.stance_height_mm        = val;
+                else if (key == "width")    cfg.stance_width_mm         = val;
+                else if (key == "speed")    cfg.playback_speed_multiplier = constrain(val, 0.1f, 5.0f);
+                else if (key == "ease")     cfg.use_eased_interpolation = (val != 0.0f);
+                else if (key == "loop")     cfg.loop_playback           = (val != 0.0f);
             }
             start = (comma == -1) ? params.length() : comma + 1;
         }
         _gaitCtrl->setConfig(cfg);
-        Serial.printf("[WebComm] GAIT_TUNE: step_len=%.1f step_h=%.1f h=%.1f "
-                      "lat=%.1f period=%.2f ds=%.2f\n",
-                      cfg.step_length_mm, cfg.step_height_mm, cfg.stance_height_mm,
-                      cfg.lateral_shift_mm, cfg.cycle_period_s, cfg.double_support_frac);
+        Serial.printf("[WebComm] GAIT_TUNE: stance_h=%.1f width=%.1f speed=%.2f ease=%d loop=%d\n",
+                      cfg.stance_height_mm, cfg.stance_width_mm,
+                      cfg.playback_speed_multiplier,
+                      cfg.use_eased_interpolation, cfg.loop_playback);
     }
 }
 

@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include "project_wide_defs.h"
 #include "servo_control.h"
-#include "WebComm.h"
+#include "webComm.h"
 #include "oe_control.h"
 #include "state_estimator.h"
 #include "balance_controller.h"

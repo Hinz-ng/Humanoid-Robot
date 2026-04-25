@@ -30,6 +30,7 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     void broadcastCalibStatus(CalibState state, float progress); // --- ADD
     void broadcastBalanceState(const BalanceState& state);
     void broadcastSpeeds();
+    void broadcastGaitState();
     void setBalanceController(BalanceController* bal);
     // Wire the joint authority layer. Call once in setup() after motionManager.init().
     // When wired, slider commands are routed through MotionManager so they silently
@@ -49,7 +50,8 @@ private:
     uint32_t           _lastBalanceBroadcast_us = 0;
     MotionManager*     _motionManager   = nullptr;  // joint authority layer
     WeightShift*       _weightShift     = nullptr;  // gait: CoM lateral shift
-    GaitController*    _gaitCtrl       = nullptr;
+    GaitController*    _gaitCtrl            = nullptr;
+    uint32_t           _lastGaitBroadcast_us = 0;
     
     void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
     void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);

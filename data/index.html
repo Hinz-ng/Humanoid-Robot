@@ -229,7 +229,35 @@
 .gait-tune-row .tune-header { display: flex; justify-content: space-between; margin-bottom: 3px; }
 .gait-tune-row .tune-val    { color: #b39ddb; font-weight: bold; font-family: monospace; }
 .gait-tune-row input[type="range"] { width: 100%; margin: 0; }
+.btn-gait-step  { background: #e65100; color: #fff; border: 1px solid #ff6d00;
+                  padding: 8px 18px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+.btn-gait-wshift { background: #006064; color: #fff; border: 1px solid #00bcd4;
+                  padding: 8px 18px; border-radius: 5px; cursor: pointer; font-weight: bold; }
 
+/* Gait mode badge */
+.gait-mode-badge { display: inline-block; padding: 3px 10px; border-radius: 3px;
+                   font-size: 11px; font-weight: bold; letter-spacing: 0.5px; margin-right: 8px; }
+.gait-mode-idle   { background: #2a2a2a; color: #777; }
+.gait-mode-run    { background: #1b3a1b; color: #66bb6a; }
+.gait-mode-step   { background: #1a1a3a; color: #7c83fd; }
+.gait-mode-wshift { background: #003a3a; color: #4dd0e1; }
+
+/* Gait gate badge */
+.gait-gate-badge { display: inline-block; padding: 2px 8px; border-radius: 3px;
+                   font-size: 11px; font-weight: bold; }
+.gait-gate-open   { background: #1b3a1b; color: #66bb6a; }
+.gait-gate-closed { background: #3a1a1a; color: #ef9a9a; }
+
+/* Gait phase bar */
+.gait-phase-wrap  { margin: 8px 0 14px; }
+.gait-phase-bg    { background: #111; border-radius: 4px; height: 8px;
+                    overflow: hidden; border: 1px solid #333; position: relative; }
+.gait-phase-fill  { height: 100%; width: 0%; background: #b39ddb;
+                    transition: width 0.05s linear; border-radius: 4px; }
+.gait-phase-label { font-size: 10px; color: #888; margin-top: 4px; }
+
+/* Gait telemetry cells (reuse bal-out-cell style) */
+.gait-telem-grid  { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-bottom: 14px; }
 
 /* ── IK Test Panel ───────────────────────────────────────────────────── */
 .ik-panel { background: #1a2a2a; border: 1px solid #1a4a4a;
@@ -749,6 +777,146 @@
     </div><!-- /.wshift-body -->
 </div><!-- /.wshift-panel -->
 
+<!-- ── Gait Controller Panel (Phase 1: Stepping In Place) ──────────────── -->
+<div class="gait-panel">
+    <div class="gait-header" onclick="toggleGaitPanel()">
+        <h3>🚶 Gait Controller — Phase 1 Stepping</h3>
+        <span class="gait-chevron" id="gaitChevron">▼</span>
+    </div>
+    <div class="gait-body" id="gaitBody" style="display:none;">
+
+        <!-- Status row: mode badge + gate badge + sub-state -->
+        <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+            <span class="gait-mode-badge gait-mode-idle" id="gaitModeBadge">IDLE</span>
+            <span class="gait-gate-badge gait-gate-closed" id="gaitGateBadge">GATE CLOSED</span>
+            <span style="font-size:11px; color:#888;" id="gaitSubLabel">—</span>
+        </div>
+
+        <!-- Phase progress bar -->
+        <div class="gait-phase-wrap">
+            <div class="gait-phase-bg">
+                <div class="gait-phase-fill" id="gaitPhaseFill"></div>
+            </div>
+            <div class="gait-phase-label" id="gaitPhaseLabel">Phase: 0.0%  |  Right swing: 0–50%, Left swing: 50–100%</div>
+        </div>
+
+        <!-- Control buttons -->
+        <div class="gait-btn-row">
+            <button class="btn-gait-start" onclick="sendCmd('GAIT_START')">▶ Start</button>
+            <button class="btn-gait-stop"  onclick="sendCmd('GAIT_STOP')">■ Stop</button>
+            <button class="btn-gait-step"  onclick="sendCmd('GAIT_STEP')">↷ Single Step</button>
+            <button class="btn-gait-wshift" onclick="sendCmd('GAIT_WSHIFT')">⇆ W-Shift Only</button>
+        </div>
+
+        <!-- Live telemetry -->
+        <div style="font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">
+            Live outputs (this tick)
+        </div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Phase</div>
+                <div class="bal-out-val" id="gaitTelemPhase">0.000</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Lift L (°)</div>
+                <div class="bal-out-val" id="gaitTelemLiftL">0.0</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Lift R (°)</div>
+                <div class="bal-out-val" id="gaitTelemLiftR">0.0</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">WS Progress</div>
+                <div class="bal-out-val" id="gaitTelemWS">0.000</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Half</div>
+                <div class="bal-out-val" id="gaitTelemHalf">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Sub-state</div>
+                <div class="bal-out-val" id="gaitTelemSub">WAIT</div>
+            </div>
+        </div>
+
+        <!-- Tune sliders -->
+        <div style="font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;
+                    border-top:1px solid #3a2a5e; padding-top:10px;">
+            Tuning — send takes effect immediately
+        </div>
+        <div class="gait-tune-grid">
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Phase rate (Hz)</span>
+                    <span class="tune-val" id="tvGaitRate">0.40</span>
+                </div>
+                <input type="range" id="slGaitRate" min="0.05" max="1.0" step="0.05" value="0.4"
+                       oninput="updateGaitLabel('phaseRate', this.value); sendGaitTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Cycle/sec. Start at 0.3. Raise only after stance confirmed.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Lift gate threshold</span>
+                    <span class="tune-val" id="tvGaitGate">0.70</span>
+                </div>
+                <input type="range" id="slGaitGate" min="0.0" max="0.99" step="0.05" value="0.70"
+                       oninput="updateGaitLabel('liftGate', this.value); sendGaitTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    |WS progress| needed before foot can lift. Lower → lifts sooner.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Step hip (°)</span>
+                    <span class="tune-val" id="tvGaitHip">15.0</span>
+                </div>
+                <input type="range" id="slGaitHip" min="0" max="45" step="1" value="15"
+                       oninput="updateGaitLabel('stepHipDeg', this.value); sendGaitTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Hip extension at peak swing. Tune after direction verified.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Step knee (°)</span>
+                    <span class="tune-val" id="tvGaitKnee">25.0</span>
+                </div>
+                <input type="range" id="slGaitKnee" min="0" max="60" step="1" value="25"
+                       oninput="updateGaitLabel('stepKneeDeg', this.value); sendGaitTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Knee flexion at peak swing. Increases ground clearance.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>WS threshold (°, Phase 2)</span>
+                    <span class="tune-val" id="tvGaitWsThresh">5.7</span>
+                </div>
+                <input type="range" id="slGaitWsThresh" min="1" max="15" step="0.5" value="5.73"
+                       oninput="updateGaitLabel('wsThreshDeg', this.value); sendGaitTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    IMU roll gate (Phase 2 only — logged but not active in Phase 1).
+                </div>
+            </div>
+
+        </div><!-- /.gait-tune-grid -->
+
+        <div style="font-size:10px; color:#555; margin-top:10px; line-height:1.5;">
+            ⚠ Disable balance roll controller before first lift test.<br>
+            ⚠ Keep Weight Shift <em>swing_hip=0</em> and <em>swing_knee=0</em> while gait is running.<br>
+            ⚠ SOURCE_GAIT (priority 1) loses to SOURCE_BALANCE (priority 2) on shared joints — expected.
+        </div>
+
+    </div><!-- /.gait-body -->
+</div><!-- /.gait-panel -->
+
 <div class="preset-box">
         <span style="color:#aaa;font-size:12px;">Saved Presets:</span><br>
         <div id="presetList" style="margin-top:10px;"></div>
@@ -1217,7 +1385,10 @@ function initWebSocket() {
             }, 3000);
         }
         else if (msg.startsWith("GAIT_INFO:")) {
-            parseGaitInfo(msg);
+            // Legacy format — kept for backward compat; no-op in Phase 1.
+        }
+        else if (msg.startsWith("GAIT:")) {
+            parseGaitState(msg.substring(5));
         }
         else if (msg.startsWith("BALANCE:")) {
             // Parse compact key=value pairs from firmware broadcastBalanceState().
@@ -1554,58 +1725,7 @@ function toggleJointPanel() {
     chevron.classList.toggle("open", !open);
 }
 
-// =============================================================================
-//  GAIT CONTROLLER PANEL (WAYPOINT-BASED)
-// =============================================================================
-
-function toggleGaitPanel() {
-    const body    = document.getElementById("gaitBody");
-    const chevron = document.getElementById("gaitChevron");
-    const open    = body.style.display !== "none";
-    body.style.display = open ? "none" : "block";
-    chevron.classList.toggle("open", !open);
-}
-
-// Gait command helpers
-function gaitSetStance()   { if(ws) ws.send("CMD:GAIT_SET_STANCE"); }
-function gaitRecord()      { if(ws) ws.send("CMD:GAIT_RECORD_WAYPOINT"); }
-function gaitClear()       { if(ws) ws.send("CMD:GAIT_CLEAR"); }
-function gaitPlay()        { if(ws) ws.send("CMD:GAIT_PLAY"); }
-function gaitStep()        { if(ws) ws.send("CMD:GAIT_STEP"); }
-function gaitStop()        { if(ws) ws.send("CMD:GAIT_STOP"); }
-
-function gaitTune(key, val) {
-    // Update displayed value
-    if (key === 'stance_h') document.getElementById('gaitStanceHVal').textContent = parseFloat(val).toFixed(1);
-    if (key === 'width')    document.getElementById('gaitWidthVal').textContent    = parseFloat(val).toFixed(1);
-    if (key === 'speed')    document.getElementById('gaitSpeedVal').textContent    = parseFloat(val).toFixed(1);
-    
-    if (ws) ws.send(`CMD:GAIT_TUNE:${key}=${val}`);
-}
-
-// Parse GAIT_INFO telemetry from ESP32
-function parseGaitInfo(msg) {
-    // Format: GAIT_INFO:count=N,current=M,phase=P.PP,lx=X,ly=Y,lh=H,rx=X,ry=Y,rh=H
-    const parts = msg.substring(9).split(',');
-    const data = {};
-    parts.forEach(p => {
-        const eq = p.indexOf('=');
-        if (eq > 0) data[p.substring(0, eq)] = p.substring(eq + 1);
-    });
-    
-    if (data.count !== undefined) document.getElementById('gaitCount').textContent   = data.count;
-    if (data.current !== undefined) document.getElementById('gaitCurrent').textContent = data.current;
-    if (data.phase !== undefined) document.getElementById('gaitPhase').textContent   = parseFloat(data.phase).toFixed(2);
-    if (data.mode !== undefined) document.getElementById('gaitMode').textContent     = data.mode;
-    
-    // Foot targets
-    if (data.lx !== undefined) document.getElementById('gaitLX').textContent = parseFloat(data.lx).toFixed(1);
-    if (data.ly !== undefined) document.getElementById('gaitLY').textContent = parseFloat(data.ly).toFixed(1);
-    if (data.lh !== undefined) document.getElementById('gaitLH').textContent = parseFloat(data.lh).toFixed(1);
-    if (data.rx !== undefined) document.getElementById('gaitRX').textContent = parseFloat(data.rx).toFixed(1);
-    if (data.ry !== undefined) document.getElementById('gaitRY').textContent = parseFloat(data.ry).toFixed(1);
-    if (data.rh !== undefined) document.getElementById('gaitRH').textContent = parseFloat(data.rh).toFixed(1);
-}
+// (old waypoint-based gait panel removed — replaced by Phase 1 gait panel below)
 
 // =============================================================================
 //  SPEED CONTROL PANEL
@@ -1766,7 +1886,7 @@ function updateWShiftProgress(progress, ramping) {
 }
 
 // =============================================================================
-//  GAIT TEST PANEL
+//  GAIT CONTROLLER PANEL — Phase 1 Stepping In Place
 // =============================================================================
 
 function toggleGaitPanel() {
@@ -1777,37 +1897,32 @@ function toggleGaitPanel() {
     chevron.classList.toggle("open", !open);
 }
 
+// Maps slider id → { label element id, display decimals }
 const _gaitTuneMap = {
-    step_len: { el: "tvGaitStepLen", decimals: 1 },
-    step_h:   { el: "tvGaitStepH",   decimals: 1 },
-    h:        { el: "tvGaitH",       decimals: 1 },
-    width:    { el: "tvGaitWidth",   decimals: 1 },
-    lat:      { el: "tvGaitLat",     decimals: 1 },
-    period:   { el: "tvGaitPeriod",  decimals: 2 },
-    ds:       { el: "tvGaitDs",      decimals: 2 },
+    phaseRate:  { el: "tvGaitRate",     decimals: 2 },
+    liftGate:   { el: "tvGaitGate",     decimals: 2 },
+    stepHipDeg: { el: "tvGaitHip",      decimals: 1 },
+    stepKneeDeg:{ el: "tvGaitKnee",     decimals: 1 },
+    // wsThreshDeg is stored in deg in the slider but sent as rad
+    wsThreshDeg:{ el: "tvGaitWsThresh", decimals: 1 },
 };
 
-function updateGaitTuneLabel(id, rawVal) {
+function updateGaitLabel(id, rawVal) {
     const m = _gaitTuneMap[id];
     if (m) document.getElementById(m.el).textContent =
         parseFloat(rawVal).toFixed(m.decimals);
 }
 
-function _buildGaitTuneMessage() {
-    const stepLen = parseFloat(document.getElementById("slGaitStepLen").value).toFixed(1);
-    const stepH   = parseFloat(document.getElementById("slGaitStepH").value).toFixed(1);
-    const h       = parseFloat(document.getElementById("slGaitH").value).toFixed(1);
-    const width   = parseFloat(document.getElementById("slGaitWidth").value).toFixed(1);
-    const lat     = parseFloat(document.getElementById("slGaitLat").value).toFixed(1);
-    const period  = parseFloat(document.getElementById("slGaitPeriod").value).toFixed(2);
-    const ds      = parseFloat(document.getElementById("slGaitDs").value).toFixed(2);
-    return `CMD:GAIT_TUNE:step_len=${stepLen},step_h=${stepH},h=${h},width=${width},lat=${lat},period=${period},ds=${ds}`;
-}
-
 function sendGaitTune() {
     clearTimeout(sendGaitTune._t);
     sendGaitTune._t = setTimeout(() => {
-        const msg = _buildGaitTuneMessage();
+        const rate      = parseFloat(document.getElementById("slGaitRate").value).toFixed(3);
+        const gate      = parseFloat(document.getElementById("slGaitGate").value).toFixed(3);
+        const hip       = parseFloat(document.getElementById("slGaitHip").value).toFixed(1);
+        const knee      = parseFloat(document.getElementById("slGaitKnee").value).toFixed(1);
+        const wsThreshDeg = parseFloat(document.getElementById("slGaitWsThresh").value);
+        const wsThreshRad = (wsThreshDeg * Math.PI / 180).toFixed(5);
+        const msg = `CMD:GAIT_TUNE:phaseRate=${rate},liftGate=${gate},stepHipDeg=${hip},stepKneeDeg=${knee},wsThresh=${wsThreshRad}`;
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(msg);
             console.log("[WS TX]", msg);
@@ -1815,12 +1930,61 @@ function sendGaitTune() {
     }, 80);
 }
 
-function sendGaitTuneNow() {
-    const msg = _buildGaitTuneMessage();
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(msg);
-        console.log("[WS TX]", msg);
+// Parses GAIT: telemetry broadcast from firmware and updates the Phase 1 panel.
+// Format: "phase=X.XXX,mode=N,sub=N,liftL=X.X,liftR=X.X,ws=X.XXX,gate=0|1"
+function parseGaitState(payload) {
+    const v = {};
+    payload.split(",").forEach(pair => {
+        const eq = pair.indexOf("=");
+        if (eq !== -1) v[pair.substring(0, eq)] = pair.substring(eq + 1);
+    });
+
+    const mode    = parseInt(v["mode"] || "0");
+    const sub     = parseInt(v["sub"]  || "0");
+    const phase   = parseFloat(v["phase"]  || "0");
+    const liftL   = parseFloat(v["liftL"]  || "0");
+    const liftR   = parseFloat(v["liftR"]  || "0");
+    const wsProg  = parseFloat(v["ws"]     || "0");
+    const gateOK  = v["gate"] === "1";
+
+    // Mode badge
+    const modeNames  = ["IDLE", "RUNNING", "SINGLE STEP", "W-SHIFT ONLY"];
+    const modeClass  = ["gait-mode-idle", "gait-mode-run", "gait-mode-step", "gait-mode-wshift"];
+    const modeBadge  = document.getElementById("gaitModeBadge");
+    if (modeBadge) {
+        modeBadge.textContent = modeNames[mode] || "?";
+        modeBadge.className   = "gait-mode-badge " + (modeClass[mode] || "gait-mode-idle");
     }
+
+    // Gate badge
+    const gateBadge = document.getElementById("gaitGateBadge");
+    if (gateBadge) {
+        gateBadge.textContent = gateOK ? "GATE OPEN" : "GATE CLOSED";
+        gateBadge.className   = "gait-gate-badge " + (gateOK ? "gait-gate-open" : "gait-gate-closed");
+    }
+
+    // Sub-state label
+    const subLabel = document.getElementById("gaitSubLabel");
+    if (subLabel) {
+        const halfLabel = (phase < 0.5) ? "half=0 (R swing)" : "half=1 (L swing)";
+        subLabel.textContent = (sub === 1 ? "SWINGING" : "WAIT SHIFT") + "  " + halfLabel;
+    }
+
+    // Phase bar
+    const fill  = document.getElementById("gaitPhaseFill");
+    const label = document.getElementById("gaitPhaseLabel");
+    if (fill)  fill.style.width  = (phase * 100).toFixed(1) + "%";
+    if (label) label.textContent = "Phase: " + (phase * 100).toFixed(1) + "%  |  "
+        + (phase < 0.5 ? "Right foot swinging" : "Left foot swinging");
+
+    // Telemetry cells
+    const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+    set("gaitTelemPhase", phase.toFixed(3));
+    set("gaitTelemLiftL", liftL.toFixed(1) + "°");
+    set("gaitTelemLiftR", liftR.toFixed(1) + "°");
+    set("gaitTelemWS",    wsProg.toFixed(3));
+    set("gaitTelemHalf",  phase < 0.5 ? "0 (R swing)" : "1 (L swing)");
+    set("gaitTelemSub",   sub === 1 ? "SWING" : "WAIT");
 }
 
 // =============================================================================

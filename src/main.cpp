@@ -135,7 +135,7 @@ void setup() {
     webComm.setMotionManager(&motionManager);
     weightShift.init(&balanceController, &motionManager);
     webComm.setWeightShift(&weightShift);
-    gaitController.init(&motionManager);
+    gaitController.init(&motionManager, &weightShift);
     webComm.setGaitController(&gaitController);
     webComm.init();
     Serial.println("System Ready.");
@@ -184,7 +184,7 @@ void loop() {
             // roll_setpoint_rad is used by balance on this same tick.
             weightShift.update(dt);
 
-            gaitController.update(dt);
+            gaitController.update(dt, state);
 
             BalanceState balState = balanceController.update(state);
 
@@ -197,6 +197,7 @@ void loop() {
             webComm.broadcastIMU(raw);
             webComm.broadcastEstimate(state);
             webComm.broadcastBalanceState(balState);
+            webComm.broadcastGaitState();
 
             // Broadcast calibration progress at 10 Hz (rate-limited inside broadcastCalibStatus).
             // _calibDoneAnnounced ensures one final "done" packet is sent, then stops.

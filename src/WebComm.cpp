@@ -244,6 +244,43 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
     ws.textAll(buf);
 }
 // =============================================================================
+//  GAIT STATE BROADCAST
+//  Protocol: "GAIT:phase=X.XXX,mode=N,sub=N,liftL=X.X,liftR=X.X,ws=X.XXX,gate=0|1"
+//  Fields:
+//    phase  — display phase [0, 1): currentHalf × 0.5 + halfPhase × 0.5
+//    mode   — 0=IDLE, 1=RUNNING, 2=SINGLE_STEP, 3=WSHIFT_ONLY
+//    sub    — 0=WAIT_SHIFT, 1=SWINGING
+//    liftL  — left hip extension command this tick (deg)
+//    liftR  — right hip extension command this tick (deg)
+//    ws     — WeightShift progress (signed, [-1, +1])
+//    gate   — 1 if weight shift threshold met and foot lift is allowed
+//  Rate-limited to 20 Hz (same as balance state broadcast).
+// =============================================================================
+
+void WebComm::broadcastGaitState() {
+    if (!_gaitCtrl || ws.count() == 0) return;
+
+    const uint32_t INTERVAL_US = 50000;  // 20 Hz
+    uint32_t now = micros();
+    if ((now - _lastGaitBroadcast_us) < INTERVAL_US) return;
+    _lastGaitBroadcast_us = now;
+
+    const GaitState& s = _gaitCtrl->getState();
+    char buf[128];
+    snprintf(buf, sizeof(buf),
+        "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d",
+        s.phase,
+        static_cast<int>(s.mode),
+        static_cast<int>(s.subState),
+        s.liftL_deg,
+        s.liftR_deg,
+        s.wsProgress,
+        static_cast<int>(s.liftGateOK)
+    );
+    ws.textAll(buf);
+}
+
+// =============================================================================
 //  SPEED BROADCAST
 //  Protocol: "SPEED:<ch0_speed>,<ch1_speed>,...,<ch15_speed>"
 //  Sent once on connect and after every SPEED or SPEED_ALL command.
@@ -666,6 +703,76 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             ws.textAll("ESTOP:CLEAR");
             Serial.println("[WebComm] CMD: CLEAR_ESTOP received — outputs enabled");
         }
+        // ---------------------------------------------------------------------
+        //  Gait controller commands (Phase 1: stepping in place)
+        //
+        //  CMD:GAIT_START   — begin continuous stepping
+        //  CMD:GAIT_STOP    — stop gait, return to IDLE (centers WeightShift)
+        //  CMD:GAIT_STEP    — one full cycle (both legs), then IDLE
+        //  CMD:GAIT_WSHIFT  — weight-shift-only mode (no foot lift)
+        //
+        //  CMD:GAIT_TUNE:phaseRate=X,stepHipDeg=X,stepKneeDeg=X,
+        //                liftGate=X,wsThresh=X
+        //    All fields optional; unrecognised keys are silently skipped.
+        //    phaseRate: cycles/sec (0.1–1.0). Start at 0.3.
+        //    stepHipDeg: hip extension at peak swing (0–30°).
+        //    stepKneeDeg: knee flexion at peak swing (0–50°).
+        //    liftGate: |wsProgress| threshold before lift allowed (0.0–1.0).
+        //    wsThresh: IMU roll threshold (rad) — logged only in Phase 1.
+        // ---------------------------------------------------------------------
+        else if (cmd == "GAIT_START") {
+            if (_gaitCtrl) {
+                _gaitCtrl->start(GaitMode::RUNNING);
+                Serial.println("[WebComm] CMD: GAIT_START");
+            }
+        }
+        else if (cmd == "GAIT_STOP") {
+            if (_gaitCtrl) {
+                _gaitCtrl->stop();
+                Serial.println("[WebComm] CMD: GAIT_STOP");
+            }
+        }
+        else if (cmd == "GAIT_STEP") {
+            if (_gaitCtrl) {
+                _gaitCtrl->singleStep();
+                Serial.println("[WebComm] CMD: GAIT_STEP");
+            }
+        }
+        else if (cmd == "GAIT_WSHIFT") {
+            if (_gaitCtrl) {
+                _gaitCtrl->start(GaitMode::WSHIFT_ONLY);
+                Serial.println("[WebComm] CMD: GAIT_WSHIFT");
+            }
+        }
+        else if (cmd.startsWith("GAIT_TUNE:")) {
+            if (_gaitCtrl) {
+                GaitConfig cfg = _gaitCtrl->getConfig();
+                String params = cmd.substring(10);
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    String pair = (comma == -1) ? params.substring(start)
+                                                : params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq != -1) {
+                        String key = pair.substring(0, eq);
+                        float  val = pair.substring(eq + 1).toFloat();
+                        if      (key == "phaseRate")   cfg.phaseRateHz       = constrain(val, 0.05f, 2.0f);
+                        else if (key == "stepHipDeg")  cfg.stepHeightHipDeg  = constrain(val, 0.0f, 45.0f);
+                        else if (key == "stepKneeDeg") cfg.stepHeightKneeDeg = constrain(val, 0.0f, 60.0f);
+                        else if (key == "liftGate")    cfg.liftGateThreshold = constrain(val, 0.0f, 0.99f);
+                        else if (key == "wsThresh")    cfg.wsThresholdRad    = constrain(val, 0.01f, 0.50f);
+                    }
+                    start = (comma == -1) ? params.length() : comma + 1;
+                }
+                _gaitCtrl->setConfig(cfg);
+                Serial.printf("[WebComm] GAIT_TUNE: rate=%.2f Hz  hip=%.1f°  knee=%.1f°"
+                              "  gate=%.2f  wsThresh=%.3f rad\n",
+                              cfg.phaseRateHz, cfg.stepHeightHipDeg, cfg.stepHeightKneeDeg,
+                              cfg.liftGateThreshold, cfg.wsThresholdRad);
+            }
+        }
+
         // ─────────────────────────────────────────────────────────────────────
         //  IK TEST COMMANDS
         //

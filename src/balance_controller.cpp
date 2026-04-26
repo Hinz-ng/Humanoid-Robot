@@ -192,7 +192,17 @@ BalanceState BalanceController::update(const IMUState& state) {
     _prevRollEnabled  = _cfg.roll_enabled;
 
     // ── Gate 1: enabled ───────────────────────────────────────────────────────
-    if (!_cfg.pitch_enabled && !_cfg.roll_enabled) { _lastState = out; return out; }
+    if (!_cfg.pitch_enabled && !_cfg.roll_enabled) {
+        // C-02 ext: still apply ankle roll bias when both controllers are off.
+        // Without this, WeightShift bias has no effect during gait testing with
+        // balance fully disabled — the most common test configuration.
+        if (!oe_is_estopped() &&
+            (fabsf(_cfg.ankle_roll_bias_l_deg) > 0.01f ||
+             fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f)) {
+            _applyRollCorrection(0.0f, 0.0f, 0.0f, 0.0f);
+        }
+        _lastState = out; return out;
+    }
     // ── Gate 2: valid IMU ─────────────────────────────────────────────────────
     if (!state.valid)     { _lastState = out; return out; }
     // ── Gate 3: hardware live ─────────────────────────────────────────────────

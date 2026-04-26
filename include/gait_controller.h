@@ -46,6 +46,8 @@ enum class GaitMode : uint8_t {
     RUNNING     = 1,  // continuous stepping in place
     SINGLE_STEP = 2,  // complete exactly one full cycle (both legs), then IDLE
     WSHIFT_ONLY = 3,  // CoM shift only — no foot lift (initial CoM verification)
+    POSE_STEP   = 4,  // pose-by-pose: pauses at gate-open, peak, and landing
+                      // call nextPose() each time to advance to the next pose
 };
 
 // ---------------------------------------------------------------------------
@@ -90,6 +92,8 @@ struct GaitState {
     float        wsProgress = 0.0f;   // WeightShift progress at last tick (signed, [-1,+1])
     bool         liftGateOK = false;  // |wsProgress| in correct direction >= liftGateThreshold
     bool         running    = false;  // true when mode != IDLE
+    // POSE_STEP hold point: 0=running, 1=gate-open, 2=peak swing, 3=foot landed.
+    uint8_t      poseHold   = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -106,6 +110,9 @@ public:
     void start(GaitMode mode);  // start a mode; start(IDLE) is equivalent to stop()
     void stop();                 // return to IDLE; centers WeightShift
     void singleStep();           // start SINGLE_STEP mode (one full cycle, then IDLE)
+    // Advance to the next pause point in POSE_STEP mode.
+    // Ignored if mode != POSE_STEP or not currently paused.
+    void nextPose();
 
     // Call every tick from main.cpp, after weightShift.update() and before
     // balanceController.update(). imuState is used for Phase 2 roll logging.
@@ -133,6 +140,10 @@ private:
     // Last direction sent to WeightShift (avoids redundant trigger calls).
     // +1 = LEFT shift, -1 = RIGHT shift, 0 = none/center.
     int8_t _lastShiftDir = 0;
+
+    // POSE_STEP pause state.
+    // 0 = not paused. 1 = held at gate-open. 2 = held at peak. 3 = held at landing.
+    uint8_t _poseHoldPt = 0;
 
     // Trigger WeightShift direction matching the given half-cycle.
     void  _triggerShiftForHalf(uint8_t half);

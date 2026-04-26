@@ -47,7 +47,7 @@ struct WeightShiftConfig {
     // produce a visible 5° lean in the direction of any active weight shift.
     // This is correct behaviour. To disable the default bias, set to 0.0f here
     // or send: CMD:WEIGHT_SHIFT_TUNE:ankle=0 before triggering weight shifts.
-    float ankle_shift_deg = 5.0f;
+    float ankle_shift_deg = 15.0f;
     
     // TASK-2: Phase delay between swing and stance ankle ramps (ms).
     // Swing ankle starts immediately; stance starts after this delay.

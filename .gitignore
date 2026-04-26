@@ -42,6 +42,7 @@ __pycache__/
 *AsyncTCP*
 *Adafruit*
 *.ino
+*.md
 
 #Exact Filenames
 integrity.dat

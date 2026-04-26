@@ -233,6 +233,11 @@
                   padding: 8px 18px; border-radius: 5px; cursor: pointer; font-weight: bold; }
 .btn-gait-wshift { background: #006064; color: #fff; border: 1px solid #00bcd4;
                   padding: 8px 18px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+.btn-gait-pose  { background: #4a148c; color: #fff; border: 1px solid #9c27b0;
+                  padding: 8px 18px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+.btn-gait-next  { background: #1565c0; color: #fff; border: 1px solid #42a5f5;
+                  padding: 8px 18px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+.btn-gait-next:disabled { background: #2a2a2a; color: #555; border-color: #444; cursor: default; }
 
 /* Gait mode badge */
 .gait-mode-badge { display: inline-block; padding: 3px 10px; border-radius: 3px;
@@ -241,6 +246,7 @@
 .gait-mode-run    { background: #1b3a1b; color: #66bb6a; }
 .gait-mode-step   { background: #1a1a3a; color: #7c83fd; }
 .gait-mode-wshift { background: #003a3a; color: #4dd0e1; }
+.gait-mode-pose   { background: #2a0a4a; color: #ce93d8; }
 
 /* Gait gate badge */
 .gait-gate-badge { display: inline-block; padding: 2px 8px; border-radius: 3px;
@@ -797,7 +803,7 @@
             <div class="gait-phase-bg">
                 <div class="gait-phase-fill" id="gaitPhaseFill"></div>
             </div>
-            <div class="gait-phase-label" id="gaitPhaseLabel">Phase: 0.0%  |  Right swing: 0–50%, Left swing: 50–100%</div>
+            <div class="gait-phase-label" id="gaitPhaseLabel">Phase: 0.0%  |  Left swing: 0–50%, Right swing: 50–100%</div>
         </div>
 
         <!-- Control buttons -->
@@ -806,6 +812,15 @@
             <button class="btn-gait-stop"  onclick="sendCmd('GAIT_STOP')">■ Stop</button>
             <button class="btn-gait-step"  onclick="sendCmd('GAIT_STEP')">↷ Single Step</button>
             <button class="btn-gait-wshift" onclick="sendCmd('GAIT_WSHIFT')">⇆ W-Shift Only</button>
+            <button class="btn-gait-pose"  onclick="sendCmd('GAIT_POSE_STEP')">⏸ Pose Step</button>
+            <button class="btn-gait-next"  id="btnGaitNext" onclick="sendCmd('GAIT_NEXT')" disabled>→ Next Pose</button>
+        </div>
+        <!-- Pose step hold point indicator -->
+        <div id="gaitPoseHoldRow" style="display:none; margin-bottom:10px; padding:8px 10px;
+             background:#1a0a2a; border:1px solid #7b1fa2; border-radius:5px;">
+            <span style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.5px;">Pose hold: </span>
+            <span id="gaitPoseHoldLabel" style="font-size:13px; font-weight:bold; color:#ce93d8;">—</span>
+            <span style="font-size:11px; color:#555; margin-left:10px;">Press → Next Pose to advance</span>
         </div>
 
         <!-- Live telemetry -->
@@ -836,6 +851,10 @@
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">Sub-state</div>
                 <div class="bal-out-val" id="gaitTelemSub">WAIT</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Hold Pt</div>
+                <div class="bal-out-val" id="gaitTelemHold">—</div>
             </div>
         </div>
 
@@ -1931,7 +1950,7 @@ function sendGaitTune() {
 }
 
 // Parses GAIT: telemetry broadcast from firmware and updates the Phase 1 panel.
-// Format: "phase=X.XXX,mode=N,sub=N,liftL=X.X,liftR=X.X,ws=X.XXX,gate=0|1"
+// Format: "phase=X.XXX,mode=N,sub=N,liftL=X.X,liftR=X.X,ws=X.XXX,gate=0|1,hold=N"
 function parseGaitState(payload) {
     const v = {};
     payload.split(",").forEach(pair => {
@@ -1946,10 +1965,11 @@ function parseGaitState(payload) {
     const liftR   = parseFloat(v["liftR"]  || "0");
     const wsProg  = parseFloat(v["ws"]     || "0");
     const gateOK  = v["gate"] === "1";
+    const hold    = parseInt(v["hold"] || "0");
 
     // Mode badge
-    const modeNames  = ["IDLE", "RUNNING", "SINGLE STEP", "W-SHIFT ONLY"];
-    const modeClass  = ["gait-mode-idle", "gait-mode-run", "gait-mode-step", "gait-mode-wshift"];
+    const modeNames  = ["IDLE", "RUNNING", "SINGLE STEP", "W-SHIFT ONLY", "POSE STEP"];
+    const modeClass  = ["gait-mode-idle", "gait-mode-run", "gait-mode-step", "gait-mode-wshift", "gait-mode-pose"];
     const modeBadge  = document.getElementById("gaitModeBadge");
     if (modeBadge) {
         modeBadge.textContent = modeNames[mode] || "?";
@@ -1963,10 +1983,10 @@ function parseGaitState(payload) {
         gateBadge.className   = "gait-gate-badge " + (gateOK ? "gait-gate-open" : "gait-gate-closed");
     }
 
-    // Sub-state label
+    // Sub-state label — half=0 swings LEFT, half=1 swings RIGHT (hardware-verified)
     const subLabel = document.getElementById("gaitSubLabel");
     if (subLabel) {
-        const halfLabel = (phase < 0.5) ? "half=0 (R swing)" : "half=1 (L swing)";
+        const halfLabel = (phase < 0.5) ? "half=0 (L swing)" : "half=1 (R swing)";
         subLabel.textContent = (sub === 1 ? "SWINGING" : "WAIT SHIFT") + "  " + halfLabel;
     }
 
@@ -1975,7 +1995,18 @@ function parseGaitState(payload) {
     const label = document.getElementById("gaitPhaseLabel");
     if (fill)  fill.style.width  = (phase * 100).toFixed(1) + "%";
     if (label) label.textContent = "Phase: " + (phase * 100).toFixed(1) + "%  |  "
-        + (phase < 0.5 ? "Right foot swinging" : "Left foot swinging");
+        + (phase < 0.5 ? "Left foot swinging" : "Right foot swinging");
+
+    // Pose-step hold indicator
+    const holdNames = ["—", "1: Gate Open (weight shifted)", "2: Peak Swing (max lift)", "3: Foot Landed"];
+    const isPoseMode = (mode === 4);
+    const isPaused   = isPoseMode && (hold > 0);
+    const holdRow  = document.getElementById("gaitPoseHoldRow");
+    const holdLbl  = document.getElementById("gaitPoseHoldLabel");
+    const nextBtn  = document.getElementById("btnGaitNext");
+    if (holdRow) holdRow.style.display = isPoseMode ? "block" : "none";
+    if (holdLbl) holdLbl.textContent   = isPoseMode ? (holdNames[hold] || "—") : "—";
+    if (nextBtn) nextBtn.disabled      = !isPaused;
 
     // Telemetry cells
     const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
@@ -1983,8 +2014,9 @@ function parseGaitState(payload) {
     set("gaitTelemLiftL", liftL.toFixed(1) + "°");
     set("gaitTelemLiftR", liftR.toFixed(1) + "°");
     set("gaitTelemWS",    wsProg.toFixed(3));
-    set("gaitTelemHalf",  phase < 0.5 ? "0 (R swing)" : "1 (L swing)");
+    set("gaitTelemHalf",  phase < 0.5 ? "0 (L swing)" : "1 (R swing)");
     set("gaitTelemSub",   sub === 1 ? "SWING" : "WAIT");
+    set("gaitTelemHold",  isPoseMode ? (hold > 0 ? "HOLD " + hold : "running") : "—");
 }
 
 // =============================================================================

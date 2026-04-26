@@ -266,16 +266,17 @@ void WebComm::broadcastGaitState() {
     _lastGaitBroadcast_us = now;
 
     const GaitState& s = _gaitCtrl->getState();
-    char buf[128];
+    char buf[160];
     snprintf(buf, sizeof(buf),
-        "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d",
+        "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
         s.liftL_deg,
         s.liftR_deg,
         s.wsProgress,
-        static_cast<int>(s.liftGateOK)
+        static_cast<int>(s.liftGateOK),
+        static_cast<int>(s.poseHold)
     );
     ws.textAll(buf);
 }
@@ -742,6 +743,18 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             if (_gaitCtrl) {
                 _gaitCtrl->start(GaitMode::WSHIFT_ONLY);
                 Serial.println("[WebComm] CMD: GAIT_WSHIFT");
+            }
+        }
+        else if (cmd == "GAIT_POSE_STEP") {
+            if (_gaitCtrl) {
+                _gaitCtrl->start(GaitMode::POSE_STEP);
+                Serial.println("[WebComm] CMD: GAIT_POSE_STEP");
+            }
+        }
+        else if (cmd == "GAIT_NEXT") {
+            if (_gaitCtrl) {
+                _gaitCtrl->nextPose();
+                Serial.println("[WebComm] CMD: GAIT_NEXT");
             }
         }
         else if (cmd.startsWith("GAIT_TUNE:")) {

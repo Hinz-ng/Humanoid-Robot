@@ -224,6 +224,20 @@ LegIKResult GaitController::_submitFootTargetIK(bool isRight,
 }
 
 // ---------------------------------------------------------------------------
+void GaitController::_submitStanceBothLegs() {
+    const FootTarget tL = _buildFootTarget(/*isRight=*/false, 0.0f, /*isSwing=*/false);
+    const FootTarget tR = _buildFootTarget(/*isRight=*/true,  0.0f, /*isSwing=*/false);
+
+    const LegIKResult rL = _submitFootTargetIK(false, tL);
+    const LegIKResult rR = _submitFootTargetIK(true,  tR);
+
+    _state.lastIKStatusL = static_cast<uint8_t>(rL.status);
+    _state.lastIKStatusR = static_cast<uint8_t>(rR.status);
+    _state.lastReachPctL = rL.sagittal_reach_pct;
+    _state.lastReachPctR = rR.sagittal_reach_pct;
+}
+
+// ---------------------------------------------------------------------------
 //  _advanceHalf  —  called when _halfPhase >= 1.0 (foot back on ground).
 //  Flips the half-cycle and re-enters WAIT_SHIFT for the next leg.
 //  SINGLE_STEP stops after completing half=1 (both legs have taken one step).
@@ -260,7 +274,12 @@ void GaitController::update(float dt_s, const IMUState& imuState) {
     _state.liftR_deg  = 0.0f;
     _state.liftGateOK = false;
 
-    if (_state.mode == GaitMode::IDLE) {
+    const WeightShiftState wsState = _ws ? _ws->getState() : WeightShiftState{};
+    const bool wsActive = (_ws != nullptr) &&
+                          (fabsf(wsState.progress) > 0.005f || wsState.ramping);
+    const bool gaitActive = (_state.mode != GaitMode::IDLE);
+
+    if (!wsActive && !gaitActive) {
         _state.phase      = 0.0f;
         _state.wsProgress = 0.0f;
         _state.poseHold   = 0;
@@ -268,7 +287,7 @@ void GaitController::update(float dt_s, const IMUState& imuState) {
     }
 
     // ── Weight shift state ────────────────────────────────────────────────────
-    const float wsProgress = _ws ? _ws->getState().progress : 1.0f;
+    const float wsProgress = _ws ? wsState.progress : 1.0f;
     _state.wsProgress = wsProgress;
 
     // Gate direction check (signed, not just magnitude):
@@ -283,6 +302,11 @@ void GaitController::update(float dt_s, const IMUState& imuState) {
     _state.subState = _subState;
     _state.phase    = _currentHalf * 0.5f + _halfPhase * 0.5f;
     _state.poseHold = _poseHoldPt;
+
+    // Keep the stance baseline alive on every active tick. Later branches may
+    // overwrite one leg with a swing target, but stance-only states still need
+    // fresh IK submissions each loop.
+    _submitStanceBothLegs();
 
     // ── POSE_STEP: if currently paused, re-submit lift to hold pose ───────────
     if (_state.mode == GaitMode::POSE_STEP && _poseHoldPt > 0) {

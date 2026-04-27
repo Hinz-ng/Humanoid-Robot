@@ -14,13 +14,22 @@ void WeightShift::init(BalanceController* bal, MotionManager* mm) {
     }
     _bal  = bal;
     _mm   = mm;
-    _state = {};
-    _rightAnkleProgress = _leftAnkleProgress = 0.0f;
-    _targetRight = _targetLeft = 0.0f;
-    _rightDelayRemaining_ms = _leftDelayRemaining_ms = 0.0f;
-    _lastInjectedSetpointRad = 0.0f;
-    _smoothedForwardLean_mm = 0.0f;
+    forceCenterImmediate();
     Serial.println("[WeightShift] Initialized.");
+}
+
+// ---------------------------------------------------------------------------
+void WeightShift::forceCenterImmediate() {
+    _state = {};
+    _state.direction = ShiftDirection::NONE;
+    _rightAnkleProgress     = 0.0f;
+    _leftAnkleProgress      = 0.0f;
+    _targetRight            = 0.0f;
+    _targetLeft             = 0.0f;
+    _rightDelayRemaining_ms = 0.0f;
+    _leftDelayRemaining_ms  = 0.0f;
+    _lastInjectedSetpointRad = 0.0f;
+    _smoothedForwardLean_mm  = 0.0f;
 }
 
 // ---------------------------------------------------------------------------
@@ -106,22 +115,20 @@ void WeightShift::update(float dt_s) {
     //
     // The balance controller reads these from _cfg each tick and adds them
     // to the shaped correction AFTER the IIR, so correction is additive.
-    BalanceConfig cfg = _bal->getConfig();
-
-    cfg.ankle_roll_bias_r_deg = (fabsf(_cfg.ankle_shift_deg) > 0.01f)
-                                 ? (-_rightAnkleProgress * _cfg.ankle_shift_deg)
-                                 : 0.0f;
-    cfg.ankle_roll_bias_l_deg = (fabsf(_cfg.ankle_shift_deg) > 0.01f)
-                                 ? (+_leftAnkleProgress  * _cfg.ankle_shift_deg)
-                                 : 0.0f;
+    const float biasRightDeg = (fabsf(_cfg.ankle_shift_deg) > 0.01f)
+                               ? (-_rightAnkleProgress * _cfg.ankle_shift_deg)
+                               : 0.0f;
+    const float biasLeftDeg  = (fabsf(_cfg.ankle_shift_deg) > 0.01f)
+                               ? (+_leftAnkleProgress  * _cfg.ankle_shift_deg)
+                               : 0.0f;
+    _bal->setAnkleRollBias(biasLeftDeg, biasRightDeg);
 
     // Roll setpoint: use average progress. Update only if changed > 0.5 mrad.
     const float newSetpoint = -_state.progress * fabsf(_cfg.setpoint_shift_rad);
     if (fabsf(newSetpoint - _lastInjectedSetpointRad) > 0.0005f) {
-        cfg.roll_setpoint_rad    = newSetpoint;
+        _bal->setRollSetpointRad(newSetpoint);
         _lastInjectedSetpointRad = newSetpoint;
     }
-    _bal->setConfig(cfg);
 
     // ── Forward-lean IIR smoothing (mm-space) ────────────────────────────────
     // Stage 2: the |progress|-driven body-forward offset has a derivative

@@ -97,7 +97,7 @@ struct BalanceConfig {
     float roll_derivative_lpf_alpha = 0.85f;  // [0,1). WS: "roll_dlpf"
 
     // --- TASK-2: Ankle roll bias from WeightShift ---
-    // Set each tick by WeightShift::update() via _bal->getConfig()/setConfig().
+    // Set each tick by WeightShift::update() through the dedicated setters below.
     // _applyRollCorrection() adds these AFTER the IIR smoother — additive to
     // the shaped balance correction, not replacing it.
     // Applied even when roll_enabled=false (C-02 fix — see update()).
@@ -166,6 +166,11 @@ public:
     const BalanceConfig& getConfig() const                   { return _cfg; }
     BalanceState         getLastState() const                { return _lastState; }
     void                 setMotionManager(MotionManager* mm) { _motionManager = mm; }
+    void                 setAnkleRollBias(float leftDeg, float rightDeg) {
+        _cfg.ankle_roll_bias_l_deg = leftDeg;
+        _cfg.ankle_roll_bias_r_deg = rightDeg;
+    }
+    void                 setRollSetpointRad(float rad) { _cfg.roll_setpoint_rad = rad; }
 
 private:
     ServoControl*    _servo;

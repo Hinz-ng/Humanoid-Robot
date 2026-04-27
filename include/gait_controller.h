@@ -184,6 +184,10 @@ private:
     // IKStatus::DOMAIN_ERROR. Returns the LegIKResult so callers can update
     // telemetry without re-solving.
     LegIKResult _submitFootTargetIK(bool isRight, const FootTarget& t);
+
+    // Re-assert both legs' stance baseline for this tick.
+    // Used whenever gait or WeightShift owns the legs, even if no swing is active.
+    void _submitStanceBothLegs();
 };
 
 #endif // GAIT_CONTROLLER_H

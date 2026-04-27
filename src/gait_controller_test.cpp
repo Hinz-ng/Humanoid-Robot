@@ -9,8 +9,11 @@
 #ifdef UNIT_TEST
 
 #include "gait_controller.h"
+#include "balance_controller.h"
 #include "leg_ik.h"
+#include "motion_manager.h"
 #include "project_wide_defs.h"
+#include "weight_shift.h"
 #include <Arduino.h>
 #include <math.h>
 
@@ -99,6 +102,121 @@ static bool test_lateralShiftReachable() {
 }
 
 // ---------------------------------------------------------------------------
+// T5 — Standalone WeightShift in IDLE still drives stance IK submissions.
+//   Regression guard for Stage 2: task-space stance shift must not dead-end
+//   just because GaitController mode is IDLE.
+static bool test_idleWeightShiftSubmitsStanceIK() {
+    BalanceController bal(nullptr);
+    MotionManager     mm;
+    WeightShift       ws;
+    GaitController    g;
+
+    ws.init(&bal, &mm);
+    g.init(&mm, &ws);
+
+    WeightShiftConfig wcfg = ws.getConfig();
+    wcfg.lateral_shift_mm = 30.0f;
+    wcfg.forward_lean_mm  = 20.0f;
+    ws.setConfig(wcfg);
+
+    ws.trigger(ShiftDirection::LEFT);
+    ws.update(0.10f);
+
+    IMUState imu = {};
+    imu.valid = true;
+    g.update(0.10f, imu);
+
+    const bool pass = (mm.pendingCount() >= 10);
+    Serial.printf("[GaitT5] idle_weight_shift_submits_stance_ik: %s  pending=%u progress=%.3f\n",
+                  pass ? "PASS" : "FAIL",
+                  (unsigned)mm.pendingCount(),
+                  ws.getState().progress);
+    return pass;
+}
+
+// ---------------------------------------------------------------------------
+// T6 — Immediate center clears all WeightShift state and stance offsets.
+//   Guards oe_clear(): stale bias / lean must not survive until the next tick.
+static bool test_forceCenterImmediateClearsState() {
+    BalanceController bal(nullptr);
+    MotionManager     mm;
+    WeightShift       ws;
+
+    ws.init(&bal, &mm);
+
+    WeightShiftConfig wcfg = ws.getConfig();
+    wcfg.lateral_shift_mm = 25.0f;
+    wcfg.forward_lean_mm  = 15.0f;
+    ws.setConfig(wcfg);
+
+    ws.trigger(ShiftDirection::RIGHT);
+    ws.update(0.20f);
+    ws.forceCenterImmediate();
+
+    float xOffsetMm = 99.0f;
+    float yOffsetMm = 99.0f;
+    ws.getStanceShift(/*isRightLeg=*/true, xOffsetMm, yOffsetMm);
+
+    const WeightShiftState& s = ws.getState();
+    const bool pass = near(s.progress, 0.0f)
+                   && near(s.right_progress, 0.0f)
+                   && near(s.left_progress, 0.0f)
+                   && !s.ramping
+                   && near(xOffsetMm, 0.0f)
+                   && near(yOffsetMm, 0.0f);
+    Serial.printf("[GaitT6] force_center_immediate: %s  p=%.3f rp=%.3f lp=%.3f x=%.2f y=%.2f ramp=%d\n",
+                  pass ? "PASS" : "FAIL",
+                  s.progress, s.right_progress, s.left_progress,
+                  xOffsetMm, yOffsetMm, (int)s.ramping);
+    return pass;
+}
+
+// ---------------------------------------------------------------------------
+// T7 — Zeroed WeightShift tuning must not inject any actuation on trigger.
+//   Regression guard for the boot-time UI/firmware mismatch bug.
+static bool test_zeroConfigShiftProducesNoActuation() {
+    BalanceController bal(nullptr);
+    MotionManager     mm;
+    WeightShift       ws;
+
+    ws.init(&bal, &mm);
+
+    WeightShiftConfig wcfg = ws.getConfig();
+    wcfg.setpoint_shift_rad = 0.0f;
+    wcfg.ankle_shift_deg    = 0.0f;
+    wcfg.lateral_shift_mm   = 0.0f;
+    wcfg.forward_lean_mm    = 0.0f;
+    wcfg.torso_shift_deg    = 0.0f;
+    ws.setConfig(wcfg);
+
+    ws.trigger(ShiftDirection::LEFT);
+    ws.update(0.10f);
+
+    float xOffsetMm = 99.0f;
+    float yOffsetMm = 99.0f;
+    ws.getStanceShift(/*isRightLeg=*/true, xOffsetMm, yOffsetMm);
+
+    const BalanceConfig&    bcfg = bal.getConfig();
+    const WeightShiftState& s    = ws.getState();
+    const bool pass = (fabsf(s.progress) > 0.001f)
+                   && near(bcfg.roll_setpoint_rad, 0.0f)
+                   && near(bcfg.ankle_roll_bias_l_deg, 0.0f)
+                   && near(bcfg.ankle_roll_bias_r_deg, 0.0f)
+                   && near(xOffsetMm, 0.0f)
+                   && near(yOffsetMm, 0.0f)
+                   && (mm.pendingCount() == 0);
+    Serial.printf("[GaitT7] zero_config_no_actuation: %s  p=%.3f sp=%.4f bL=%.2f bR=%.2f pending=%u x=%.2f y=%.2f\n",
+                  pass ? "PASS" : "FAIL",
+                  s.progress,
+                  bcfg.roll_setpoint_rad,
+                  bcfg.ankle_roll_bias_l_deg,
+                  bcfg.ankle_roll_bias_r_deg,
+                  (unsigned)mm.pendingCount(),
+                  xOffsetMm, yOffsetMm);
+    return pass;
+}
+
+// ---------------------------------------------------------------------------
 void runGaitControllerTests() {
     Serial.println("\n[GaitCtrl] ══ Unit Tests ══════════════════════════════════");
     int pass = 0, total = 0;
@@ -107,6 +225,9 @@ void runGaitControllerTests() {
     run(test_swingFracEndpoints());
     run(test_neutralAndSwingReachable());
     run(test_lateralShiftReachable());
+    run(test_idleWeightShiftSubmitsStanceIK());
+    run(test_forceCenterImmediateClearsState());
+    run(test_zeroConfigShiftProducesNoActuation());
     Serial.printf("[GaitCtrl] ══ %d / %d PASSED ═══════════════════════════════\n\n",
                   pass, total);
 }

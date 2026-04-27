@@ -524,7 +524,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         else if (key == "torso")        cfg.torso_shift_deg         = val;
                         else if (key == "ramp")         cfg.ramp_ms                 = val;
                         // Stage 2: task-space shift authoring (mm).
-                        else if (key == "lateral_mm")   cfg.lateral_shift_mm = constrain(val, 0.0f, 50.0f);
+                        else if (key == "lateral_mm")   cfg.lateral_shift_mm = constrain(val, -50.0f, 50.0f);
                         else if (key == "forward_mm")   cfg.forward_lean_mm  = constrain(val, 0.0f, 50.0f);
                         else if (key == "phase_delay") {
             // Swing-before-stance phase delay in ms.

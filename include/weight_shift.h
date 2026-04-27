@@ -34,20 +34,15 @@ enum class ShiftDirection : int8_t {
 // ---------------------------------------------------------------------------
 struct WeightShiftConfig {
     // Roll setpoint injected into BalanceConfig (rad, magnitude).
+    // Default 0 keeps manual shift buttons motionless until the operator
+    // explicitly dials in a lean target from the UI.
     float setpoint_shift_rad = 0.050f;
 
     // Ankle roll amplitude (deg). Injected as bias into BalanceConfig, not via
     // SOURCE_GAIT. Set ankle_roll_ratio=0 in BalanceConfig to prevent the
-    // balance loop from fighting its own baseline.
-    // DEFAULT CHANGE: was 0.0f in previous codebase. Changed to 5.0f to enable
-    // ankle roll feedforward by default. This is injected as a baseline offset
-    // into BalanceConfig each tick — NOT submitted via SOURCE_GAIT.
-    //
-    // IMPORTANT: At boot, if roll controller is also enabled, the 5° bias will
-    // produce a visible 5° lean in the direction of any active weight shift.
-    // This is correct behaviour. To disable the default bias, set to 0.0f here
-    // or send: CMD:WEIGHT_SHIFT_TUNE:ankle=0 before triggering weight shifts.
-    float ankle_shift_deg = 16.0f;
+    // balance loop from fighting its own baseline. Default 0 keeps the
+    // panel's first left/right trigger as a no-op until tuning is intentional.
+    float ankle_shift_deg = 5.0f;
     
     // TASK-2: Phase delay between swing and stance ankle ramps (ms).
     // Swing ankle starts immediately; stance starts after this delay.
@@ -59,7 +54,9 @@ struct WeightShiftConfig {
     // Sign convention: progress = +1 (LEFT shift) → body moves left.
     //   Right leg y_mm += lateral_shift_mm  (right foot more outward of right hip)
     //   Left  leg y_mm -= lateral_shift_mm  (left foot more inward  of left  hip)
-    // 0 = disabled. Tune to ~10–25 mm during Stage 2 hardware testing.
+    // 0 = disabled. Negative values intentionally invert the mapping so hip
+    // adduction / inward-foot experiments can be tested from the UI.
+    // Tune magnitude to ~10–25 mm during Stage 2 hardware testing.
     float lateral_shift_mm = 0.0f;
 
     // Stage 2: Body forward shift (mm) at |progress| = 1. Replaces ankle_pitch_tilt_deg.
@@ -103,6 +100,10 @@ public:
 
     // Call every tick BEFORE balanceController.update().
     void update(float dt_s);
+
+    // Hard-reset all internal shift state immediately.
+    // Used by oe_clear() so no stale lean or ankle bias survives re-enable.
+    void forceCenterImmediate();
 
     WeightShiftConfig       getConfig() const { return _cfg; }
     void                    setConfig(const WeightShiftConfig& cfg) { _cfg = cfg; }

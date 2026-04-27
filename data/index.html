@@ -708,13 +708,13 @@
             <div class="wshift-tune-row">
                 <div class="tune-header">
                     <span>Setpoint shift (°)</span>
-                    <span class="tune-val" id="tvWsSp">2.9</span>
+                    <span class="tune-val" id="tvWsSp">0.0</span>
                 </div>
                 <!-- Slider in degrees for readability; converted to rad on send -->
-                <input type="range" id="slWsSp" min="0" max="8" step="0.1" value="2.86"
+                <input type="range" id="slWsSp" min="0" max="8" step="0.1" value="0"
                        oninput="updateWSTuneLabel('setpoint', this.value); sendWSTune()">
                 <div style="font-size:10px; color:#555; margin-top:3px;">
-                    Roll setpoint injected into balance controller
+                    Roll setpoint injected into balance controller. Leave at 0 for a no-motion baseline.
                 </div>
             </div>
 
@@ -760,10 +760,10 @@
                     <span>Lateral shift (mm)</span>
                     <span class="tune-val" id="tvWsLateral">0.0</span>
                 </div>
-                <input type="range" id="slWsLateral" min="0" max="50" step="0.5" value="0"
+                <input type="range" id="slWsLateral" min="-50" max="50" step="0.5" value="0"
                        oninput="updateWSTuneLabel('lateral_mm', this.value); sendWSTune()">
                 <div style="font-size:10px; color:#555; margin-top:3px;">
-                    Body lateral shift (mm) at full progress. Folded into FootTarget.y_mm via IK.
+                    Body lateral shift (mm) at full progress. Negative values invert the left/right mapping for adduction tests.
                 </div>
             </div>
 
@@ -1281,6 +1281,7 @@ function initWebSocket() {
     ws.onopen = () => {
         document.getElementById('ws-status').innerText   = "Connected";
         document.getElementById('ws-status').style.color = "#4caf50";
+        sendWSTune();
     };
     ws.onclose = () => {
         document.getElementById('ws-status').innerText   = "Disconnected";

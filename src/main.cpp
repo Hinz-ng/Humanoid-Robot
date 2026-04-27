@@ -81,10 +81,12 @@ void oe_estop() {
 void oe_clear() {
     servoController.resetToNeutral();
     balanceController.resetState();
+    balanceController.setAnkleRollBias(0.0f, 0.0f);
+    balanceController.setRollSetpointRad(0.0f);
     // Reset weight shift to center so no stale lean is applied on re-enable.
     // Must run before OE goes LOW to prevent the injected setpoint from triggering
     // an immediate balance correction toward the pre-estop lean target.
-    weightShift.trigger(ShiftDirection::NONE);
+    weightShift.forceCenterImmediate();
     _oe_estopped = false;
     _oe_released = true;
     digitalWrite(OE_PIN, LOW);

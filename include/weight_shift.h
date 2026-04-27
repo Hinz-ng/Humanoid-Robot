@@ -47,7 +47,7 @@ struct WeightShiftConfig {
     // produce a visible 5° lean in the direction of any active weight shift.
     // This is correct behaviour. To disable the default bias, set to 0.0f here
     // or send: CMD:WEIGHT_SHIFT_TUNE:ankle=0 before triggering weight shifts.
-    float ankle_shift_deg = 15.0f;
+    float ankle_shift_deg = 16.0f;
     
     // TASK-2: Phase delay between swing and stance ankle ramps (ms).
     // Swing ankle starts immediately; stance starts after this delay.
@@ -56,6 +56,14 @@ struct WeightShiftConfig {
 
     // Ankle pitch tilt during shift. Scaled by |progress|, both ankles.
     float ankle_pitch_tilt_deg = ANKLE_PITCH_FORWARD_TILT_DEG;
+
+    // IIR smoothing factor on the V3 ankle-pitch tilt command, applied as
+    //   smoothed = alpha * smoothed + (1 - alpha) * raw
+    // 1.0 = pass-through (legacy step behavior). 0.0 = command frozen.
+    // 0.85–0.95 typical. 0.90 mirrors UVC's DYI_DAMPING_FACTOR.
+    // Time constant τ ≈ dt / (1 - alpha). At 400 Hz, alpha=0.90 → τ ≈ 25 ms.
+    // Drops the abrupt tilt step that occurs when the shift direction reverses.
+    float ankle_tilt_smooth_alpha = 0.90f;
 
     // Hip roll on stance leg. 0 = disabled.
     float hip_shift_deg = 0.0f;
@@ -116,6 +124,10 @@ private:
     float _leftDelayRemaining_ms  = 0.0f;
 
     float _lastInjectedSetpointRad = 0.0f;
+
+    // V3 ankle-pitch tilt: IIR-smoothed command (deg). Same value sent to both
+    // ankles, so a single state variable suffices. See ankle_tilt_smooth_alpha.
+    float _ankleTiltCmdSmoothed = 0.0f;
 };
 
 #endif // WEIGHT_SHIFT_H

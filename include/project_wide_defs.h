@@ -47,7 +47,7 @@
 // Joint-relative ankle pitch offset applied during weight shift (degrees).
 // Positive = forward lean direction. Negate to reverse. Set to 0 to disable.
 // Both ankles receive this value; JointModel direction fields produce symmetry.
-#define ANKLE_PITCH_FORWARD_TILT_DEG  -4.0f
+#define ANKLE_PITCH_FORWARD_TILT_DEG  -0.0f
  
 // ============================================================
 // GAIT PARAMETERS — GaitController (weight_shift evolution)
@@ -62,5 +62,23 @@ constexpr float GAIT_WEIGHT_SHIFT_THRESHOLD_RAD = 0.10f; // ~5.7° — min roll 
 // to construct FootTargets. Must stay inside LegIK's safe range (130–189 mm).
 // Lower = deeper crouch = more knee flexion at neutral.
 constexpr float GAIT_STANCE_HEIGHT_MM           = 185.0f;
+
+// Static fore-aft offset applied to every FootTarget.x_mm built by GaitController.
+// Compensates for CoM ≠ hip-pitch axis: with x_mm=0 the foot lands directly under
+// the hip pitch axis, but the body CoM sits forward of that, so the robot leans
+// back during stance and crouching. Positive = foot shifts FORWARD relative to
+// hip (body shifts BACK over the foot). Negative = foot shifts BACKWARD (body
+// leans forward). Same role as UVC's adjFR (uses -2.04mm).
+//
+// Tune from 0 in ±1mm increments until ankle-pitch IK output sits near each
+// joint's neutralDeg in standing pose. Typical magnitude: ≤ 10 mm.
+constexpr float GAIT_STANCE_X_OFFSET_MM         = -20.0f;
+
+// Hold duration (ms) GaitController inserts between half-cycles. Weight shift
+// is centered (trigger NONE) and held for this duration so mechanical/IIR
+// transients damp before the next direction is commanded. Should be ≥ ~5×
+// the IIR time constant from WeightShiftConfig::ankle_tilt_smooth_alpha.
+// At alpha=0.90 / 400 Hz, τ ≈ 25 ms → 150 ms gives ~6τ.
+constexpr uint32_t GAIT_STABILIZE_MS            = 200;
 
 #endif // PROJECT_WIDE_DEFS_H

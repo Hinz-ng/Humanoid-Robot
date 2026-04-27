@@ -19,6 +19,7 @@ void WeightShift::init(BalanceController* bal, MotionManager* mm) {
     _targetRight = _targetLeft = 0.0f;
     _rightDelayRemaining_ms = _leftDelayRemaining_ms = 0.0f;
     _lastInjectedSetpointRad = 0.0f;
+    _ankleTiltCmdSmoothed = 0.0f;
     Serial.println("[WeightShift] Initialized.");
 }
 
@@ -139,10 +140,20 @@ void WeightShift::update(float dt_s) {
     // ── Ankle pitch tilt (SOURCE_GAIT) ────────────────────────────────────────
     // V3 — Stage 2: fold this into stance FootTarget.x_mm so IK derives ankle pitch.
     // Sagittal plane only — no conflict with roll controller.
-    if (fabsf(_cfg.ankle_pitch_tilt_deg) > 0.01f && fabsf(_state.progress) > 0.01f) {
-        float tilt = fabsf(_state.progress) * _cfg.ankle_pitch_tilt_deg;
-        _mm->submit(SOURCE_GAIT, IDX_R_ANKLE_PITCH, tilt);
-        _mm->submit(SOURCE_GAIT, IDX_L_ANKLE_PITCH, tilt);
+    //
+    // IIR-smoothed: the raw value `|progress| * tilt_deg` formed a V-shape with a
+    // derivative discontinuity at every direction reversal (progress crosses 0),
+    // and a step on/off at the historic |progress| > 0.01 gate. Both manifested
+    // as an abrupt plantar/dorsi flexion that destabilised the stance leg.
+    //
+    // Always submit the smoothed value (no progress gate) so it can settle to 0
+    // continuously when shift centers — no edge from "submitted" → "not submitted".
+    if (fabsf(_cfg.ankle_pitch_tilt_deg) > 0.01f) {
+        const float rawTilt = fabsf(_state.progress) * _cfg.ankle_pitch_tilt_deg;
+        const float a = _cfg.ankle_tilt_smooth_alpha;
+        _ankleTiltCmdSmoothed = a * _ankleTiltCmdSmoothed + (1.0f - a) * rawTilt;
+        _mm->submit(SOURCE_GAIT, IDX_R_ANKLE_PITCH, _ankleTiltCmdSmoothed);
+        _mm->submit(SOURCE_GAIT, IDX_L_ANKLE_PITCH, _ankleTiltCmdSmoothed);
     }
 
     // ── Torso roll (SOURCE_GAIT) ──────────────────────────────────────────────

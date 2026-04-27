@@ -36,8 +36,13 @@ class WeightShift;  // forward declaration — full include in .cpp only
 //              from 0 (grounded) to 1 (peak) back to 0 (grounded).
 // ---------------------------------------------------------------------------
 enum class StepSubState : uint8_t {
-    WAIT_SHIFT = 0,
-    SWINGING   = 1,
+    WAIT_SHIFT  = 0,
+    SWINGING    = 1,
+    // Inserted between SWINGING (previous half done) and WAIT_SHIFT (next half).
+    // Weight shift is centered (trigger NONE) and the FSM holds for
+    // GAIT_STABILIZE_MS so structural and IIR transients damp before the next
+    // direction is commanded. Prevents back-to-back shifts from destabilising.
+    STABILIZING = 2,
 };
 
 // ---------------------------------------------------------------------------
@@ -158,6 +163,10 @@ private:
     // POSE_STEP pause state.
     // 0 = not paused. 1 = held at gate-open. 2 = held at peak. 3 = held at landing.
     uint8_t _poseHoldPt = 0;
+
+    // millis() timestamp at which the current STABILIZING substate began.
+    // Compared against GAIT_STABILIZE_MS to decide when to release into WAIT_SHIFT.
+    uint32_t _stabilizeStartMs = 0;
 
     // Trigger WeightShift direction matching the given half-cycle.
     void  _triggerShiftForHalf(uint8_t half);

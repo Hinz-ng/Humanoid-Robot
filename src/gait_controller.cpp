@@ -46,14 +46,15 @@ void GaitController::init(MotionManager* mm, WeightShift* ws) {
     if (mm == nullptr) {
         Serial.println("[GaitCtrl] ERROR: MotionManager null — update() will no-op.");
     }
-    _mm           = mm;
-    _ws           = ws;
-    _state        = {};
-    _currentHalf  = 0;
-    _halfPhase    = 0.0f;
-    _subState     = StepSubState::WAIT_SHIFT;
-    _lastShiftDir = 0;
-    _poseHoldPt   = 0;
+    _mm               = mm;
+    _ws               = ws;
+    _state            = {};
+    _currentHalf      = 0;
+    _halfPhase        = 0.0f;
+    _subState         = StepSubState::WAIT_SHIFT;
+    _lastShiftDir     = 0;
+    _poseHoldPt       = 0;
+    _stabilizeStartMs = 0;
     Serial.println("[GaitCtrl] Initialized.");
 }
 
@@ -74,18 +75,20 @@ void GaitController::start(GaitMode mode) {
         _subState         = StepSubState::WAIT_SHIFT;
         _lastShiftDir     = 0;
         _poseHoldPt       = 0;
+        _stabilizeStartMs = 0;
         if (_ws) _ws->trigger(ShiftDirection::NONE);
         Serial.println("[GaitCtrl] IDLE — weight shift centered.");
         return;
     }
 
     // RUNNING, SINGLE_STEP, WSHIFT_ONLY, POSE_STEP all start from half=0.
-    _currentHalf  = 0;
-    _halfPhase    = 0.0f;
-    _subState     = StepSubState::WAIT_SHIFT;
-    _lastShiftDir = 0;
-    _poseHoldPt   = 0;
-    _state.poseHold = 0;
+    _currentHalf      = 0;
+    _halfPhase        = 0.0f;
+    _subState         = StepSubState::WAIT_SHIFT;
+    _lastShiftDir     = 0;
+    _poseHoldPt       = 0;
+    _stabilizeStartMs = 0;
+    _state.poseHold   = 0;
     _triggerShiftForHalf(0);  // begin LEFT shift immediately
 
     Serial.printf("[GaitCtrl] start mode=%d\n", static_cast<int>(mode));
@@ -150,7 +153,7 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
                                             bool isSwing) const {
     FootTarget t;
     t.isRightLeg   = isRight;
-    t.x_mm         = 0.0f;
+    t.x_mm         = GAIT_STANCE_X_OFFSET_MM;
     t.y_mm         = 0.0f;
     t.h_frontal_mm = 0.0f;  // 0 = auto-derive from sagittal in LegIK::solve
 
@@ -223,10 +226,17 @@ void GaitController::_advanceHalf() {
         return;
     }
 
-    _currentHalf = 1 - _currentHalf;   // 0→1 or 1→0
-    _halfPhase   = 0.0f;
-    _subState    = StepSubState::WAIT_SHIFT;
-    _triggerShiftForHalf(_currentHalf);
+    _currentHalf      = 1 - _currentHalf;   // 0→1 or 1→0
+    _halfPhase        = 0.0f;
+    _subState         = StepSubState::STABILIZING;
+    _stabilizeStartMs = millis();
+    // Center the weight shift; the structural/IIR transients from the half just
+    // completed damp during the hold. _triggerShiftForHalf() for the new half
+    // runs after STABILIZE expires (see update() STABILIZING branch).
+    if (_ws) _ws->trigger(ShiftDirection::NONE);
+    _lastShiftDir = 0;
+    Serial.printf("[GaitCtrl] STABILIZE — half=%d, %ums hold\n",
+                  _currentHalf, (unsigned)GAIT_STABILIZE_MS);
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +318,22 @@ void GaitController::update(float dt_s, const IMUState& imuState) {
     }
 
     // ── RUNNING / SINGLE_STEP / POSE_STEP: weight-shift-gated stepping ────────
+
+    // STABILIZING is entered by _advanceHalf() between half-cycles. Hold pose
+    // (no submits, no phase advance) until GAIT_STABILIZE_MS has elapsed, then
+    // arm WAIT_SHIFT and trigger the new half's shift. This separates the prior
+    // shift's mechanical settling from the next shift's command edge so the two
+    // do not superimpose into a destabilising transient.
+    if (_subState == StepSubState::STABILIZING) {
+        if (millis() - _stabilizeStartMs >= GAIT_STABILIZE_MS) {
+            _subState       = StepSubState::WAIT_SHIFT;
+            _state.subState = _subState;
+            _triggerShiftForHalf(_currentHalf);
+            Serial.printf("[GaitCtrl] STABILIZE done → WAIT_SHIFT half=%d\n",
+                          _currentHalf);
+        }
+        return;
+    }
 
     if (_subState == StepSubState::WAIT_SHIFT) {
         if (!_state.liftGateOK) return;  // still waiting for CoM to shift

@@ -54,32 +54,31 @@ struct WeightShiftConfig {
     // Set to 0 for simultaneous ramp (disables phasing).
     float shift_phase_delay_ms = 500.0f;
 
-    // Ankle pitch tilt during shift. Scaled by |progress|, both ankles.
-    float ankle_pitch_tilt_deg = ANKLE_PITCH_FORWARD_TILT_DEG;
+    // Stage 2: Body lateral shift (mm) at progress = ±1. Replaces hip_shift_deg.
+    // Translates to a y_mm offset on both feet (each in its own frontal frame).
+    // Sign convention: progress = +1 (LEFT shift) → body moves left.
+    //   Right leg y_mm += lateral_shift_mm  (right foot more outward of right hip)
+    //   Left  leg y_mm -= lateral_shift_mm  (left foot more inward  of left  hip)
+    // 0 = disabled. Tune to ~10–25 mm during Stage 2 hardware testing.
+    float lateral_shift_mm = 0.0f;
 
-    // IIR smoothing factor on the V3 ankle-pitch tilt command, applied as
-    //   smoothed = alpha * smoothed + (1 - alpha) * raw
-    // 1.0 = pass-through (legacy step behavior). 0.0 = command frozen.
-    // 0.85–0.95 typical. 0.90 mirrors UVC's DYI_DAMPING_FACTOR.
-    // Time constant τ ≈ dt / (1 - alpha). At 400 Hz, alpha=0.90 → τ ≈ 25 ms.
-    // Drops the abrupt tilt step that occurs when the shift direction reverses.
-    float ankle_tilt_smooth_alpha = 0.90f;
+    // Stage 2: Body forward shift (mm) at |progress| = 1. Replaces ankle_pitch_tilt_deg.
+    // Both feet receive an x_mm offset of -|progress| × forward_lean_mm so the foot
+    // sits behind the hip pitch axis when the body leans forward. 0 = disabled.
+    float forward_lean_mm = 0.0f;
 
-    // Hip roll on stance leg. 0 = disabled.
-    float hip_shift_deg = 0.0f;
+    // IIR smoothing factor for the forward-lean ramp (was ankle_tilt_smooth_alpha).
+    // Applied as: smoothed = alpha*smoothed + (1-alpha)*raw. The lateral path uses
+    // progress directly (already smoothed by the ramp); only the |progress|-driven
+    // forward lean has a derivative discontinuity at zero crossing that needs IIR.
+    // 0.90 mirrors UVC DYI_DAMPING_FACTOR. τ ≈ 25 ms at 400 Hz.
+    float shift_smooth_alpha = 0.90f;
 
     // Torso roll (direction unverified). 0 = disabled.
     float torso_shift_deg = 0.0f;
 
     // Time for each ankle to ramp to full shift position (ms).
     float ramp_ms = 500.0f;
-
-    // Swing leg lift parameters.
-    // DEPRECATED in Stage 1 — swing lift moved to GaitController + LegIK.
-    // Removal pending (touches WebComm parsing); fields are now ignored.
-    float swing_hip_extension_deg = 0.0f;
-    float swing_knee_flexion_deg  = 0.0f;
-    float swing_lift_threshold    = 0.50f;  // [0, 1)
 };
 
 // ---------------------------------------------------------------------------
@@ -109,6 +108,15 @@ public:
     void                    setConfig(const WeightShiftConfig& cfg) { _cfg = cfg; }
     const WeightShiftState& getState()  const { return _state; }
 
+    // Stage 2: Returns this tick's task-space contribution to FootTarget for one
+    // leg. Caller adds the offsets to FootTarget.x_mm / FootTarget.y_mm before
+    // LegIK::solve. Returns zero offsets if estopped. See WeightShiftConfig:
+    // forward_lean_mm (signed by |progress|, smoothed) and lateral_shift_mm
+    // (signed by progress and per-leg side).
+    void getStanceShift(bool isRightLeg,
+                        float& x_offset_mm,
+                        float& y_offset_mm) const;
+
 private:
     BalanceController* _bal = nullptr;
     MotionManager*     _mm  = nullptr;
@@ -125,9 +133,9 @@ private:
 
     float _lastInjectedSetpointRad = 0.0f;
 
-    // V3 ankle-pitch tilt: IIR-smoothed command (deg). Same value sent to both
-    // ankles, so a single state variable suffices. See ankle_tilt_smooth_alpha.
-    float _ankleTiltCmdSmoothed = 0.0f;
+    // Stage 2: IIR-smoothed body forward offset in mm. Was _ankleTiltCmdSmoothed
+    // in deg-space; the smoothing now lives at the FootTarget.x_mm boundary.
+    float _smoothedForwardLean_mm = 0.0f;
 };
 
 #endif // WEIGHT_SHIFT_H

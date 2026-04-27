@@ -47,7 +47,7 @@
 // Joint-relative ankle pitch offset applied during weight shift (degrees).
 // Positive = forward lean direction. Negate to reverse. Set to 0 to disable.
 // Both ankles receive this value; JointModel direction fields produce symmetry.
-#define ANKLE_PITCH_FORWARD_TILT_DEG  -0.0f
+// #define ANKLE_PITCH_FORWARD_TILT_DEG  -0.0f
  
 // ============================================================
 // GAIT PARAMETERS — GaitController (weight_shift evolution)

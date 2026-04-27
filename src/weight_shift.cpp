@@ -19,7 +19,7 @@ void WeightShift::init(BalanceController* bal, MotionManager* mm) {
     _targetRight = _targetLeft = 0.0f;
     _rightDelayRemaining_ms = _leftDelayRemaining_ms = 0.0f;
     _lastInjectedSetpointRad = 0.0f;
-    _ankleTiltCmdSmoothed = 0.0f;
+    _smoothedForwardLean_mm = 0.0f;
     Serial.println("[WeightShift] Initialized.");
 }
 
@@ -123,54 +123,49 @@ void WeightShift::update(float dt_s) {
     }
     _bal->setConfig(cfg);
 
-    // ── Stance hip roll (SOURCE_GAIT) ─────────────────────────────────────────
-    // V4 — Stage 2: fold this into stance FootTarget.y_mm so IK derives hip roll.
-    // Still submitted via MotionManager — does not conflict with balance controller
-    // (hip_roll_ratio=0 by default keeps balance off hip roll joints).
-    if (fabsf(_cfg.hip_shift_deg) > 0.01f && fabsf(_state.progress) > 0.01f) {
-        if (_state.progress > 0.01f) {
-            _mm->submit(SOURCE_GAIT, IDX_L_HIP_ROLL,
-                        _state.progress * _cfg.hip_shift_deg);
-        } else {
-            _mm->submit(SOURCE_GAIT, IDX_R_HIP_ROLL,
-                        -_state.progress * _cfg.hip_shift_deg);
-        }
+    // ── Forward-lean IIR smoothing (mm-space) ────────────────────────────────
+    // Stage 2: the |progress|-driven body-forward offset has a derivative
+    // discontinuity at zero crossing. IIR-smooth it here so callers of
+    // getStanceShift() see a continuous x_mm contribution. Lateral shift uses
+    // progress directly (already ramp-smoothed) — no second-stage IIR needed.
+    {
+        const float rawFwd = fabsf(_state.progress) * _cfg.forward_lean_mm;
+        const float a      = _cfg.shift_smooth_alpha;
+        _smoothedForwardLean_mm = a * _smoothedForwardLean_mm + (1.0f - a) * rawFwd;
     }
 
-    // ── Ankle pitch tilt (SOURCE_GAIT) ────────────────────────────────────────
-    // V3 — Stage 2: fold this into stance FootTarget.x_mm so IK derives ankle pitch.
-    // Sagittal plane only — no conflict with roll controller.
-    //
-    // IIR-smoothed: the raw value `|progress| * tilt_deg` formed a V-shape with a
-    // derivative discontinuity at every direction reversal (progress crosses 0),
-    // and a step on/off at the historic |progress| > 0.01 gate. Both manifested
-    // as an abrupt plantar/dorsi flexion that destabilised the stance leg.
-    //
-    // Always submit the smoothed value (no progress gate) so it can settle to 0
-    // continuously when shift centers — no edge from "submitted" → "not submitted".
-    if (fabsf(_cfg.ankle_pitch_tilt_deg) > 0.01f) {
-        const float rawTilt = fabsf(_state.progress) * _cfg.ankle_pitch_tilt_deg;
-        const float a = _cfg.ankle_tilt_smooth_alpha;
-        _ankleTiltCmdSmoothed = a * _ankleTiltCmdSmoothed + (1.0f - a) * rawTilt;
-        _mm->submit(SOURCE_GAIT, IDX_R_ANKLE_PITCH, _ankleTiltCmdSmoothed);
-        _mm->submit(SOURCE_GAIT, IDX_L_ANKLE_PITCH, _ankleTiltCmdSmoothed);
-    }
+    // ── V3 / V4 — folded into FootTarget via getStanceShift() in Stage 2 ─────
+    // Ankle pitch tilt → FootTarget.x_mm (forward_lean_mm, smoothed above).
+    // Stance hip roll  → FootTarget.y_mm (lateral_shift_mm, signed per leg).
+    // GaitController calls _ws->getStanceShift() inside _buildFootTarget.
 
     // ── Torso roll (SOURCE_GAIT) ──────────────────────────────────────────────
     if (fabsf(_cfg.torso_shift_deg) > 0.01f && fabsf(_state.progress) > 0.01f) {
         _mm->submit(SOURCE_GAIT, IDX_TORSO_ROLL,
                     _state.progress * _cfg.torso_shift_deg);
     }
+}
 
-    // ── Swing leg lift — REMOVED in Stage 1 refactor ──────────────────────────
-    // Foot lift is now owned by GaitController, which constructs a FootTarget
-    // (h_sagittal_mm = stanceHeight − swingFrac × stepHeight) and submits hip,
-    // knee, and ankle angles via LegIK::solve() → SOURCE_GAIT.
-    //
-    // WeightShift's role is now: lateral CoM ramp + ankle-roll bias (V5) +
-    // V3/V4 (ankle pitch tilt, stance hip roll) which remain direct submits
-    // pending Stage 2.
-    //
-    // The swing_hip_extension_deg / swing_knee_flexion_deg config fields are
-    // now dormant — see weight_shift.h "DEPRECATED in Stage 1" markers.
+// ---------------------------------------------------------------------------
+//  getStanceShift — Stage 2 task-space contribution to FootTarget.
+//
+//  Composes two terms:
+//    Forward lean: x_offset = -smoothedForwardLean_mm  (both legs symmetric)
+//    Lateral shift: y_offset = ±(progress × lateral_shift_mm), signed per leg
+//
+//  Sign for lateral, with progress = +1 (LEFT shift):
+//    right leg: foot more outward of right hip → y_mm += progress*lat
+//    left  leg: foot more inward  of left  hip → y_mm -= progress*lat
+// ---------------------------------------------------------------------------
+void WeightShift::getStanceShift(bool isRightLeg,
+                                  float& x_offset_mm,
+                                  float& y_offset_mm) const {
+    x_offset_mm = 0.0f;
+    y_offset_mm = 0.0f;
+    if (oe_is_estopped()) return;
+
+    x_offset_mm = -_smoothedForwardLean_mm;
+
+    const float bodyShift = _state.progress * _cfg.lateral_shift_mm;
+    y_offset_mm = isRightLeg ? +bodyShift : -bodyShift;
 }

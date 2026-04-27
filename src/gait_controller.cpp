@@ -160,6 +160,15 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
     const float liftMm = isSwing ? (swingFrac * GAIT_STEP_HEIGHT_MM) : 0.0f;
     t.h_sagittal_mm = _cfg.stanceHeightMm - liftMm;
 
+    // Stage 2: compose WeightShift's task-space contribution. Body forward-lean
+    // applies to both legs symmetrically; lateral shift is signed per leg side.
+    if (_ws != nullptr) {
+        float wsX_mm = 0.0f, wsY_mm = 0.0f;
+        _ws->getStanceShift(isRight, wsX_mm, wsY_mm);
+        t.x_mm += wsX_mm;
+        t.y_mm += wsY_mm;
+    }
+
     // Defensive guard — LegIK rejects < 10mm; flag earlier here.
     t.valid = (t.h_sagittal_mm >= 20.0f);
     return t;

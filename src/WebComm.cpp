@@ -521,15 +521,11 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         // NEW:
                         if      (key == "setpoint")    cfg.setpoint_shift_rad      = val;
                         else if (key == "ankle")        cfg.ankle_shift_deg         = val;
-                        else if (key == "pitch_tilt")   cfg.ankle_pitch_tilt_deg    = val;
-                        else if (key == "hip")          cfg.hip_shift_deg           = val;
                         else if (key == "torso")        cfg.torso_shift_deg         = val;
                         else if (key == "ramp")         cfg.ramp_ms                 = val;
-                        // Swing lift — no UI sliders; tune via raw WS or reflash config.
-                        // Example: CMD:WEIGHT_SHIFT_TUNE:swing_hip=15.0,swing_knee=40.0
-                        else if (key == "swing_hip")    cfg.swing_hip_extension_deg = val;
-                        else if (key == "swing_knee")   cfg.swing_knee_flexion_deg  = val;
-                        else if (key == "swing_thresh") cfg.swing_lift_threshold = val;
+                        // Stage 2: task-space shift authoring (mm).
+                        else if (key == "lateral_mm")   cfg.lateral_shift_mm = constrain(val, 0.0f, 50.0f);
+                        else if (key == "forward_mm")   cfg.forward_lean_mm  = constrain(val, 0.0f, 50.0f);
                         else if (key == "phase_delay") {
             // Swing-before-stance phase delay in ms.
             // 0 = simultaneous ramp. 500 = default (swing 0.5s before stance).
@@ -540,9 +536,9 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                 }
                 _weightShift->setConfig(cfg);
                 Serial.printf("[WebComm] WEIGHT_SHIFT_TUNE: setpoint=%.3f rad  "
-                              "hip=%.1f°  torso=%.1f°  ramp=%.0f ms\n",
-                              cfg.setpoint_shift_rad, cfg.hip_shift_deg,
-                              cfg.torso_shift_deg, cfg.ramp_ms);
+                              "lat=%.1fmm  fwd=%.1fmm  torso=%.1f°  ramp=%.0f ms\n",
+                              cfg.setpoint_shift_rad, cfg.lateral_shift_mm,
+                              cfg.forward_lean_mm, cfg.torso_shift_deg, cfg.ramp_ms);
             }
         }
         
@@ -712,12 +708,9 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         //  CMD:GAIT_STEP    — one full cycle (both legs), then IDLE
         //  CMD:GAIT_WSHIFT  — weight-shift-only mode (no foot lift)
         //
-        //  CMD:GAIT_TUNE:phaseRate=X,stepHipDeg=X,stepKneeDeg=X,
-        //                liftGate=X,wsThresh=X
+        //  CMD:GAIT_TUNE:phaseRate=X,liftGate=X,wsThresh=X
         //    All fields optional; unrecognised keys are silently skipped.
         //    phaseRate: cycles/sec (0.1–1.0). Start at 0.3.
-        //    stepHipDeg: hip extension at peak swing (0–30°).
-        //    stepKneeDeg: knee flexion at peak swing (0–50°).
         //    liftGate: |wsProgress| threshold before lift allowed (0.0–1.0).
         //    wsThresh: IMU roll threshold (rad) — logged only in Phase 1.
         // ---------------------------------------------------------------------
@@ -771,18 +764,14 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         String key = pair.substring(0, eq);
                         float  val = pair.substring(eq + 1).toFloat();
                         if      (key == "phaseRate")   cfg.phaseRateHz       = constrain(val, 0.05f, 2.0f);
-                        else if (key == "stepHipDeg")  cfg.stepHeightHipDeg  = constrain(val, 0.0f, 45.0f);
-                        else if (key == "stepKneeDeg") cfg.stepHeightKneeDeg = constrain(val, 0.0f, 60.0f);
                         else if (key == "liftGate")    cfg.liftGateThreshold = constrain(val, 0.0f, 0.99f);
                         else if (key == "wsThresh")    cfg.wsThresholdRad    = constrain(val, 0.01f, 0.50f);
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
                 _gaitCtrl->setConfig(cfg);
-                Serial.printf("[WebComm] GAIT_TUNE: rate=%.2f Hz  hip=%.1f°  knee=%.1f°"
-                              "  gate=%.2f  wsThresh=%.3f rad\n",
-                              cfg.phaseRateHz, cfg.stepHeightHipDeg, cfg.stepHeightKneeDeg,
-                              cfg.liftGateThreshold, cfg.wsThresholdRad);
+                Serial.printf("[WebComm] GAIT_TUNE: rate=%.2f Hz  gate=%.2f  wsThresh=%.3f rad\n",
+                              cfg.phaseRateHz, cfg.liftGateThreshold, cfg.wsThresholdRad);
             }
         }
 

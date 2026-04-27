@@ -68,12 +68,6 @@ struct GaitConfig {
     // Start at 0.3–0.4 Hz; raise only after single-leg stance is confirmed.
     float phaseRateHz       = GAIT_PHASE_RATE_HZ;   // WS key: "phaseRate"
 
-    // Swing foot lift — submitted via SOURCE_GAIT (priority 1).
-    // SOURCE_BALANCE (priority 2) may partially oppose these on shared joints.
-    // Tune hip and knee independently; verify direction on hardware first.
-    float stepHeightHipDeg  = 15.0f;  // hip extension (°) at peak swing. WS: "stepHipDeg"
-    float stepHeightKneeDeg = 25.0f;  // knee flexion  (°) at peak swing. WS: "stepKneeDeg"
-
     // Fraction of |weight shift progress| [0, 1) required before the swing
     // foot is allowed to lift. Gate opens when |wsProgress| >= this value.
     // 0.70 = 70% shift complete. Lower to 0.50 if gate never opens.

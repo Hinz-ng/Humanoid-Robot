@@ -123,6 +123,7 @@ void WeightShift::update(float dt_s) {
     _bal->setConfig(cfg);
 
     // ── Stance hip roll (SOURCE_GAIT) ─────────────────────────────────────────
+    // V4 — Stage 2: fold this into stance FootTarget.y_mm so IK derives hip roll.
     // Still submitted via MotionManager — does not conflict with balance controller
     // (hip_roll_ratio=0 by default keeps balance off hip roll joints).
     if (fabsf(_cfg.hip_shift_deg) > 0.01f && fabsf(_state.progress) > 0.01f) {
@@ -136,6 +137,7 @@ void WeightShift::update(float dt_s) {
     }
 
     // ── Ankle pitch tilt (SOURCE_GAIT) ────────────────────────────────────────
+    // V3 — Stage 2: fold this into stance FootTarget.x_mm so IK derives ankle pitch.
     // Sagittal plane only — no conflict with roll controller.
     if (fabsf(_cfg.ankle_pitch_tilt_deg) > 0.01f && fabsf(_state.progress) > 0.01f) {
         float tilt = fabsf(_state.progress) * _cfg.ankle_pitch_tilt_deg;
@@ -149,39 +151,15 @@ void WeightShift::update(float dt_s) {
                     _state.progress * _cfg.torso_shift_deg);
     }
 
-    // ── Swing leg lift (SOURCE_GAIT) ──────────────────────────────────────────
-    // Uses individual swing ankle progress (not overall average) for lift timing.
-    // This means lift begins when the swing ankle starts moving — before stance
-    // ankle has started — which is the correct physical sequence.
-    {
-        const float th = constrain(_cfg.swing_lift_threshold, 0.0f, 0.95f);
-
-        // Swing progress = the ankle that starts first (no delay).
-        // LEFT shift → right is swing → use _rightAnkleProgress
-        // RIGHT shift → left is swing → use |_leftAnkleProgress|
-        float swingAbs = 0.0f;
-        uint8_t swingHipCh  = IDX_R_HIP_PITCH;
-        uint8_t swingKneeCh = IDX_R_KNEE_PITCH;
-
-        if (_state.direction == ShiftDirection::LEFT) {
-            swingAbs    = fabsf(_rightAnkleProgress);
-            swingHipCh  = IDX_R_HIP_PITCH;
-            swingKneeCh = IDX_R_KNEE_PITCH;
-        } else if (_state.direction == ShiftDirection::RIGHT) {
-            swingAbs    = fabsf(_leftAnkleProgress);
-            swingHipCh  = IDX_L_HIP_PITCH;
-            swingKneeCh = IDX_L_KNEE_PITCH;
-        }
-
-        if (swingAbs > 0.01f) {
-            float liftScale = 0.0f;
-            if (swingAbs > th) {
-                liftScale = constrain((swingAbs - th) / (1.0f - th), 0.0f, 1.0f);
-            }
-            float hipCmd  = -liftScale * _cfg.swing_hip_extension_deg;
-            float kneeCmd =  liftScale * _cfg.swing_knee_flexion_deg;
-            _mm->submit(SOURCE_GAIT, swingHipCh,  hipCmd);
-            _mm->submit(SOURCE_GAIT, swingKneeCh, kneeCmd);
-        }
-    }
+    // ── Swing leg lift — REMOVED in Stage 1 refactor ──────────────────────────
+    // Foot lift is now owned by GaitController, which constructs a FootTarget
+    // (h_sagittal_mm = stanceHeight − swingFrac × stepHeight) and submits hip,
+    // knee, and ankle angles via LegIK::solve() → SOURCE_GAIT.
+    //
+    // WeightShift's role is now: lateral CoM ramp + ankle-roll bias (V5) +
+    // V3/V4 (ankle pitch tilt, stance hip roll) which remain direct submits
+    // pending Stage 2.
+    //
+    // The swing_hip_extension_deg / swing_knee_flexion_deg config fields are
+    // now dormant — see weight_shift.h "DEPRECATED in Stage 1" markers.
 }

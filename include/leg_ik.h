@@ -54,6 +54,7 @@
 
 #include <Arduino.h>
 #include "robot_geometry.h"
+#include "gait_types.h"   // canonical FootTarget + BalanceCorrection
 
 // =============================================================================
 //  IK-SPECIFIC SOLVER CONSTANTS
@@ -94,26 +95,9 @@ enum class IKStatus : uint8_t {
 };
 
 // =============================================================================
-//  INPUT
+//  INPUT — defined in gait_types.h
 // =============================================================================
-
-struct FootTarget {
-    // ── Sagittal plane, origin = hip PITCH axis ───────────────────────────────
-    float x_mm          = 0.0f;    // mm; forward +, backward −
-    float h_sagittal_mm = 160.0f;  // mm; vertical drop: hip pitch → ankle pitch.
-                                   // Always positive. Safe range: ~130–189mm.
-                                   // Full extension = L_THIGH + L_SHANK = 191.4mm.
-
-    // ── Frontal plane, origin = hip ROLL axis ─────────────────────────────────
-    float y_mm          = 0.0f;    // mm; outward + (each leg's own frame)
-    // h_frontal_mm: set to 0 to auto-derive from h_sagittal using the confirmed
-    // chain-length delta (CHAIN_HEIGHT_DELTA_MM = 25.4mm):
-    //   h_frontal = h_sagittal − CHAIN_HEIGHT_DELTA_MM
-    // Supply explicitly if known from a separate frontal measurement.
-    float h_frontal_mm  = 0.0f;
-
-    bool isRightLeg = true;  // affects diagnostic labels only; not IK math
-};
+// FootTarget pulled from gait_types.h — see that file for sign conventions.
 
 // =============================================================================
 //  OUTPUT

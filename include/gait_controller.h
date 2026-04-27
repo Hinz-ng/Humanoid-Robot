@@ -22,6 +22,8 @@
 #include "motion_manager.h"
 #include "state_estimator.h"
 #include "project_wide_defs.h"
+#include "gait_types.h"
+#include "leg_ik.h"
 
 class WeightShift;  // forward declaration — full include in .cpp only
 
@@ -77,6 +79,12 @@ struct GaitConfig {
     // used as a gate. Will gate foot lift in Phase 2 after single-leg stance
     // validation confirms the threshold value is reliable.
     float wsThresholdRad    = GAIT_WEIGHT_SHIFT_THRESHOLD_RAD;  // WS: "wsThresh"
+
+    // Stance hip→ankle drop in mm passed to LegIK as h_sagittal_mm.
+    // Sourced from GAIT_STANCE_HEIGHT_MM. Override via WS:"stanceH_mm".
+    // Range guard: LegIK rejects < 10mm and clamps reach to 99% of
+    // (L_THIGH + L_SHANK).
+    float stanceHeightMm    = GAIT_STANCE_HEIGHT_MM;
 };
 
 // ---------------------------------------------------------------------------
@@ -94,6 +102,12 @@ struct GaitState {
     bool         running    = false;  // true when mode != IDLE
     // POSE_STEP hold point: 0=running, 1=gate-open, 2=peak swing, 3=foot landed.
     uint8_t      poseHold   = 0;
+
+    // Stage 1 IK telemetry. Updated each tick by _submitFootTargetIK().
+    uint8_t      lastIKStatusL = 0;   // IKStatus enum value
+    uint8_t      lastIKStatusR = 0;
+    float        lastReachPctL = 0.0f;
+    float        lastReachPctR = 0.0f;
 };
 
 // ---------------------------------------------------------------------------
@@ -154,8 +168,19 @@ private:
     // sin(localPhase × π) → swing fraction [0, 1] from grounded to peak and back.
     float _swingFrac(float localPhase) const;
 
-    // Submit hip extension + knee flexion for one swing leg via SOURCE_GAIT.
-    void  _submitSwingLift(uint8_t hipCh, uint8_t kneeCh, float frac);
+    // Build the FootTarget for one leg this tick.
+    //   Stance leg: y_mm=0, x_mm=0, h_sagittal_mm = stanceHeightMm.
+    //   Swing  leg: x_mm=0, y_mm=0, h_sagittal_mm = stanceHeightMm − liftMm.
+    //                where liftMm = swingFrac × GAIT_STEP_HEIGHT_MM (Stage 1: vertical only).
+    // Returns target with valid=true on success. valid=false means the
+    // caller should not submit (used for IDLE / paused states).
+    FootTarget _buildFootTarget(bool isRight, float swingFrac, bool isSwing) const;
+
+    // Resolve a FootTarget through LegIK and submit the joint angles via
+    // SOURCE_GAIT. Logs (rate-limited) and skips submission on
+    // IKStatus::DOMAIN_ERROR. Returns the LegIKResult so callers can update
+    // telemetry without re-solving.
+    LegIKResult _submitFootTargetIK(bool isRight, const FootTarget& t);
 };
 
 #endif // GAIT_CONTROLLER_H

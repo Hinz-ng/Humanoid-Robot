@@ -67,6 +67,8 @@ struct WeightShiftConfig {
     float ramp_ms = 500.0f;
 
     // Swing leg lift parameters.
+    // DEPRECATED in Stage 1 — swing lift moved to GaitController + LegIK.
+    // Removal pending (touches WebComm parsing); fields are now ignored.
     float swing_hip_extension_deg = 0.0f;
     float swing_knee_flexion_deg  = 0.0f;
     float swing_lift_threshold    = 0.50f;  // [0, 1)

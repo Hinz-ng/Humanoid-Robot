@@ -47,8 +47,8 @@
 // Joint-relative ankle pitch offset applied during weight shift (degrees).
 // Positive = forward lean direction. Negate to reverse. Set to 0 to disable.
 // Both ankles receive this value; JointModel direction fields produce symmetry.
-#define ANKLE_PITCH_FORWARD_TILT_DEG  -5.0f
-
+#define ANKLE_PITCH_FORWARD_TILT_DEG  -4.0f
+ 
 // ============================================================
 // GAIT PARAMETERS — GaitController (weight_shift evolution)
 // ============================================================
@@ -57,5 +57,10 @@ constexpr float GAIT_STEP_HEIGHT_MM         = 20.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 30.0f;  // Phase 3+; forward stride
 constexpr float GAIT_WEIGHT_SHIFT_THRESHOLD_RAD = 0.10f; // ~5.7° — min roll before lift
+
+// Stance leg's nominal hip→ankle vertical drop in mm. Used by GaitController
+// to construct FootTargets. Must stay inside LegIK's safe range (130–189 mm).
+// Lower = deeper crouch = more knee flexion at neutral.
+constexpr float GAIT_STANCE_HEIGHT_MM           = 185.0f;
 
 #endif // PROJECT_WIDE_DEFS_H

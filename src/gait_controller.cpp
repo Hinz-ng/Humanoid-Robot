@@ -36,6 +36,9 @@
 #include "gait_controller.h"
 #include "weight_shift.h"
 #include "oe_control.h"
+#include "leg_ik.h"
+#include "joint_config.h"
+#include "motion_manager.h"
 #include <math.h>
 
 // ---------------------------------------------------------------------------
@@ -137,17 +140,75 @@ float GaitController::_swingFrac(float localPhase) const {
 }
 
 // ---------------------------------------------------------------------------
-//  _submitSwingLift  —  SOURCE_GAIT hip flexion + knee flexion for one leg.
-//  frac=0 → grounded (no command); frac=1 → peak lift.
+//  _buildFootTarget — Stage 1: vertical lift only.
+//  Stance leg returns the neutral pose (x=0, y=0, h=stanceHeight).
+//  Swing  leg returns same x,y with h reduced by swingFrac × stepHeight.
+//  No lateral or fore/aft motion in Stage 1 — those land in Stage 2.
 // ---------------------------------------------------------------------------
-void GaitController::_submitSwingLift(uint8_t hipCh, uint8_t kneeCh, float frac) {
-    if (!_mm) return;
-    // Joint convention: positive = anatomical flexion (from joint_config.h).
-    // Hip flexion (positive) raises the thigh forward/upward — correct for a step.
-    // Hip extension (negative) would push the leg rearward — wrong.
-    // Knee flexion (positive) bends the knee for ground clearance — correct.
-    _mm->submit(SOURCE_GAIT, hipCh,   frac * _cfg.stepHeightHipDeg);
-    _mm->submit(SOURCE_GAIT, kneeCh,  frac * _cfg.stepHeightKneeDeg);
+FootTarget GaitController::_buildFootTarget(bool isRight,
+                                            float swingFrac,
+                                            bool isSwing) const {
+    FootTarget t;
+    t.isRightLeg   = isRight;
+    t.x_mm         = 0.0f;
+    t.y_mm         = 0.0f;
+    t.h_frontal_mm = 0.0f;  // 0 = auto-derive from sagittal in LegIK::solve
+
+    const float liftMm = isSwing ? (swingFrac * GAIT_STEP_HEIGHT_MM) : 0.0f;
+    t.h_sagittal_mm = _cfg.stanceHeightMm - liftMm;
+
+    // Defensive guard — LegIK rejects < 10mm; flag earlier here.
+    t.valid = (t.h_sagittal_mm >= 20.0f);
+    return t;
+}
+
+// ---------------------------------------------------------------------------
+//  _submitFootTargetIK — Resolve FootTarget through LegIK and submit angles.
+//
+//  Joint indices come from joint_config.h. Submission goes through SOURCE_GAIT
+//  so MotionManager priority arbitration is preserved. JointModel direction
+//  fields handle left/right mirroring — submit the SAME anatomical angle to
+//  both legs (do NOT negate for left here).
+//
+//  On DOMAIN_ERROR (h too small, NaN guard): no submission. Logs at 1 Hz to
+//  avoid serial flood. UNREACHABLE / LIMIT_CLAMPED still submit the (clamped)
+//  solution; status is recorded for the UI.
+// ---------------------------------------------------------------------------
+LegIKResult GaitController::_submitFootTargetIK(bool isRight,
+                                                 const FootTarget& t) {
+    LegIKResult r;
+    if (_mm == nullptr) { r.status = IKStatus::DOMAIN_ERROR; return r; }
+    if (!t.valid)       { r.status = IKStatus::DOMAIN_ERROR; return r; }
+
+    r = LegIK::solve(t);
+
+    if (r.status == IKStatus::DOMAIN_ERROR) {
+        static uint32_t _lastLogMs = 0;
+        const uint32_t now = millis();
+        if (now - _lastLogMs > 1000) {
+            _lastLogMs = now;
+            Serial.printf("[GaitCtrl] IK DOMAIN_ERROR  side=%s  x=%.1f h=%.1f y=%.1f\n",
+                          isRight ? "R" : "L",
+                          t.x_mm, t.h_sagittal_mm, t.y_mm);
+        }
+        return r;
+    }
+
+    const uint8_t hipPitch   = isRight ? IDX_R_HIP_PITCH   : IDX_L_HIP_PITCH;
+    const uint8_t kneePitch  = isRight ? IDX_R_KNEE_PITCH  : IDX_L_KNEE_PITCH;
+    const uint8_t anklePitch = isRight ? IDX_R_ANKLE_PITCH : IDX_L_ANKLE_PITCH;
+    const uint8_t hipRoll    = isRight ? IDX_R_HIP_ROLL    : IDX_L_HIP_ROLL;
+    const uint8_t ankleRoll  = isRight ? IDX_R_ANKLE_ROLL  : IDX_L_ANKLE_ROLL;
+
+    // SOURCE_GAIT (priority 1). SOURCE_BALANCE (priority 2) on shared joints
+    // will still override these. Expected for Stage 1 — see refactor §3.
+    _mm->submit(SOURCE_GAIT, hipPitch,   r.hip_pitch_deg);
+    _mm->submit(SOURCE_GAIT, kneePitch,  r.knee_pitch_deg);
+    _mm->submit(SOURCE_GAIT, anklePitch, r.ankle_pitch_deg);
+    _mm->submit(SOURCE_GAIT, hipRoll,    r.hip_roll_deg);
+    _mm->submit(SOURCE_GAIT, ankleRoll,  r.ankle_roll_deg);
+
+    return r;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,13 +269,26 @@ void GaitController::update(float dt_s, const IMUState& imuState) {
     if (_state.mode == GaitMode::POSE_STEP && _poseHoldPt > 0) {
         if (_subState == StepSubState::SWINGING) {
             const float liftFrac = _swingFrac(_halfPhase);
-            if (_currentHalf == 0) {
-                _submitSwingLift(IDX_L_HIP_PITCH, IDX_L_KNEE_PITCH, liftFrac);
-                _state.liftL_deg = liftFrac * _cfg.stepHeightHipDeg;
-            } else {
-                _submitSwingLift(IDX_R_HIP_PITCH, IDX_R_KNEE_PITCH, liftFrac);
-                _state.liftR_deg = liftFrac * _cfg.stepHeightHipDeg;
-            }
+            // _currentHalf == 0 → LEFT foot swings (hardware-verified, see top comment).
+            const bool leftIsSwing = (_currentHalf == 0);
+
+            const FootTarget tL = _buildFootTarget(/*isRight=*/false, liftFrac,
+                                                    /*isSwing=*/  leftIsSwing);
+            const FootTarget tR = _buildFootTarget(/*isRight=*/true,  liftFrac,
+                                                    /*isSwing=*/ !leftIsSwing);
+
+            const LegIKResult rL = _submitFootTargetIK(false, tL);
+            const LegIKResult rR = _submitFootTargetIK(true,  tR);
+
+            _state.lastIKStatusL = static_cast<uint8_t>(rL.status);
+            _state.lastIKStatusR = static_cast<uint8_t>(rR.status);
+            _state.lastReachPctL = rL.sagittal_reach_pct;
+            _state.lastReachPctR = rR.sagittal_reach_pct;
+
+            // Repurposed UI fields: hip pitch produced by IK on the swing leg.
+            // (Renaming to liftL_hipDeg in Stage 2 alongside the UI.)
+            _state.liftL_deg = leftIsSwing  ? rL.hip_pitch_deg : 0.0f;
+            _state.liftR_deg = !leftIsSwing ? rR.hip_pitch_deg : 0.0f;
         }
         return;
     }
@@ -255,14 +329,27 @@ void GaitController::update(float dt_s, const IMUState& imuState) {
 
     // SWINGING: compute lift, submit, advance phase.
     const float liftFrac = _swingFrac(_halfPhase);
+    // _currentHalf == 0 → LEFT foot swings (hardware-verified, see top comment).
+    const bool leftIsSwing = (_currentHalf == 0);
 
-    if (_currentHalf == 0) {
-        _submitSwingLift(IDX_L_HIP_PITCH, IDX_L_KNEE_PITCH, liftFrac);
-        _state.liftL_deg = liftFrac * _cfg.stepHeightHipDeg;
-    } else {
-        _submitSwingLift(IDX_R_HIP_PITCH, IDX_R_KNEE_PITCH, liftFrac);
-        _state.liftR_deg = liftFrac * _cfg.stepHeightHipDeg;
-    }
+    // Build BOTH foot targets every tick. Stance leg also goes through IK
+    // so it holds its commanded pose against priority arbitration.
+    const FootTarget tL = _buildFootTarget(/*isRight=*/false, liftFrac,
+                                            /*isSwing=*/  leftIsSwing);
+    const FootTarget tR = _buildFootTarget(/*isRight=*/true,  liftFrac,
+                                            /*isSwing=*/ !leftIsSwing);
+
+    const LegIKResult rL = _submitFootTargetIK(false, tL);
+    const LegIKResult rR = _submitFootTargetIK(true,  tR);
+
+    _state.lastIKStatusL = static_cast<uint8_t>(rL.status);
+    _state.lastIKStatusR = static_cast<uint8_t>(rR.status);
+    _state.lastReachPctL = rL.sagittal_reach_pct;
+    _state.lastReachPctR = rR.sagittal_reach_pct;
+
+    // Repurposed UI fields: hip pitch produced by IK on the swing leg.
+    _state.liftL_deg = leftIsSwing  ? rL.hip_pitch_deg : 0.0f;
+    _state.liftR_deg = !leftIsSwing ? rR.hip_pitch_deg : 0.0f;
 
     if (_cfg.phaseRateHz > 0.0f) {
         const float halfPeriod_s = 1.0f / (2.0f * _cfg.phaseRateHz);

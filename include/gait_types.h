@@ -1,23 +1,55 @@
-// Module:      gait_types
-// Layer:       3.5 (shared type definitions)
-// Purpose:     Canonical structs for GaitController ↔ IK ↔ BalanceController boundary
-// Inputs:      (none — type definitions only)
-// Outputs:     FootTarget, BalanceCorrection
-// Dependencies: (none)
+// =============================================================================
+// FILE:    gait_types.h
+// MODULE:  gait_types
+// LAYER:   3.5 — shared type definitions (no logic)
+//
+// PURPOSE:
+//   Canonical structs for the GaitController → LegIK → BalanceController
+//   boundary. Defining these here prevents circular includes and gives
+//   every consumer one source of truth.
+//
+//   FootTarget mirrors UVC's footCont(x, y, h, s) inputs. A FootTarget is
+//   intent — what the controller wants the foot pose to be, in mm relative
+//   to the hip. LegIK::solve() converts intent into joint angles.
+// =============================================================================
 
-#pragma once
+#ifndef GAIT_TYPES_H
+#define GAIT_TYPES_H
 
+// FootTarget — one leg's commanded foot pose, hip-relative.
+//
+// Sign / unit conventions match leg_ik.cpp; do not change without re-reading
+// the IK math comment block at the top of leg_ik.cpp.
+//
+//   x_mm           forward(+) / backward(-) from hip pitch axis
+//   y_mm           outward(+) / inward(-) in the leg's own frontal frame
+//   h_sagittal_mm  hip pitch → ankle pitch vertical drop. Always positive.
+//                  Safe range: ~130–189 mm. Full extension = 191.4 mm.
+//   h_frontal_mm   hip roll → ankle roll vertical drop. Set to 0 to
+//                  auto-derive from h_sagittal via CHAIN_HEIGHT_DELTA_MM.
+//   isRightLeg     diagnostic labelling only; not used by IK math.
+//   valid          false → caller should skip submitting this leg this tick.
 struct FootTarget {
-    float x_mm;    // forward/back foot position relative to hip
-    float y_mm;    // lateral foot position relative to hip
-    float h_mm;    // foot height (0 = ground contact)
-    bool  valid;   // false → do not command this leg this tick
+    float x_mm          = 0.0f;
+    float h_sagittal_mm = 160.0f;
+    float y_mm          = 0.0f;
+    float h_frontal_mm  = 0.0f;
+    bool  isRightLeg    = true;
+    bool  valid         = true;
 };
 
+// BalanceCorrection — task-space corrections from BalanceController, to be
+// added to the FootTarget by the merge step BEFORE LegIK::solve().
+//
+//   Stage 3 only — unused in Stage 1. Defined here so the GaitController
+//   interface accepting FootTarget can later accept (FootTarget + correction)
+//   without renaming.
 struct BalanceCorrection {
-    float dx_mm;       // forward/back body correction
-    float dy_mm;       // lateral body correction
-    float dPitch_deg;  // pitch trim applied to foot targets
-    float dRoll_deg;   // roll trim applied to foot targets
-    bool  valid;
+    float dx_mm      = 0.0f;
+    float dy_mm      = 0.0f;
+    float dPitch_deg = 0.0f;
+    float dRoll_deg  = 0.0f;
+    bool  valid      = false;
 };
+
+#endif // GAIT_TYPES_H

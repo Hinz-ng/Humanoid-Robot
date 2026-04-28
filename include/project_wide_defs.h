@@ -26,7 +26,7 @@
 // DEFAULT_DEG_S: comfortable default for UI interaction — not too sluggish, not snappy.
 // Recalculate MAX_DEG_S if SD_ANGLE_RANGE changes (servo_driver.h):
 //   max_us_per_tick = (MAX_DEG_S / SD_ANGLE_RANGE) * (SD_USMAX - SD_USMIN) * UPDATE_INTERVAL_S
-#define JOINT_SPEED_DEFAULT_DEG_S   60.0f   // All joints at boot (~11–18% of no-load speed)
+#define JOINT_SPEED_DEFAULT_DEG_S   50.0f   // All joints at boot
 #define JOINT_SPEED_MIN_DEG_S        1.0f   // Floor — prevents silent frozen-joint bugs
 // No global MAX: upper clamp is now per-joint (JointConfig::noLoadSpeedDegS).
 
@@ -53,10 +53,10 @@
 // GAIT PARAMETERS — GaitController (weight_shift evolution)
 // ============================================================
 constexpr float GAIT_PHASE_RATE_HZ          = 0.4f;   // start slow; cycles/sec
-constexpr float GAIT_STEP_HEIGHT_MM         = 20.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 25.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
-constexpr float GAIT_STEP_LENGTH_MM         = 30.0f;  // Phase 3+; forward stride
-constexpr float GAIT_WEIGHT_SHIFT_THRESHOLD_RAD = 0.10f; // ~5.7° — min roll before lift
+constexpr float GAIT_STEP_LENGTH_MM         = 35.0f;  // Phase 3+; forward stride
+constexpr float GAIT_WEIGHT_SHIFT_THRESHOLD_RAD = 0.15f; // ~8.5° — min roll before lift
 
 // Stance leg's nominal hip→ankle vertical drop in mm. Used by GaitController
 // to construct FootTargets. Must stay inside LegIK's safe range (130–189 mm).
@@ -79,6 +79,7 @@ constexpr float GAIT_STANCE_X_OFFSET_MM         = -20.0f;
 // transients damp before the next direction is commanded. Should be ≥ ~5×
 // the IIR time constant from WeightShiftConfig::ankle_tilt_smooth_alpha.
 // At alpha=0.90 / 400 Hz, τ ≈ 25 ms → 150 ms gives ~6τ.
-constexpr uint32_t GAIT_STABILIZE_MS            = 200;
+constexpr uint32_t GAIT_STABILIZE_MS            = 400;
+constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 
 #endif // PROJECT_WIDE_DEFS_H

@@ -29,11 +29,25 @@ void WeightShift::forceCenterImmediate() {
     _rightDelayRemaining_ms = 0.0f;
     _leftDelayRemaining_ms  = 0.0f;
     _lastInjectedSetpointRad = 0.0f;
+    _settledAtMs = 0;
     _smoothedForwardLean_mm  = 0.0f;
 }
 
 // ---------------------------------------------------------------------------
 void WeightShift::trigger(ShiftDirection dir) {
+    if (dir != ShiftDirection::NONE
+        && _state.direction != ShiftDirection::NONE
+        && dir != _state.direction
+        && _cfg.min_dwell_ms > 0.0f
+        && _settledAtMs > 0
+        && (millis() - _settledAtMs) < (uint32_t)_cfg.min_dwell_ms) {
+        Serial.printf("[WeightShift] trigger %d ignored - dwell %lu/%.0f ms\n",
+                      (int)dir,
+                      (unsigned long)(millis() - _settledAtMs),
+                      _cfg.min_dwell_ms);
+        return;
+    }
+    _settledAtMs = 0;
     _state.direction = dir;
 
     if (dir == ShiftDirection::NONE) {
@@ -101,6 +115,10 @@ void WeightShift::update(float dt_s) {
                               fabsf(_leftAnkleProgress  - _targetLeft)  > 1e-3f ||
                               _rightDelayRemaining_ms > 0.0f ||
                               _leftDelayRemaining_ms  > 0.0f);
+    if (!_state.ramping && _settledAtMs == 0
+        && _state.direction != ShiftDirection::NONE) {
+        _settledAtMs = millis();
+    }
 
     // ── Inject ankle bias + roll setpoint into BalanceConfig ─────────────────
     //

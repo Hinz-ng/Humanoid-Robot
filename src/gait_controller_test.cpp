@@ -26,7 +26,7 @@ static bool near(float a, float b, float eps = 0.001f) { return fabsf(a - b) < e
 static bool test_configDefaults() {
     GaitController g;
     const GaitConfig& c = g.getConfig();
-    const float h_min = c.stanceHeightMm - GAIT_STEP_HEIGHT_MM;
+    const float h_min = c.stanceHeightMm - c.stepHeightMm;
     const bool pass = (h_min >= 130.0f) && (c.stanceHeightMm <= 189.0f);
     Serial.printf("[GaitT1] config_defaults: %s  h_min=%.1f stance=%.1f\n",
                   pass ? "PASS" : "FAIL", h_min, c.stanceHeightMm);
@@ -62,7 +62,7 @@ static bool test_neutralAndSwingReachable() {
     tNeutral.valid         = true;
 
     FootTarget tSwingPeak  = tNeutral;
-    tSwingPeak.h_sagittal_mm = c.stanceHeightMm - GAIT_STEP_HEIGHT_MM;
+    tSwingPeak.h_sagittal_mm = c.stanceHeightMm - c.stepHeightMm;
 
     const LegIKResult rN = LegIK::solve(tNeutral);
     const LegIKResult rS = LegIK::solve(tSwingPeak);
@@ -217,6 +217,67 @@ static bool test_zeroConfigShiftProducesNoActuation() {
 }
 
 // ---------------------------------------------------------------------------
+// T8 — Stop during swing ramps the leg down and returns to centered IDLE.
+static bool test_stop_during_swing_ramps_cleanly() {
+    BalanceController bal(nullptr);
+    MotionManager     mm;
+    WeightShift       ws;
+    GaitController    g;
+
+    ws.init(&bal, &mm);
+    g.init(&mm, &ws);
+
+    WeightShiftConfig wcfg = ws.getConfig();
+    wcfg.ramp_ms = 100.0f;
+    wcfg.shift_phase_delay_ms = 0.0f;
+    ws.setConfig(wcfg);
+
+    GaitConfig gcfg = g.getConfig();
+    gcfg.phaseRateHz = 0.5f;
+    g.setConfig(gcfg);
+    g.start(GaitMode::RUNNING);
+
+    IMUState imu = {};
+    imu.valid = true;
+
+    bool swingSeen = false;
+    for (int i = 0; i < 30; ++i) {
+        ws.update(0.02f);
+        g.update(0.02f, imu);
+        if (g.getState().subState == StepSubState::SWINGING && g.getState().phase > 0.25f) {
+            swingSeen = true;
+            break;
+        }
+        delay(20);
+    }
+
+    g.stop();
+
+    for (int i = 0; i < 50; ++i) {
+        ws.update(0.02f);
+        g.update(0.02f, imu);
+        delay(20);
+    }
+
+    const GaitState&        s  = g.getState();
+    const WeightShiftState& wsState = ws.getState();
+    const bool pass = swingSeen
+                   && (s.mode == GaitMode::IDLE)
+                   && near(s.liftL_deg, 0.0f, 0.5f)
+                   && near(s.liftR_deg, 0.0f, 0.5f)
+                   && (fabsf(wsState.progress) < 0.01f)
+                   && !wsState.ramping;
+    Serial.printf("[GaitT8] stop_during_swing_ramps_cleanly: %s  swingSeen=%d mode=%d liftL=%.2f liftR=%.2f ws=%.3f ramp=%d\n",
+                  pass ? "PASS" : "FAIL",
+                  (int)swingSeen,
+                  static_cast<int>(s.mode),
+                  s.liftL_deg, s.liftR_deg,
+                  wsState.progress,
+                  (int)wsState.ramping);
+    return pass;
+}
+
+// ---------------------------------------------------------------------------
 void runGaitControllerTests() {
     Serial.println("\n[GaitCtrl] ══ Unit Tests ══════════════════════════════════");
     int pass = 0, total = 0;
@@ -228,6 +289,7 @@ void runGaitControllerTests() {
     run(test_idleWeightShiftSubmitsStanceIK());
     run(test_forceCenterImmediateClearsState());
     run(test_zeroConfigShiftProducesNoActuation());
+    run(test_stop_during_swing_ramps_cleanly());
     Serial.printf("[GaitCtrl] ══ %d / %d PASSED ═══════════════════════════════\n\n",
                   pass, total);
 }

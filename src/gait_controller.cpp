@@ -55,11 +55,20 @@ void GaitController::init(MotionManager* mm, WeightShift* ws) {
     _lastShiftDir     = 0;
     _poseHoldPt       = 0;
     _stabilizeStartMs = 0;
+    _stopStartMs      = 0;
+    _stopSwingFrac    = 0.0f;
+    _stopHalf         = 0;
     Serial.println("[GaitCtrl] Initialized.");
 }
 
 // ---------------------------------------------------------------------------
 void GaitController::start(GaitMode mode) {
+    if (mode != GaitMode::IDLE && _ws
+        && _ws->getConfig().lateral_shift_mm < 0.0f) {
+        Serial.println("[GaitCtrl] REFUSED: lateral_shift_mm<0 inverts shift direction.");
+        return;
+    }
+
     _state.mode    = mode;
     _state.running = (mode != GaitMode::IDLE);
 
@@ -76,6 +85,9 @@ void GaitController::start(GaitMode mode) {
         _lastShiftDir     = 0;
         _poseHoldPt       = 0;
         _stabilizeStartMs = 0;
+        _stopStartMs      = 0;
+        _stopSwingFrac    = 0.0f;
+        _stopHalf         = 0;
         if (_ws) _ws->trigger(ShiftDirection::NONE);
         Serial.println("[GaitCtrl] IDLE — weight shift centered.");
         return;
@@ -88,13 +100,32 @@ void GaitController::start(GaitMode mode) {
     _lastShiftDir     = 0;
     _poseHoldPt       = 0;
     _stabilizeStartMs = 0;
+    _stopStartMs      = 0;
+    _stopSwingFrac    = 0.0f;
+    _stopHalf         = 0;
     _state.poseHold   = 0;
     _triggerShiftForHalf(0);  // begin LEFT shift immediately
 
     Serial.printf("[GaitCtrl] start mode=%d\n", static_cast<int>(mode));
 }
 
-void GaitController::stop()       { start(GaitMode::IDLE); }
+void GaitController::stop() {
+    if (_state.mode == GaitMode::IDLE) return;
+    if (_subState == StepSubState::STOPPING) return;
+
+    _stopSwingFrac = (_subState == StepSubState::SWINGING)
+                     ? _swingFrac(_halfPhase)
+                     : 0.0f;
+    _stopHalf       = _currentHalf;
+    _stopStartMs    = millis();
+    _subState       = StepSubState::STOPPING;
+    _state.subState = _subState;
+    _poseHoldPt     = 0;
+    _state.poseHold = 0;
+    Serial.printf("[GaitCtrl] STOP requested — ramping swing %.2f→0 over %ums\n",
+                  _stopSwingFrac, (unsigned)GAIT_STOP_RAMP_MS);
+}
+
 void GaitController::singleStep() { start(GaitMode::SINGLE_STEP); }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +188,7 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
     t.y_mm         = 0.0f;
     t.h_frontal_mm = 0.0f;  // 0 = auto-derive from sagittal in LegIK::solve
 
-    const float liftMm = isSwing ? (swingFrac * GAIT_STEP_HEIGHT_MM) : 0.0f;
+    const float liftMm = isSwing ? (swingFrac * _cfg.stepHeightMm) : 0.0f;
     t.h_sagittal_mm = _cfg.stanceHeightMm - liftMm;
 
     // Stage 2: compose WeightShift's task-space contribution. Body forward-lean
@@ -307,6 +338,52 @@ void GaitController::update(float dt_s, const IMUState& imuState) {
     // overwrite one leg with a swing target, but stance-only states still need
     // fresh IK submissions each loop.
     _submitStanceBothLegs();
+
+    if (_subState == StepSubState::STOPPING) {
+        const uint32_t elapsed = millis() - _stopStartMs;
+        const float stopFrac = (elapsed >= GAIT_STOP_RAMP_MS)
+                             ? 0.0f
+                             : (_stopSwingFrac
+                                * (1.0f - (float)elapsed / (float)GAIT_STOP_RAMP_MS));
+
+        const bool leftIsSwing = (_stopHalf == 0);
+        const FootTarget tL = _buildFootTarget(false, stopFrac, leftIsSwing);
+        const FootTarget tR = _buildFootTarget(true,  stopFrac, !leftIsSwing);
+        const LegIKResult rL = _submitFootTargetIK(false, tL);
+        const LegIKResult rR = _submitFootTargetIK(true,  tR);
+
+        _state.lastIKStatusL = static_cast<uint8_t>(rL.status);
+        _state.lastIKStatusR = static_cast<uint8_t>(rR.status);
+        _state.lastReachPctL = rL.sagittal_reach_pct;
+        _state.lastReachPctR = rR.sagittal_reach_pct;
+        _state.liftL_deg = leftIsSwing  ? rL.hip_pitch_deg : 0.0f;
+        _state.liftR_deg = !leftIsSwing ? rR.hip_pitch_deg : 0.0f;
+
+        if (elapsed >= GAIT_STOP_RAMP_MS / 2 && _ws && _lastShiftDir != 0) {
+            _ws->trigger(ShiftDirection::NONE);
+            _lastShiftDir = 0;
+        }
+
+        const bool wsSettled = (!_ws) ||
+                               (fabsf(_ws->getState().progress) < 0.01f
+                                && !_ws->getState().ramping);
+        if (elapsed >= GAIT_STOP_RAMP_MS && wsSettled) {
+            Serial.println("[GaitCtrl] STOP complete — entering IDLE.");
+            _state.mode      = GaitMode::IDLE;
+            _state.running   = false;
+            _subState        = StepSubState::WAIT_SHIFT;
+            _state.subState  = _subState;
+            _currentHalf     = 0;
+            _halfPhase       = 0.0f;
+            _stopSwingFrac   = 0.0f;
+            _stopStartMs     = 0;
+            _stopHalf        = 0;
+            _state.phase     = 0.0f;
+            _state.wsProgress = wsSettled ? 0.0f : _state.wsProgress;
+            _state.poseHold  = 0;
+        }
+        return;
+    }
 
     // ── POSE_STEP: if currently paused, re-submit lift to hold pose ───────────
     if (_state.mode == GaitMode::POSE_STEP && _poseHoldPt > 0) {

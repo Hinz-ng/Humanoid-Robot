@@ -913,6 +913,30 @@
                 </div>
             </div>
 
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Step height (mm)</span>
+                    <span class="tune-val" id="tvGaitStep">20</span>
+                </div>
+                <input type="range" id="slGaitStep" min="5" max="55" step="1" value="20"
+                       oninput="updateGaitLabel('stepH', this.value); sendGaitTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Swing foot clearance. Capped so peak swing height ≥ 130 mm.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Stance height (mm)</span>
+                    <span class="tune-val" id="tvGaitStance">185</span>
+                </div>
+                <input type="range" id="slGaitStance" min="135" max="189" step="1" value="185"
+                       oninput="updateGaitLabel('stanceH', this.value); sendGaitTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Hip-to-ankle vertical drop. Lower = deeper crouch.
+                </div>
+            </div>
+
         </div><!-- /.gait-tune-grid -->
 
         <div style="font-size:10px; color:#555; margin-top:10px; line-height:1.5;">
@@ -1914,9 +1938,12 @@ const _gaitTuneMap = {
     liftGate:   { el: "tvGaitGate",     decimals: 2 },
     // wsThreshDeg is stored in deg in the slider but sent as rad
     wsThreshDeg:{ el: "tvGaitWsThresh", decimals: 1 },
+    stepH:      { el: "tvGaitStep",     decimals: 0 },
+    stanceH:    { el: "tvGaitStance",   decimals: 0 },
 };
 
 function updateGaitLabel(id, rawVal) {
+    _setTuneActive();
     const m = _gaitTuneMap[id];
     if (m) document.getElementById(m.el).textContent =
         parseFloat(rawVal).toFixed(m.decimals);
@@ -1929,7 +1956,10 @@ function sendGaitTune() {
         const gate      = parseFloat(document.getElementById("slGaitGate").value).toFixed(3);
         const wsThreshDeg = parseFloat(document.getElementById("slGaitWsThresh").value);
         const wsThreshRad = (wsThreshDeg * Math.PI / 180).toFixed(5);
-        const msg = `CMD:GAIT_TUNE:phaseRate=${rate},liftGate=${gate},wsThresh=${wsThreshRad}`;
+        const stepH    = document.getElementById("slGaitStep").value;
+        const stanceH  = document.getElementById("slGaitStance").value;
+        const msg = `CMD:GAIT_TUNE:phaseRate=${rate},liftGate=${gate},`
+                  + `wsThresh=${wsThreshRad},stepH_mm=${stepH},stanceH_mm=${stanceH}`;
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(msg);
             console.log("[WS TX]", msg);
@@ -1954,6 +1984,8 @@ function parseGaitState(payload) {
     const wsProg  = parseFloat(v["ws"]     || "0");
     const gateOK  = v["gate"] === "1";
     const hold    = parseInt(v["hold"] || "0");
+    const stepH   = parseFloat(v["stepH"] || "20");
+    const stanceH = parseFloat(v["stanceH"] || "185");
 
     // Mode badge
     const modeNames  = ["IDLE", "RUNNING", "SINGLE STEP", "W-SHIFT ONLY", "POSE STEP"];
@@ -1975,7 +2007,8 @@ function parseGaitState(payload) {
     const subLabel = document.getElementById("gaitSubLabel");
     if (subLabel) {
         const halfLabel = (phase < 0.5) ? "half=0 (L swing)" : "half=1 (R swing)";
-        subLabel.textContent = (sub === 1 ? "SWINGING" : "WAIT SHIFT") + "  " + halfLabel;
+        const subStateNames = ["WAIT SHIFT", "SWINGING", "STABILIZING", "STOPPING"];
+        subLabel.textContent = (subStateNames[sub] || "WAIT SHIFT") + "  " + halfLabel;
     }
 
     // Phase bar
@@ -2003,8 +2036,16 @@ function parseGaitState(payload) {
     set("gaitTelemLiftR", liftR.toFixed(1) + "°");
     set("gaitTelemWS",    wsProg.toFixed(3));
     set("gaitTelemHalf",  phase < 0.5 ? "0 (L swing)" : "1 (R swing)");
-    set("gaitTelemSub",   sub === 1 ? "SWING" : "WAIT");
+    {
+        const subTelemNames = ["WAIT", "SWING", "STABILIZE", "STOPPING"];
+        set("gaitTelemSub", subTelemNames[sub] || "WAIT");
+    }
     set("gaitTelemHold",  isPoseMode ? (hold > 0 ? "HOLD " + hold : "running") : "—");
+
+    if (!_tuneActive) {
+        _syncSlider("slGaitStep", "tvGaitStep", stepH, 0);
+        _syncSlider("slGaitStance", "tvGaitStance", stanceH, 0);
+    }
 }
 
 // =============================================================================

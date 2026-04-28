@@ -266,9 +266,10 @@ void WebComm::broadcastGaitState() {
     _lastGaitBroadcast_us = now;
 
     const GaitState& s = _gaitCtrl->getState();
-    char buf[160];
+    char buf[192];
     snprintf(buf, sizeof(buf),
-        "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d",
+        "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
+        "stepH=%.1f,stanceH=%.1f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -276,7 +277,9 @@ void WebComm::broadcastGaitState() {
         s.liftR_deg,
         s.wsProgress,
         static_cast<int>(s.liftGateOK),
-        static_cast<int>(s.poseHold)
+        static_cast<int>(s.poseHold),
+        _gaitCtrl->getConfig().stepHeightMm,
+        _gaitCtrl->getConfig().stanceHeightMm
     );
     ws.textAll(buf);
 }
@@ -753,6 +756,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         else if (cmd.startsWith("GAIT_TUNE:")) {
             if (_gaitCtrl) {
                 GaitConfig cfg = _gaitCtrl->getConfig();
+                const float gaitMaxReachMm = IK_MAX_REACH_FRACTION * (L_THIGH + L_SHANK);
                 String params = cmd.substring(10);
                 int start = 0;
                 while (start < (int)params.length()) {
@@ -766,12 +770,22 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         if      (key == "phaseRate")   cfg.phaseRateHz       = constrain(val, 0.05f, 2.0f);
                         else if (key == "liftGate")    cfg.liftGateThreshold = constrain(val, 0.0f, 0.99f);
                         else if (key == "wsThresh")    cfg.wsThresholdRad    = constrain(val, 0.01f, 0.50f);
+                        else if (key == "stepH_mm") {
+                            const float maxStep = fmaxf(5.0f, cfg.stanceHeightMm - 130.0f);
+                            cfg.stepHeightMm = constrain(val, 5.0f, maxStep);
+                        }
+                        else if (key == "stanceH_mm") {
+                            const float minStance = 130.0f + cfg.stepHeightMm;
+                            cfg.stanceHeightMm = constrain(val, minStance, gaitMaxReachMm);
+                        }
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
                 _gaitCtrl->setConfig(cfg);
-                Serial.printf("[WebComm] GAIT_TUNE: rate=%.2f Hz  gate=%.2f  wsThresh=%.3f rad\n",
-                              cfg.phaseRateHz, cfg.liftGateThreshold, cfg.wsThresholdRad);
+                Serial.printf("[WebComm] GAIT_TUNE: rate=%.2f Hz  gate=%.2f  wsThresh=%.3f rad  "
+                              "stepH=%.1f mm  stanceH=%.1f mm\n",
+                              cfg.phaseRateHz, cfg.liftGateThreshold, cfg.wsThresholdRad,
+                              cfg.stepHeightMm, cfg.stanceHeightMm);
             }
         }
 

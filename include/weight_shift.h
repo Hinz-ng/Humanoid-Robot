@@ -76,6 +76,10 @@ struct WeightShiftConfig {
 
     // Time for each ankle to ramp to full shift position (ms).
     float ramp_ms = 500.0f;
+
+    // Minimum dwell at progress = ±1 before an opposite-direction trigger is
+    // honoured. 0 disables the gate (legacy behaviour).
+    float min_dwell_ms = 250.0f;
 };
 
 // ---------------------------------------------------------------------------
@@ -133,6 +137,7 @@ private:
     float _leftDelayRemaining_ms  = 0.0f;
 
     float _lastInjectedSetpointRad = 0.0f;
+    uint32_t _settledAtMs = 0;
 
     // Stage 2: IIR-smoothed body forward offset in mm. Was _ankleTiltCmdSmoothed
     // in deg-space; the smoothing now lives at the FootTarget.x_mm boundary.

@@ -43,6 +43,7 @@ enum class StepSubState : uint8_t {
     // GAIT_STABILIZE_MS so structural and IIR transients damp before the next
     // direction is commanded. Prevents back-to-back shifts from destabilising.
     STABILIZING = 2,
+    STOPPING    = 3,
 };
 
 // ---------------------------------------------------------------------------
@@ -84,6 +85,10 @@ struct GaitConfig {
     // Range guard: LegIK rejects < 10mm and clamps reach to 99% of
     // (L_THIGH + L_SHANK).
     float stanceHeightMm    = GAIT_STANCE_HEIGHT_MM;
+
+    // Swing foot peak vertical clearance (mm). Bounded by the caller so
+    // stanceHeightMm - stepHeightMm stays inside IK's safe range.
+    float stepHeightMm      = GAIT_STEP_HEIGHT_MM;
 };
 
 // ---------------------------------------------------------------------------
@@ -161,6 +166,9 @@ private:
     // millis() timestamp at which the current STABILIZING substate began.
     // Compared against GAIT_STABILIZE_MS to decide when to release into WAIT_SHIFT.
     uint32_t _stabilizeStartMs = 0;
+    uint32_t _stopStartMs      = 0;
+    float    _stopSwingFrac    = 0.0f;
+    uint8_t  _stopHalf         = 0;
 
     // Trigger WeightShift direction matching the given half-cycle.
     void  _triggerShiftForHalf(uint8_t half);

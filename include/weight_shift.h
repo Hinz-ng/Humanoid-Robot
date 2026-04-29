@@ -49,15 +49,18 @@ struct WeightShiftConfig {
     // Set to 0 for simultaneous ramp (disables phasing).
     float shift_phase_delay_ms = 500.0f;
 
-    // Stage 2: Body lateral shift (mm) at progress = ±1. Replaces hip_shift_deg.
-    // Translates to a y_mm offset on both feet (each in its own frontal frame).
-    // Sign convention: progress = +1 (LEFT shift) → body moves left.
-    //   Right leg y_mm += lateral_shift_mm  (right foot more outward of right hip)
-    //   Left  leg y_mm -= lateral_shift_mm  (left foot more inward  of left  hip)
-    // 0 = disabled. Negative values intentionally invert the mapping so hip
-    // adduction / inward-foot experiments can be tested from the UI.
-    // Tune magnitude to ~10–25 mm during Stage 2 hardware testing.
-    float lateral_shift_mm = 0.0f;
+    // Stage 2: Body lateral shift (mm) at progress = ±1.
+    // SIGN CONVENTION (current default is negative — adduction strategy):
+    //   Negative: swing-side foot adducts inward toward the body midline while
+    //             stance-side foot abducts. Net effect at the hip: foot tracks
+    //             under CoM (adduction-led shift). This is the working default
+    //             for first-step development.
+    //   Positive: body translates laterally over a stationary stance foot
+    //             (translation-led shift). Use only with the GaitController
+    //             expecting the legacy convention.
+    // Magnitude: tune in ~5 mm increments. Working range -20 to -5 mm; floor
+    // at -50 / ceiling at +50 enforced by WebComm parser.
+    float lateral_shift_mm = -10.0f;
 
     // Stage 2: Body forward shift (mm) at |progress| = 1. Replaces ankle_pitch_tilt_deg.
     // Both feet receive an x_mm offset of -|progress| × forward_lean_mm so the foot

@@ -63,12 +63,10 @@ void GaitController::init(MotionManager* mm, WeightShift* ws) {
 
 // ---------------------------------------------------------------------------
 void GaitController::start(GaitMode mode) {
-    if (mode != GaitMode::IDLE && _ws
-        && _ws->getConfig().lateral_shift_mm < 0.0f) {
-        Serial.println("[GaitCtrl] REFUSED: lateral_shift_mm<0 inverts shift direction.");
-        return;
-    }
-
+    // NOTE: lateral_shift_mm sign is no longer rejected here. Negative is the
+    // intended default (adduction strategy). If a future gait phase requires
+    // the translation-led convention (positive), gate it inside the relevant
+    // mode handler rather than at start().
     _state.mode    = mode;
     _state.running = (mode != GaitMode::IDLE);
 
@@ -338,6 +336,23 @@ void GaitController::update(float dt_s, const IMUState& imuState) {
     // overwrite one leg with a swing target, but stance-only states still need
     // fresh IK submissions each loop.
     _submitStanceBothLegs();
+
+    // BUG FIX (weight-shift runaway): when gait mode is IDLE but WeightShift is
+    // active (manual WEIGHT_SHIFT:left/right from UI), only the stance IK should
+    // run. The swing FSM below MUST NOT execute — otherwise the gate-open path
+    // lifts the foot and _advanceHalf() flips _currentHalf, retriggering an
+    // opposite-direction WeightShift. Result is endless L↔R oscillation that
+    // only the Center button stops. Pinning substate to WAIT_SHIFT and zeroing
+    // poseHold keeps state coherent for the next GAIT_START.
+    if (!gaitActive) {
+        _subState         = StepSubState::WAIT_SHIFT;
+        _state.subState   = _subState;
+        _halfPhase        = 0.0f;
+        _state.poseHold   = 0;
+        _state.liftL_deg  = 0.0f;
+        _state.liftR_deg  = 0.0f;
+        return;
+    }
 
     if (_subState == StepSubState::STOPPING) {
         const uint32_t elapsed = millis() - _stopStartMs;

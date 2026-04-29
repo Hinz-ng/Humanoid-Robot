@@ -294,4 +294,43 @@ void runGaitControllerTests() {
                   pass, total);
 }
 
+// T9 — Bug regression: WEIGHT_SHIFT trigger in IDLE must NOT lift foot or
+//      cause _currentHalf to flip. Prior bug: gate opened in IDLE → swing FSM
+//      ran → _advanceHalf() retriggered opposite shift → endless oscillation.
+static bool test_idle_weight_shift_no_swing_no_flip() {
+    BalanceController bal(nullptr);
+    MotionManager     mm;
+    WeightShift       ws;
+    GaitController    g;
+    ws.init(&bal, &mm);
+    g.init(&mm, &ws);
+
+    // Aggressive ramp so progress crosses liftGateThreshold quickly.
+    WeightShiftConfig wcfg = ws.getConfig();
+    wcfg.ramp_ms              = 50.0f;
+    wcfg.shift_phase_delay_ms = 0.0f;
+    ws.setConfig(wcfg);
+
+    ws.trigger(ShiftDirection::LEFT);
+    IMUState imu = {}; imu.valid = true;
+
+    // Run 2 seconds of ticks with mode=IDLE. Bug would produce non-zero lift
+    // and would call _advanceHalf at least once.
+    for (int i = 0; i < 800; ++i) {
+        ws.update(0.0025f);
+        g.update(0.0025f, imu);
+    }
+
+    const GaitState& s = g.getState();
+    const bool noLift   = near(s.liftL_deg, 0.0f, 0.01f) && near(s.liftR_deg, 0.0f, 0.01f);
+    const bool stillIdle= (s.mode == GaitMode::IDLE);
+    const bool wsHeld   = (ws.getState().progress > 0.95f);   // held at +1, not flipping
+    const bool pass = noLift && stillIdle && wsHeld;
+
+    Serial.printf("[GaitT9] idle_ws_no_swing_no_flip: %s  liftL=%.3f liftR=%.3f progress=%.3f\n",
+                  pass ? "PASS" : "FAIL",
+                  s.liftL_deg, s.liftR_deg, ws.getState().progress);
+    return pass;
+}
+
 #endif // UNIT_TEST

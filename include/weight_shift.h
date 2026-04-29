@@ -25,10 +25,20 @@
 class BalanceController;
 struct BalanceConfig;
 
+// Direction names refer to the WIRE PROTOCOL value, NOT the physical CoM
+// direction. With the adduction-led strategy and lateral_shift_mm < 0:
+//   ShiftDirection::LEFT  (progress = +1) → CoM moves to the RIGHT foot
+//                                            (right leg becomes stance, adducts;
+//                                             left leg becomes swing,    abducts)
+//   ShiftDirection::RIGHT (progress = -1) → CoM moves to the LEFT  foot
+//
+// The UI button "Shift Left ←" sends WEIGHT_SHIFT:right so that the
+// user-facing label matches the physical effect. Do not "fix" the enum
+// values without also reversing every dependent formula and comment block.
 enum class ShiftDirection : int8_t {
     NONE  =  0,
-    LEFT  =  1,
-    RIGHT = -1,
+    LEFT  =  1,   // wire-protocol name; physically shifts CoM RIGHT
+    RIGHT = -1,   // wire-protocol name; physically shifts CoM LEFT
 };
 
 // ---------------------------------------------------------------------------

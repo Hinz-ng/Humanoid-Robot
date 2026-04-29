@@ -58,23 +58,19 @@ void WeightShift::trigger(ShiftDirection dir) {
     }
 
     if (dir == ShiftDirection::LEFT) {
-        // LEFT shift: right=swing (immediate), left=stance (delayed).
-        // Both targets = +1.0f for leftward tilt direction.
         _targetRight = 1.0f;
         _targetLeft  = 1.0f;
         _rightDelayRemaining_ms = 0.0f;
         _leftDelayRemaining_ms  = _cfg.shift_phase_delay_ms;
-        Serial.printf("[WeightShift] LEFT — right(swing) immediate, "
-                      "left(stance) +%.0fms.\n", _cfg.shift_phase_delay_ms);
-    } else {
-        // RIGHT shift: left=swing (immediate), right=stance (delayed).
-        // Both targets = -1.0f for rightward tilt direction.
+        Serial.printf("[WeightShift] LEFT (CoM→right) — right(stance) immediate, "
+                      "left(swing) +%.0fms.\n", _cfg.shift_phase_delay_ms);
+    } else {  // RIGHT
         _targetRight = -1.0f;
         _targetLeft  = -1.0f;
         _leftDelayRemaining_ms  = 0.0f;
         _rightDelayRemaining_ms = _cfg.shift_phase_delay_ms;
-        Serial.printf("[WeightShift] RIGHT — left(swing) immediate, "
-                      "right(stance) +%.0fms.\n", _cfg.shift_phase_delay_ms);
+        Serial.printf("[WeightShift] RIGHT (CoM→left) — left(stance) immediate, "
+                      "right(swing) +%.0fms.\n", _cfg.shift_phase_delay_ms);
     }
 }
 

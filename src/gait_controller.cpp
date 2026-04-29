@@ -153,14 +153,17 @@ void GaitController::nextPose() {
 // ---------------------------------------------------------------------------
 void GaitController::_triggerShiftForHalf(uint8_t half) {
     if (!_ws) return;
-    // half=0 → body weight over LEFT leg → trigger LEFT shift (+1)
-    // half=1 → body weight over RIGHT leg → trigger RIGHT shift (-1)
+    // half=0 → body weight over RIGHT leg (right=stance, left=swing) → trigger LEFT
+    // half=1 → body weight over LEFT  leg (left=stance,  right=swing) → trigger RIGHT
+    // (Enum values reversed; see weight_shift.h convention block.)
     const int8_t wantDir = (half == 0) ? +1 : -1;
     if (wantDir == _lastShiftDir) return;
     _lastShiftDir = wantDir;
     _ws->trigger(wantDir > 0 ? ShiftDirection::LEFT : ShiftDirection::RIGHT);
-    Serial.printf("[GaitCtrl] half=%d  shift=%s\n",
-                  half, wantDir > 0 ? "LEFT" : "RIGHT");
+    Serial.printf("[GaitCtrl] half=%d  trigger=%s  CoM→%s\n",
+                  half,
+                  wantDir > 0 ? "LEFT"  : "RIGHT",
+                  wantDir > 0 ? "right" : "left");
 }
 
 // ---------------------------------------------------------------------------

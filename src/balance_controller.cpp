@@ -250,6 +250,16 @@ BalanceState BalanceController::update(const IMUState& state) {
         out.roll_error     = _ts_roll_error;
         out.u_clamped      = _ts_pitch_u_clamped;
         out.u_roll_clamped = _ts_roll_u_clamped;
+
+        // Apply WeightShift ankle bias even in task-space mode.
+        // V5 invariant: bias is feedforward shaping, not foot placement —
+        // it stays in SOURCE_BALANCE via MotionManager, not in the IK chain.
+        // Same path as the C-02 fix in the legacy (!pitch && !roll) gate.
+        if (fabsf(_cfg.ankle_roll_bias_l_deg) > 0.01f ||
+            fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f) {
+            _applyRollCorrection(0.0f, 0.0f, 0.0f, 0.0f);
+        }
+
         _lastState = out;
         return out;
     }
@@ -412,7 +422,11 @@ BalanceCorrection BalanceController::computeCorrection(const IMUState& state) {
         // _ts_pitch_error already set above.
 
         // Convert to mm with zero-bypass + delta clamp + IIR (mirrors _shapeOutput).
-        const float raw_dx_mm = u_clamped * _cfg.pitch_to_dx_mm_per_deg;
+        // Negated: joint-space u_clamped>0 means dorsiflexion (body tilts back).
+        // Equivalent task-space response: foot moves forward of hip (x_mm increases).
+        // mergeBalanceCorrection subtracts dx_mm, so dx_mm must be negative for x_mm
+        // to increase. correction_sign is already folded into u_clamped.
+        const float raw_dx_mm = -u_clamped * _cfg.pitch_to_dx_mm_per_deg;
         float clamped_dx;
         if (fabsf(raw_dx_mm) < 1e-4f) {
             clamped_dx = 0.0f;  // zero-bypass: let IIR decay freely
@@ -425,7 +439,7 @@ BalanceCorrection BalanceController::computeCorrection(const IMUState& state) {
         }
         _dx_filtered_mm = _cfg.output_iir_alpha * _dx_filtered_mm
                         + (1.0f - _cfg.output_iir_alpha) * clamped_dx;
-        bc.dx_mm = _dx_filtered_mm;
+        bc.dx_mm = constrain(_dx_filtered_mm, -25.0f, 25.0f);
     } else {
         _ts_pitch_u_clamped = 0.0f;
         _ts_pitch_error     = 0.0f;
@@ -484,7 +498,9 @@ BalanceCorrection BalanceController::computeCorrection(const IMUState& state) {
 
     bc.dPitch_deg = 0.0f;  // reserved
     bc.dRoll_deg  = 0.0f;  // reserved
-    bc.valid = true;
+    // valid=false when both axes disabled: correction is a no-op and consumers
+    // that check valid (e.g. GaitController idle bypass) correctly skip it.
+    bc.valid = (_cfg.pitch_enabled || _cfg.roll_enabled);
     return bc;
 }
 
@@ -582,8 +598,7 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg,
         // shift), the right clamp was too tight and could fight the weight shift.
         float maxBias  = fmaxf(fabsf(_cfg.ankle_roll_bias_l_deg),
                                 fabsf(_cfg.ankle_roll_bias_r_deg));
-        float maxAnkle = fmaxf(_cfg.max_correction_deg, _cfg.max_roll_correction_deg)
-                         + maxBias;
+        float maxAnkle = _cfg.max_roll_correction_deg + maxBias;
         maxAnkle = constrain(maxAnkle, 1.0f, 30.0f);
         final_r  = constrain(final_r, -maxAnkle, maxAnkle);
         final_l  = constrain(final_l, -maxAnkle, maxAnkle);
@@ -611,8 +626,7 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg,
     float final_l = shaped_l + _cfg.ankle_roll_bias_l_deg;
         float maxBias  = fmaxf(fabsf(_cfg.ankle_roll_bias_l_deg),
                                 fabsf(_cfg.ankle_roll_bias_r_deg));
-        float maxAnkle = fmaxf(_cfg.max_correction_deg, _cfg.max_roll_correction_deg)
-                         + maxBias;
+        float maxAnkle = _cfg.max_roll_correction_deg + maxBias;
         maxAnkle = constrain(maxAnkle, 1.0f, 30.0f);
     final_r = constrain(final_r, -maxAnkle, maxAnkle);
     final_l = constrain(final_l, -maxAnkle, maxAnkle);

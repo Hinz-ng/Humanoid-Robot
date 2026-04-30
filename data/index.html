@@ -1367,7 +1367,8 @@ function initWebSocket() {
     ws.onopen = () => {
         document.getElementById('ws-status').innerText   = "Connected";
         document.getElementById('ws-status').style.color = "#4caf50";
-        sendWSTune();
+        // Firmware sends WSHIFT_STATE: on connect to sync sliders.
+        // Do NOT push slider defaults to firmware here — firmware is source of truth.
     };
     ws.onclose = () => {
         document.getElementById('ws-status').innerText   = "Disconnected";
@@ -1601,6 +1602,24 @@ function initWebSocket() {
                 const dyEl = document.getElementById("tsDy");
                 if (dxEl) dxEl.textContent = parseFloat(v["dx"] || "0").toFixed(2);
                 if (dyEl) dyEl.textContent = parseFloat(v["dy"] || "0").toFixed(2);
+            }
+        }
+        else if (msg.startsWith("WSHIFT_STATE:")) {
+            // Firmware source-of-truth sync on connect. Update sliders only —
+            // do NOT call sendWSTune() here; that would push stale values back.
+            const v = {};
+            msg.substring(13).split(",").forEach(pair => {
+                const eq = pair.indexOf("=");
+                if (eq !== -1) v[pair.substring(0, eq)] = pair.substring(eq + 1);
+            });
+            _syncSlider("slWsAnkle",      "tvWsAnkle",      parseFloat(v["ankle"]       ?? "5"),   1);
+            _syncSlider("slWsLateral",    "tvWsLateral",     parseFloat(v["lateral_mm"]  ?? "-10"), 1);
+            _syncSlider("slWsForward",    "tvWsForward",     parseFloat(v["forward_mm"]  ?? "0"),   1);
+            _syncSlider("slWsTorso",      "tvWsTorso",       parseFloat(v["torso"]       ?? "0"),   1);
+            _syncSlider("slWsRamp",       "tvWsRamp",        parseFloat(v["ramp"]        ?? "500"), 0);
+            _syncSlider("slWsPhaseDelay", "tvWsPhaseDelay",  parseFloat(v["phase_delay"] ?? "500"), 0);
+            if (v["setpoint_deg"] !== undefined) {
+                _syncSlider("slWsSp", "tvWsSp", parseFloat(v["setpoint_deg"]), 1);
             }
         }
         else if (msg.startsWith("IK_RESULT:")) {

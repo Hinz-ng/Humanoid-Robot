@@ -31,6 +31,9 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     void broadcastBalanceState(const BalanceState& state);
     void broadcastSpeeds();
     void broadcastGaitState();
+    // Sends current WeightShiftConfig to a specific client (called on connect).
+    // Firmware is source of truth; client updates sliders without sending back.
+    void broadcastWeightShiftConfig(AsyncWebSocketClient* client);
     void setBalanceController(BalanceController* bal);
     // Wire the joint authority layer. Call once in setup() after motionManager.init().
     // When wired, slider commands are routed through MotionManager so they silently

@@ -323,6 +323,13 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         _state.phase      = 0.0f;
         _state.wsProgress = 0.0f;
         _state.poseHold   = 0;
+        // Task-space mode: BalanceCorrection reaches servos only through IK.
+        // GaitController is the sole consumer of bc, so we must not skip it
+        // here — the robot must maintain its pose under balance correction even
+        // when standing still with no gait or weight-shift active.
+        if (bc != nullptr && bc->valid) {
+            _submitStanceBothLegs(bc);
+        }
         return;
     }
 

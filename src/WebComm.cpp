@@ -261,6 +261,28 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
 //  Rate-limited to 20 Hz (same as balance state broadcast).
 // =============================================================================
 
+// =============================================================================
+//  WEIGHT SHIFT CONFIG BROADCAST (one-time, on connect)
+//  Protocol: "WSHIFT_STATE:ankle=X,lateral_mm=X,forward_mm=X,torso=X,
+//             ramp=X,phase_delay=X,setpoint_deg=X"
+//  UI reads this to sync sliders to firmware state on reconnect.
+//  Firmware is source of truth — UI must NOT send back a tune on receipt.
+// =============================================================================
+
+void WebComm::broadcastWeightShiftConfig(AsyncWebSocketClient* client) {
+    if (!_weightShift || !client) return;
+    const WeightShiftConfig& cfg = _weightShift->getConfig();
+    const float spDeg = cfg.setpoint_shift_rad * (180.0f / (float)M_PI);
+    char buf[192];
+    snprintf(buf, sizeof(buf),
+        "WSHIFT_STATE:ankle=%.1f,lateral_mm=%.1f,forward_mm=%.1f,"
+        "torso=%.1f,ramp=%.0f,phase_delay=%.0f,setpoint_deg=%.2f",
+        cfg.ankle_shift_deg, cfg.lateral_shift_mm, cfg.forward_lean_mm,
+        cfg.torso_shift_deg, cfg.ramp_ms, cfg.shift_phase_delay_ms, spDeg
+    );
+    client->text(buf);
+}
+
 void WebComm::broadcastGaitState() {
     if (!_gaitCtrl || ws.count() == 0) return;
 
@@ -322,6 +344,8 @@ void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
         // Push current calibration state immediately to the new client.
         // Without this, any client that connects after calibration finishes
         // would never receive a CALIB packet and the bar stays at 0%.
+        broadcastWeightShiftConfig(client);
+
         if (_stateEst) {
             char buf[80];
             CalibState cs   = _stateEst->getCalibState();
@@ -640,6 +664,13 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             if (newVal != cfg.task_space_output) {
                                 // Zero both paths' IIR state on toggle to prevent spikes.
                                 _balCtrl->resetOutputState();
+                            }
+                            if (newVal && !cfg.task_space_output) {
+                                // Entering task-space: clear stale roll setpoint that
+                                // WeightShift::update() may have injected in legacy mode.
+                                // resetOutputState() above zeros IIR; this zeros the config
+                                // field the PD law reads on the first new tick.
+                                cfg.roll_setpoint_rad = 0.0f;
                             }
                             cfg.task_space_output = newVal;
                         }

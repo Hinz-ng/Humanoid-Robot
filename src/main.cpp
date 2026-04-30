@@ -182,13 +182,23 @@ void loop() {
             RawIMUData raw   = IMU_update();
             IMUState   state = stateEstimator.update(raw, dt);
 
-            // WeightShift must run BEFORE balanceController so the injected
-            // roll_setpoint_rad is used by balance on this same tick.
+            // WeightShift must run BEFORE balanceController so any state it
+            // sets (ankle bias, roll setpoint) is visible to balance same tick.
             weightShift.update(dt);
 
-            gaitController.update(dt, state);
-
-            BalanceState balState = balanceController.update(state);
+            // Stage 3: when task_space_output=true, balance runs FIRST so its
+            // correction is available when gait builds FootTargets. Legacy order
+            // preserved when task_space_output=false.
+            const bool taskSpace = balanceController.getConfig().task_space_output;
+            BalanceState balState;
+            if (taskSpace) {
+                balState = balanceController.update(state);
+                const BalanceCorrection bc = balanceController.getLastCorrection();
+                gaitController.update(dt, state, &bc);
+            } else {
+                gaitController.update(dt, state, nullptr);
+                balState = balanceController.update(state);
+            }
 
             // Flush after ALL sources have submitted for this tick:
             //   balanceController.update() → submit(SOURCE_BALANCE, ...)

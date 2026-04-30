@@ -648,6 +648,68 @@
 
         </div><!-- /.roll tune grid -->
 
+        <!-- ── Task-space mode (Stage 3) ─────────────────────────────────── -->
+        <details id="tsDetails" style="margin-top:14px; border-top:1px solid #2e4a2e; padding-top:10px;">
+            <summary style="font-size:10px; color:#888; text-transform:uppercase;
+                            letter-spacing:0.5px; cursor:pointer; user-select:none;">
+                Task-space mode (Stage 3)
+                <span style="color:#555; font-weight:normal; margin-left:6px;">
+                    Balance outputs dx/dy mm → merged into FootTarget before IK
+                </span>
+            </summary>
+            <div style="margin-top:10px;">
+                <!-- Toggle -->
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                    <span style="font-size:11px; color:#aaa; width:80px;">Task-space</span>
+                    <button id="btnTsOff" class="btn-bal-off btn-sign btn-sign-active"
+                            onclick="setTaskSpace(false)">OFF (joint-space)</button>
+                    <button id="btnTsOn"  class="btn-bal-on btn-sign"
+                            onclick="setTaskSpace(true)">ON (task-space)</button>
+                </div>
+                <!-- Live readouts -->
+                <div class="bal-outputs" style="margin-bottom:10px;">
+                    <div class="bal-out-cell">
+                        <div class="bal-out-lbl">dx (mm)</div>
+                        <div class="bal-out-val" id="tsDx">—</div>
+                    </div>
+                    <div class="bal-out-cell">
+                        <div class="bal-out-lbl">dy (mm)</div>
+                        <div class="bal-out-val" id="tsDy">—</div>
+                    </div>
+                </div>
+                <!-- Gain sliders -->
+                <div class="bal-tune-grid">
+                    <div class="bal-tune-row">
+                        <div class="tune-header">
+                            <span>dx/deg (mm/°)</span>
+                            <span class="tune-val" id="tvDxPerDeg">3.0</span>
+                        </div>
+                        <input type="range" id="slDxPerDeg" min="0.5" max="6.0" step="0.1" value="3.0"
+                               oninput="updateTsLabel('dx_per_deg',this.value); sendTsTune()">
+                        <div style="font-size:10px; color:#555; margin-top:3px;">
+                            Pitch PD → foot x offset. Start low; increase if static balance undershoots.
+                        </div>
+                    </div>
+                    <div class="bal-tune-row">
+                        <div class="tune-header">
+                            <span>dy/deg (mm/°)</span>
+                            <span class="tune-val" id="tvDyPerDeg">3.0</span>
+                        </div>
+                        <input type="range" id="slDyPerDeg" min="0.5" max="6.0" step="0.1" value="3.0"
+                               oninput="updateTsLabel('dy_per_deg',this.value); sendTsTune()">
+                        <div style="font-size:10px; color:#555; margin-top:3px;">
+                            Roll PD → foot y offset. Tune after pitch confirmed stable.
+                        </div>
+                    </div>
+                </div>
+                <div style="font-size:10px; color:#666; margin-top:8px; line-height:1.5;">
+                    ⚠ Reorders tick: balance → gait(merge) instead of gait → balance(override).<br>
+                    ⚠ Enable roll controller when using task-space roll correction.<br>
+                    ⚠ roll_setpoint injection from WeightShift is suppressed in this mode.
+                </div>
+            </div>
+        </details>
+
     </div><!-- /.bal-body -->
 </div><!-- /.bal-panel -->
     
@@ -1525,8 +1587,20 @@ function initWebSocket() {
                 document.getElementById("btnSignNeg_r").className = "btn-sign" + (signR <  0 ? " btn-sign-active" : "");
             }
             // Weight shift progress bar — driven by ws_prog field in BALANCE: packet.
-             if (v["ws_prog"] !== undefined) {
+            if (v["ws_prog"] !== undefined) {
                 updateWShiftProgress(parseFloat(v["ws_prog"]), v["ws_ramp"] === "1");
+            }
+            // Stage 3: task-space telemetry.
+            if (v["ts"] !== undefined) {
+                const tsOn = v["ts"] === "1";
+                const btnOff = document.getElementById("btnTsOff");
+                const btnOn  = document.getElementById("btnTsOn");
+                if (btnOff) btnOff.className = "btn-bal-off btn-sign" + (!tsOn ? " btn-sign-active" : "");
+                if (btnOn)  btnOn.className  = "btn-bal-on btn-sign"  + ( tsOn ? " btn-sign-active" : "");
+                const dxEl = document.getElementById("tsDx");
+                const dyEl = document.getElementById("tsDy");
+                if (dxEl) dxEl.textContent = parseFloat(v["dx"] || "0").toFixed(2);
+                if (dyEl) dyEl.textContent = parseFloat(v["dy"] || "0").toFixed(2);
             }
         }
         else if (msg.startsWith("IK_RESULT:")) {
@@ -1731,6 +1805,33 @@ function sendBoostTune() {
         const factor  = document.getElementById("slBoostFactor").value;
         const threshRad = (thresh * Math.PI / 180).toFixed(5);
         const msg = `CMD:BALANCE_TUNE:boost_thresh=${threshRad},boost_factor=${factor}`;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(msg);
+            console.log("[WS TX]", msg);
+        }
+    }, 80);
+}
+
+// ── Task-space mode (Stage 3) controls ───────────────────────────────────────
+function setTaskSpace(enable) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const val = enable ? 1 : 0;
+        ws.send(`CMD:BALANCE_TUNE:task_space=${val}`);
+        document.getElementById("btnTsOff").className = "btn-bal-off btn-sign" + (!enable ? " btn-sign-active" : "");
+        document.getElementById("btnTsOn").className  = "btn-bal-on btn-sign"  + ( enable ? " btn-sign-active" : "");
+    }
+}
+function updateTsLabel(key, val) {
+    _setTuneActive();
+    if (key === "dx_per_deg") document.getElementById("tvDxPerDeg").textContent = parseFloat(val).toFixed(1);
+    if (key === "dy_per_deg") document.getElementById("tvDyPerDeg").textContent = parseFloat(val).toFixed(1);
+}
+function sendTsTune() {
+    clearTimeout(sendTsTune._t);
+    sendTsTune._t = setTimeout(() => {
+        const dx = document.getElementById("slDxPerDeg").value;
+        const dy = document.getElementById("slDyPerDeg").value;
+        const msg = `CMD:BALANCE_TUNE:dx_per_deg=${dx},dy_per_deg=${dy}`;
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(msg);
             console.log("[WS TX]", msg);

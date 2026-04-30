@@ -138,10 +138,15 @@ void WeightShift::update(float dt_s) {
     _bal->setAnkleRollBias(biasLeftDeg, biasRightDeg);
 
     // Roll setpoint: use average progress. Update only if changed > 0.5 mrad.
+    // Suppressed in task-space mode — lateral CoM control flows through
+    // FootTarget.y_mm instead. Injecting a setpoint would cause balance to
+    // chase a lean target that conflicts with dy_mm placement.
     const float newSetpoint = -_state.progress * fabsf(_cfg.setpoint_shift_rad);
-    if (fabsf(newSetpoint - _lastInjectedSetpointRad) > 0.0005f) {
-        _bal->setRollSetpointRad(newSetpoint);
-        _lastInjectedSetpointRad = newSetpoint;
+    if (!_bal->getConfig().task_space_output) {
+        if (fabsf(newSetpoint - _lastInjectedSetpointRad) > 0.0005f) {
+            _bal->setRollSetpointRad(newSetpoint);
+            _lastInjectedSetpointRad = newSetpoint;
+        }
     }
 
     // ── Forward-lean IIR smoothing (mm-space) ────────────────────────────────

@@ -203,7 +203,7 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
     _lastBalanceBroadcast_us = now;
 
     const BalanceConfig& cfg = _balCtrl->getConfig();
-    // buf sized for full pitch + roll telemetry payload (~380 chars worst case).
+    // buf sized for full pitch + roll + task-space telemetry payload (~430 chars).
     char buf[512];
     snprintf(buf, sizeof(buf),
         // Controller enable flags + overall active state
@@ -220,10 +220,12 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         // Safety
         "fell=%d,"
         // Weight shift telemetry — progress and ramping flag for UI progress bar.
-        "ws_prog=%.2f,ws_ramp=%d,ws_rp=%.2f,ws_lp=%.2f",
+        "ws_prog=%.2f,ws_ramp=%d,ws_rp=%.2f,ws_lp=%.2f,"
+        // Stage 3: task-space mode flag and live foot-target corrections.
+        "ts=%d,dx=%.2f,dy=%.2f",
         (int)cfg.pitch_enabled, (int)cfg.roll_enabled,
-        state.effective_kp,                    // NEW
-        state.effective_kp_roll,               // NEW
+        state.effective_kp,
+        state.effective_kp_roll,
         state.pitch_error,   state.u_clamped,
         state.ankle_cmd_deg, state.hip_cmd_deg, state.torso_cmd_deg,
         state.roll_error,    state.u_roll_clamped,
@@ -235,11 +237,13 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         cfg.ankle_roll_ratio, cfg.hip_roll_ratio, cfg.torso_roll_ratio,
         cfg.roll_correction_sign, cfg.max_roll_correction_deg,
         (int)state.fell,
-        _weightShift ? _weightShift->getState().progress    : 0.0f,
-        _weightShift ? (int)_weightShift->getState().ramping : 0,
-        _weightShift ? _weightShift->getState().right_progress  : 0.0f,
-        _weightShift ? _weightShift->getState().left_progress   : 0.0f
- 
+        _weightShift ? _weightShift->getState().progress        : 0.0f,
+        _weightShift ? (int)_weightShift->getState().ramping     : 0,
+        _weightShift ? _weightShift->getState().right_progress   : 0.0f,
+        _weightShift ? _weightShift->getState().left_progress    : 0.0f,
+        (int)cfg.task_space_output,
+        _balCtrl->getLastCorrection().dx_mm,
+        _balCtrl->getLastCorrection().dy_mm
     );
     ws.textAll(buf);
 }
@@ -630,6 +634,17 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         else if (key == "roll_db")  cfg.roll_deadband_rad = constrain(val, 0.0f, 0.20f);
                         else if (key == "roll_dlpf") cfg.roll_derivative_lpf_alpha = constrain(val, 0.0f, 0.99f);
                         else if (key == "fall_det")  cfg.fall_detection_enabled     = (val > 0.5f);
+                        // Stage 3: task-space output keys.
+                        else if (key == "task_space") {
+                            bool newVal = (val > 0.5f);
+                            if (newVal != cfg.task_space_output) {
+                                // Zero both paths' IIR state on toggle to prevent spikes.
+                                _balCtrl->resetOutputState();
+                            }
+                            cfg.task_space_output = newVal;
+                        }
+                        else if (key == "dx_per_deg") cfg.pitch_to_dx_mm_per_deg = constrain(val, 0.5f, 6.0f);
+                        else if (key == "dy_per_deg") cfg.roll_to_dy_mm_per_deg  = constrain(val, 0.5f, 6.0f);
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }

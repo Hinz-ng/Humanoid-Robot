@@ -14,6 +14,7 @@
 #include "state_estimator.h"
 #include "servo_control.h"
 #include "joint_config.h"
+#include "gait_types.h"
 
 class MotionManager;
 
@@ -105,6 +106,21 @@ struct BalanceConfig {
     // MUST NOT be set by WebSocket or any code other than WeightShift::update().
     float ankle_roll_bias_l_deg = 0.0f;
     float ankle_roll_bias_r_deg = 0.0f;
+
+    // --- Stage 3: Task-space output mode ---
+    //   false (default): legacy joint-space. _applyPitchCorrection / _applyRollCorrection
+    //                    submit to MotionManager as before.
+    //   true:  task-space. computeCorrection() populates _lastCorrection. Leg joints
+    //                      are NOT submitted by BalanceController. Torso pitch and
+    //                      torso roll continue to submit (not in the IK chain).
+    // WS: "task_space"
+    bool task_space_output = false;
+
+    // Conversion gain: PD output (deg) → task-space body shift (mm).
+    // At h_sagittal ≈ 185 mm: 1° ≈ 3.2 mm. Default 3.0 is conservative.
+    // WS: "dx_per_deg", "dy_per_deg"
+    float pitch_to_dx_mm_per_deg = 3.0f;
+    float roll_to_dy_mm_per_deg  = 3.0f;
 };
 
 enum BalanceJointIdx : uint8_t {
@@ -172,6 +188,17 @@ public:
     }
     void                 setRollSetpointRad(float rad) { _cfg.roll_setpoint_rad = rad; }
 
+    // Stage 3: Task-space output API.
+    // computeCorrection() runs the pitch + roll PD in mm space. Pure computation —
+    // does NOT submit to any joints. Called from update() when task_space_output=true.
+    // Intermediate clamped-degree values are cached in _ts_pitch_u_clamped /
+    // _ts_roll_u_clamped for the torso submission that update() handles separately.
+    BalanceCorrection computeCorrection(const IMUState& state);
+
+    // Returns the most recent correction. Valid=false until update() runs at least
+    // once with task_space_output=true.
+    BalanceCorrection getLastCorrection() const { return _lastCorrection; }
+
 private:
     ServoControl*    _servo;
     MotionManager*   _motionManager = nullptr;
@@ -193,6 +220,17 @@ private:
                                float torso_deg, float pitchRate_rs);
     void _applyRollCorrection(float ankle_deg, float hip_deg,
                               float torso_deg, float rollRate_rs);
+
+    // Stage 3: task-space filter state.
+    BalanceCorrection _lastCorrection;
+    float _dx_filtered_mm    = 0.0f;
+    float _dy_filtered_mm    = 0.0f;
+    // Intermediate PD values cached by computeCorrection so update()
+    // can use them for torso submission and BalanceState telemetry.
+    float _ts_pitch_u_clamped = 0.0f;
+    float _ts_roll_u_clamped  = 0.0f;
+    float _ts_pitch_error     = 0.0f;
+    float _ts_roll_error      = 0.0f;
 };
 
 #endif // BALANCE_CONTROLLER_H

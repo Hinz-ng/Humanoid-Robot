@@ -47,9 +47,31 @@ struct FootTarget {
 struct BalanceCorrection {
     float dx_mm      = 0.0f;
     float dy_mm      = 0.0f;
-    float dPitch_deg = 0.0f;
-    float dRoll_deg  = 0.0f;
+    float dPitch_deg = 0.0f;  // reserved for future trunk-trim; unused in Stage 3
+    float dRoll_deg  = 0.0f;  // reserved for future trunk-trim; unused in Stage 3
     bool  valid      = false;
 };
+
+// mergeBalanceCorrection — apply a BalanceCorrection to a FootTarget in place.
+//
+// Sign conventions:
+//   dx_mm > 0  → balance pushes body forward → foot target shifts BACKWARD
+//                (foot stays planted while body comes forward over it).
+//   dy_mm > 0  → balance pushes body to the RIGHT.
+//                In hip-relative frame:
+//                  right leg: y_mm increases (right foot moves outward / abduction)
+//                  left  leg: y_mm decreases (left  foot moves inward  / adduction)
+//                Net effect: body translates right relative to feet.
+//   dPitch_deg, dRoll_deg — reserved, not applied in Stage 3.
+//
+// Returns true if the correction was applied.
+// Returns false (no-op) when bc.valid == false.
+inline bool mergeBalanceCorrection(FootTarget& target,
+                                    const BalanceCorrection& bc) {
+    if (!bc.valid) return false;
+    target.x_mm -= bc.dx_mm;
+    target.y_mm += target.isRightLeg ? +bc.dy_mm : -bc.dy_mm;
+    return true;
+}
 
 #endif // GAIT_TYPES_H

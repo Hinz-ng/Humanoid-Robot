@@ -132,9 +132,12 @@ public:
     // Ignored if mode != POSE_STEP or not currently paused.
     void nextPose();
 
-    // Call every tick from main.cpp, after weightShift.update() and before
-    // balanceController.update(). imuState is used for Phase 2 roll logging.
-    void update(float dt_s, const IMUState& imuState);
+    // Call every tick from main.cpp, after weightShift.update().
+    // bc: task-space balance correction from BalanceController (Stage 3).
+    //   Pass nullptr (default) for legacy joint-space mode — behavior is identical
+    //   to Stage 2. Pass &correction when task_space_output=true.
+    void update(float dt_s, const IMUState& imuState,
+                const BalanceCorrection* bc = nullptr);
 
     GaitConfig       getConfig() const          { return _cfg; }
     void             setConfig(const GaitConfig& cfg) { _cfg = cfg; }
@@ -183,9 +186,12 @@ private:
     //   Stance leg: y_mm=0, x_mm=0, h_sagittal_mm = stanceHeightMm.
     //   Swing  leg: x_mm=0, y_mm=0, h_sagittal_mm = stanceHeightMm − liftMm.
     //                where liftMm = swingFrac × GAIT_STEP_HEIGHT_MM (Stage 1: vertical only).
+    // If bc != nullptr and isSwing=false, mergeBalanceCorrection is applied to the
+    // stance target before returning. Swing leg never receives the correction.
     // Returns target with valid=true on success. valid=false means the
     // caller should not submit (used for IDLE / paused states).
-    FootTarget _buildFootTarget(bool isRight, float swingFrac, bool isSwing) const;
+    FootTarget _buildFootTarget(bool isRight, float swingFrac, bool isSwing,
+                                const BalanceCorrection* bc = nullptr) const;
 
     // Resolve a FootTarget through LegIK and submit the joint angles via
     // SOURCE_GAIT. Logs (rate-limited) and skips submission on
@@ -195,7 +201,8 @@ private:
 
     // Re-assert both legs' stance baseline for this tick.
     // Used whenever gait or WeightShift owns the legs, even if no swing is active.
-    void _submitStanceBothLegs();
+    // bc: merged into each stance leg's FootTarget when not nullptr.
+    void _submitStanceBothLegs(const BalanceCorrection* bc = nullptr);
 };
 
 #endif // GAIT_CONTROLLER_H

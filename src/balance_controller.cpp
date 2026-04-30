@@ -38,6 +38,15 @@ void BalanceController::resetOutputState() {
     _prevPitchEnabled = _cfg.pitch_enabled;
     _prevRollEnabled  = _cfg.roll_enabled;
 
+    // Stage 3: zero task-space filter state.
+    _dx_filtered_mm      = 0.0f;
+    _dy_filtered_mm      = 0.0f;
+    _ts_pitch_u_clamped  = 0.0f;
+    _ts_roll_u_clamped   = 0.0f;
+    _ts_pitch_error      = 0.0f;
+    _ts_roll_error       = 0.0f;
+    _lastCorrection      = {};
+
     Serial.printf("[BalanceController] Reset. pitch_en=%s roll_en=%s "
                   "Kp=%.1f(boost×%.1f@%.3f) Kd=%.2f iir=%.2f rate=%.2f\n",
                   _cfg.pitch_enabled ? "Y" : "N",
@@ -209,7 +218,44 @@ BalanceState BalanceController::update(const IMUState& state) {
     if (oe_is_estopped()) { _lastState = out; return out; }
 
     // =========================================================================
-    //  PITCH PD
+    //  STAGE 3: TASK-SPACE OUTPUT BRANCH
+    //  When task_space_output=true, balance PD outputs dx_mm/dy_mm that the
+    //  GaitController merges into FootTargets before LegIK::solve(). Leg joints
+    //  (ankle pitch, knee, hip pitch, hip roll, ankle roll) are NOT submitted here.
+    //  Torso pitch and torso roll remain joint-space (not in the IK chain).
+    // =========================================================================
+    if (_cfg.task_space_output) {
+        _lastCorrection = computeCorrection(state);
+
+        // Torso pitch — still joint-space; uses cached _ts_pitch_u_clamped.
+        if (_motionManager && _cfg.pitch_enabled && _cfg.torso_ratio > 0.001f) {
+            float torso_cmd = _ts_pitch_u_clamped * _cfg.torso_ratio;
+            float shaped    = _shapeOutput(BJI_TORSO_PITCH, -torso_cmd,
+                                           _pitchRateFiltered);
+            _motionManager->submit(SOURCE_BALANCE, IDX_TORSO_PITCH, shaped);
+        }
+        // Torso roll — still joint-space; uses cached _ts_roll_u_clamped.
+        if (_motionManager && _cfg.roll_enabled && _cfg.torso_roll_ratio > 0.001f) {
+            float torso_cmd = _ts_roll_u_clamped * _cfg.torso_roll_ratio;
+            float shaped    = _shapeOutput(BJI_TORSO_ROLL, torso_cmd,
+                                           _rollRateFiltered);
+            _motionManager->submit(SOURCE_BALANCE, IDX_TORSO_ROLL, shaped);
+        }
+
+        out.active       = _cfg.pitch_enabled || _cfg.roll_enabled;
+        out.pitch_active = _cfg.pitch_enabled;
+        out.roll_active  = _cfg.roll_enabled;
+        // Surface PD telemetry from the last computeCorrection run.
+        out.pitch_error    = _ts_pitch_error;
+        out.roll_error     = _ts_roll_error;
+        out.u_clamped      = _ts_pitch_u_clamped;
+        out.u_roll_clamped = _ts_roll_u_clamped;
+        _lastState = out;
+        return out;
+    }
+
+    // =========================================================================
+    //  PITCH PD (legacy joint-space path)
     // =========================================================================
     if (_cfg.pitch_enabled) {
         // Derivative filter — updated every tick to keep IIR warm.
@@ -316,6 +362,130 @@ BalanceState BalanceController::update(const IMUState& state) {
     out.fell   = false;
     _lastState = out;
     return out;
+}
+
+// ---------------------------------------------------------------------------
+//  computeCorrection — Stage 3 task-space PD computation.
+//
+//  Runs the pitch and roll PD (including derivative filter, Smith predictor,
+//  deadband, nonlinear gain boost, and clamp) identically to the legacy path,
+//  but outputs foot-target offsets in mm rather than joint angles in degrees.
+//
+//  Side effects (intentional):
+//    _pitchRateFiltered, _rollRateFiltered — updated (must happen once per tick).
+//    _ts_pitch_u_clamped, _ts_roll_u_clamped — cached for torso submission in
+//      update()'s task-space branch.
+//    _dx_filtered_mm, _dy_filtered_mm — IIR state for the mm outputs.
+//
+//  Does NOT submit to any joints; does NOT touch MotionManager.
+// ---------------------------------------------------------------------------
+BalanceCorrection BalanceController::computeCorrection(const IMUState& state) {
+    BalanceCorrection bc;
+    if (!state.valid || oe_is_estopped()) {
+        bc.valid = false;
+        return bc;
+    }
+
+    // ── Pitch PD → dx_mm ─────────────────────────────────────────────────────
+    if (_cfg.pitch_enabled) {
+        _pitchRateFiltered = _cfg.derivative_lpf_alpha * _pitchRateFiltered
+                           + (1.0f - _cfg.derivative_lpf_alpha) * state.pitchRate;
+
+        const float predictedPitch = state.pitch
+                                   + state.pitchRate * _cfg.servo_lag_compensation_s;
+        const float error = predictedPitch - _cfg.pitch_setpoint_rad;
+        _ts_pitch_error = error;
+
+        float u_clamped = 0.0f;
+        if (fabsf(error) >= _cfg.pitch_deadband_rad) {
+            const float effKp = _computeEffectiveKp(fabsf(error), _cfg.Kp,
+                                                     _cfg.gain_boost_threshold_rad,
+                                                     _cfg.gain_boost_factor);
+            const float u_raw = (effKp * error
+                               + _cfg.Kd * _pitchRateFiltered)
+                               * _cfg.correction_sign;
+            u_clamped = constrain(u_raw,
+                                  -_cfg.max_correction_deg,
+                                   _cfg.max_correction_deg);
+        }
+        _ts_pitch_u_clamped = u_clamped;
+        // _ts_pitch_error already set above.
+
+        // Convert to mm with zero-bypass + delta clamp + IIR (mirrors _shapeOutput).
+        const float raw_dx_mm = u_clamped * _cfg.pitch_to_dx_mm_per_deg;
+        float clamped_dx;
+        if (fabsf(raw_dx_mm) < 1e-4f) {
+            clamped_dx = 0.0f;  // zero-bypass: let IIR decay freely
+        } else {
+            const float maxStep = _cfg.max_output_rate_deg_per_tick
+                                * _cfg.pitch_to_dx_mm_per_deg;
+            clamped_dx = constrain(raw_dx_mm,
+                                   _dx_filtered_mm - maxStep,
+                                   _dx_filtered_mm + maxStep);
+        }
+        _dx_filtered_mm = _cfg.output_iir_alpha * _dx_filtered_mm
+                        + (1.0f - _cfg.output_iir_alpha) * clamped_dx;
+        bc.dx_mm = _dx_filtered_mm;
+    } else {
+        _ts_pitch_u_clamped = 0.0f;
+        _ts_pitch_error     = 0.0f;
+    }
+
+    // ── Roll PD → dy_mm ──────────────────────────────────────────────────────
+    if (_cfg.roll_enabled) {
+        _rollRateFiltered = _cfg.roll_derivative_lpf_alpha * _rollRateFiltered
+                         + (1.0f - _cfg.roll_derivative_lpf_alpha) * state.rollRate;
+
+        const float predictedRoll = state.roll
+                                  + state.rollRate * _cfg.servo_lag_compensation_s;
+        const float roll_error = predictedRoll - _cfg.roll_setpoint_rad;
+        _ts_roll_error = roll_error;
+
+        float u_roll_clamped = 0.0f;
+        if (fabsf(roll_error) >= _cfg.roll_deadband_rad) {
+            const float effKpRoll = _computeEffectiveKp(fabsf(roll_error),
+                                                         _cfg.Kp_roll,
+                                                         _cfg.gain_boost_threshold_roll_rad,
+                                                         _cfg.gain_boost_factor_roll);
+            const float u_roll_raw = (effKpRoll * roll_error
+                                    + _cfg.Kd_roll * _rollRateFiltered)
+                                   * _cfg.roll_correction_sign;
+            u_roll_clamped = constrain(u_roll_raw,
+                                       -_cfg.max_roll_correction_deg,
+                                        _cfg.max_roll_correction_deg);
+        }
+        _ts_roll_u_clamped = u_roll_clamped;
+
+        // Soft clamp: prevent dy_mm from pushing the combined y_mm (lateral_shift +
+        // dy) beyond IK reach. ±25 mm leaves headroom for WeightShift's contribution.
+        u_roll_clamped = constrain(u_roll_clamped,
+                                   -_cfg.max_roll_correction_deg,
+                                    _cfg.max_roll_correction_deg);
+
+        const float raw_dy_mm = u_roll_clamped * _cfg.roll_to_dy_mm_per_deg;
+        float clamped_dy;
+        if (fabsf(raw_dy_mm) < 1e-4f) {
+            clamped_dy = 0.0f;
+        } else {
+            const float maxStep = _cfg.max_output_rate_deg_per_tick
+                                * _cfg.roll_to_dy_mm_per_deg;
+            clamped_dy = constrain(raw_dy_mm,
+                                   _dy_filtered_mm - maxStep,
+                                   _dy_filtered_mm + maxStep);
+        }
+        _dy_filtered_mm = _cfg.output_iir_alpha * _dy_filtered_mm
+                        + (1.0f - _cfg.output_iir_alpha) * clamped_dy;
+        // Outer soft clamp on dy_mm to protect IK reach.
+        bc.dy_mm = constrain(_dy_filtered_mm, -25.0f, 25.0f);
+    } else {
+        _ts_roll_u_clamped = 0.0f;
+        _ts_roll_error     = 0.0f;
+    }
+
+    bc.dPitch_deg = 0.0f;  // reserved
+    bc.dRoll_deg  = 0.0f;  // reserved
+    bc.valid = true;
+    return bc;
 }
 
 // ---------------------------------------------------------------------------

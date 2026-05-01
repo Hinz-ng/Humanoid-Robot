@@ -43,6 +43,8 @@ __pycache__/
 *Adafruit*
 *.ino
 *.md
+*settings*
+
 
 #Exact Filenames
 integrity.dat

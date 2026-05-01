@@ -31,8 +31,8 @@ struct BalanceConfig {
     //   near equilibrium is improved while large-disturbance response is unchanged.
     // After flashing: re-tune from WebSocket using CMD:BALANCE_TUNE:Kp=X
     float pitch_setpoint_rad = 0.0f;   // rad. WS: "setpoint"
-    float Kp = 10.0f;                  // deg/rad. WS: "Kp"
-    float Kd = 0.3f;                   // deg/(rad/s). WS: "Kd"
+    float Kp = 8.0f;                  // deg/rad. WS: "Kp"
+    float Kd = 0.1f;                   // deg/(rad/s). WS: "Kd"
 
     // --- TASK-1: Nonlinear gain boost (pitch) ---
     // |error| < threshold              → effective_kp = Kp
@@ -45,7 +45,7 @@ struct BalanceConfig {
     // Set factor=1.0 to disable boost and use flat Kp (equivalent to old behaviour).
     // WS keys: "boost_thresh" (rad), "boost_factor"
     float gain_boost_threshold_rad = 0.10f;  // rad (≈5.7°)
-    float gain_boost_factor        = 2.0f;   // dimensionless; 1.0 = disabled
+    float gain_boost_factor        = 1.3f;   // dimensionless; 1.0 = disabled
 
     float pitch_deadband_rad       = 0.035f;  // rad ≈ 2°. WS: "deadband"
     float derivative_lpf_alpha     = 0.85f;   // [0,1). WS: "d_lpf"
@@ -86,7 +86,7 @@ struct BalanceConfig {
     float gain_boost_factor_roll        = 2.0f;
 
     float roll_setpoint_rad    = 0.0f;  // rad. Injected by WeightShift. WS: "sp_r"
-    float roll_correction_sign = 1.0f;  // ±1. WS: "sign_r"
+    float roll_correction_sign = -1.0f;  // ±1. WS: "sign_r"
 
     float ankle_roll_ratio = 1.0f;  // WS: "a_roll"
     float hip_roll_ratio   = 0.0f;  // WS: "h_roll"

@@ -395,29 +395,41 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         //  if the balance controller is active it wins on shared joints.
         // ---------------------------------------------------------------------
         if (cmd == "RESETP") {
-            for (int i = 0; i < NUM_JOINTS; i++) {
-                bool skip = false;
-                for (uint8_t k = 0; k < SKIP_BOOT_NEUTRAL_COUNT; k++) {
-                    if (static_cast<uint8_t>(i) == SKIP_BOOT_NEUTRAL_CHANNELS[k]) {
-                        skip = true;
-                        break;
-                    }
-                }
-                if (!skip) {
-                    if (_motionManager) {
-                        // Route through authority layer so RESETP competes correctly with
-                        // any active controller. SOURCE_UI loses to SOURCE_BALANCE, so if
-                        // balance is active, the correction wins — which is correct.
-                        _motionManager->submit(SOURCE_UI,
-                                               static_cast<uint8_t>(i),
-                                               JOINT_CONFIG[i].neutralDeg);
-                    } else {
-                        _servoCtrl->setGaitOffset(i, 0.0f);
-                    }
-                }
+    // System-level reset: stop all controllers that own leg joints
+    // before submitting neutral. Without this, GaitController's
+    // per-tick stance submission (priority 1) clobbers SOURCE_UI (0).
+
+    if (_gaitCtrl) _gaitCtrl->stop();          // → IDLE; centers WeightShift
+    if (_weightShift) _weightShift->forceCenterImmediate();
+
+    if (_balCtrl) {
+        BalanceConfig cfg = _balCtrl->getConfig();
+        cfg.pitch_enabled = false;
+        cfg.roll_enabled  = false;
+        _balCtrl->setConfig(cfg);
+        _balCtrl->resetOutputState();
+    }
+
+    for (int i = 0; i < NUM_JOINTS; i++) {
+        bool skip = false;
+        for (uint8_t k = 0; k < SKIP_BOOT_NEUTRAL_COUNT; k++) {
+            if (static_cast<uint8_t>(i) == SKIP_BOOT_NEUTRAL_CHANNELS[k]) {
+                skip = true; break;
             }
-            broadcastState();
         }
+        if (!skip) {
+            if (_motionManager) {
+                _motionManager->submit(SOURCE_UI,
+                                       static_cast<uint8_t>(i),
+                                       JOINT_CONFIG[i].neutralDeg);
+            } else {
+                _servoCtrl->setGaitOffset(i, 0.0f);
+            }
+        }
+    }
+    broadcastState();
+    Serial.println("[WebComm] RESETP — gait stopped, balance off, neutral submitted.");
+ }
         // ---------------------------------------------------------------------
         else if (cmd.startsWith("LOAD:")) {
             _servoCtrl->loadPose(cmd.substring(5));

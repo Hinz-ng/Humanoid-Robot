@@ -766,6 +766,14 @@
                 <div class="bal-out-val" id="rcvDbVal">0 / 10</div>
             </div>
             <div class="bal-out-cell">
+                <div class="bal-out-lbl">Step X / Y (mm)</div>
+                <div class="bal-out-val" id="rcvStepXY">— / —</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Step magnitude</div>
+                <div class="bal-out-val" id="rcvStepMag">—</div>
+            </div>
+            <div class="bal-out-cell">
                 <div class="bal-out-lbl">Pitch tilt (°)</div>
                 <div class="bal-out-val" id="rcvPitchVal">—</div>
             </div>
@@ -848,10 +856,20 @@
                                padding:8px 14px; border-radius:5px; cursor:pointer; font-weight:bold; font-size:12px;">
                     &#8592; Test Recovery L
                 </button>
+                <button onclick="sendCmd('GAIT_TEST_RECOVERY_F')"
+                        style="background:#7a3a00; color:#fff; border:1px solid #ff6d00;
+                               padding:8px 14px; border-radius:5px; cursor:pointer; font-weight:bold; font-size:12px;">
+                    &#8593; Test Recovery Forward
+                </button>
+                <button onclick="sendCmd('GAIT_TEST_RECOVERY_B')"
+                        style="background:#7a3a00; color:#fff; border:1px solid #ff6d00;
+                               padding:8px 14px; border-radius:5px; cursor:pointer; font-weight:bold; font-size:12px;">
+                    &#8595; Test Recovery Back
+                </button>
             </div>
             <div style="font-size:10px; color:#555; margin-top:6px; line-height:1.4;">
                 Triggers RECOVERY_STEP directly (no detection threshold). Gait mode badge
-                shows RECOVERY; sub-state label tracks LIFTING → LANDING → DAMPING → IDLE.
+                shows RECOVERY; sub-state label tracks LIFTING → LANDING → DAMP_HOLD → SOFT_RETURN → IDLE.
             </div>
         </div>
 
@@ -2382,7 +2400,7 @@ function parseGaitState(payload) {
             const rcvSub  = parseInt(v["rsub"] || "0");
             const rcvDirY = parseInt(v["rdy"]  || "0");
             const rcvMs   = parseInt(v["rms"]  || "0");
-            const rcvSubNames = ["TRIGGERED", "LIFTING", "LANDING", "DAMPING", "COMPLETE"];
+            const rcvSubNames = ["TRIGGERED", "LIFTING", "LANDING", "DAMP_HOLD", "SOFT_RETURN", "COMPLETE"];
             const dirLabel = rcvDirY > 0 ? "→R" : rcvDirY < 0 ? "←L" : "";
             subLabel.textContent = "RCV: " + (rcvSubNames[rcvSub] || "?")
                                  + "  " + dirLabel + "  " + rcvMs + "ms";
@@ -2421,7 +2439,7 @@ function parseGaitState(payload) {
     {
         if (mode === 5) {
             const rcvSub = parseInt(v["rsub"] || "0");
-            const rcvSubShort = ["TRIGGERED", "LIFTING", "LANDING", "DAMPING", "COMPLETE"];
+            const rcvSubShort = ["TRIGGERED", "LIFTING", "LANDING", "DAMP_HOLD", "SOFT_RETURN", "COMPLETE"];
             set("gaitTelemSub", "RCV:" + (rcvSubShort[rcvSub] || "?"));
         } else {
             const subTelemNames = ["WAIT", "SWING", "STABILIZE", "STOPPING"];
@@ -2429,6 +2447,17 @@ function parseGaitState(payload) {
         }
     }
     set("gaitTelemHold",  isPoseMode ? (hold > 0 ? "HOLD " + hold : "running") : "—");
+
+    // Stage 2 recovery step telemetry
+    {
+        const rcvX = parseFloat(v["rcvX"] || "0");
+        const rcvY = parseFloat(v["rcvY"] || "0");
+        const rcvM = parseFloat(v["rcvMag"] || "0");
+        const xyEl = document.getElementById("rcvStepXY");
+        const mgEl = document.getElementById("rcvStepMag");
+        if (xyEl) xyEl.textContent = rcvX.toFixed(1) + " / " + rcvY.toFixed(1);
+        if (mgEl) mgEl.textContent = rcvM.toFixed(1) + " mm";
+    }
 
     if (!_tuneActive) {
         _syncSlider("slGaitStep", "tvGaitStep", stepH, 0);

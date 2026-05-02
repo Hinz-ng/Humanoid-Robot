@@ -297,11 +297,12 @@ void WebComm::broadcastGaitState() {
     _lastGaitBroadcast_us = now;
 
     const GaitState& s = _gaitCtrl->getState();
-    char buf[256];
+    char buf[320];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,"
-        "rsub=%d,rdx=%d,rdy=%d,rms=%lu",
+        "rsub=%d,rdx=%d,rdy=%d,rms=%lu,"
+        "rcvX=%.1f,rcvY=%.1f,rcvMag=%.1f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -315,7 +316,8 @@ void WebComm::broadcastGaitState() {
         static_cast<int>(s.recoverySub),
         static_cast<int>(s.recoveryDirX),
         static_cast<int>(s.recoveryDirY),
-        static_cast<unsigned long>(s.recoveryElapsedMs)
+        static_cast<unsigned long>(s.recoveryElapsedMs),
+        s.rcvStepX_mm, s.rcvStepY_mm, s.rcvMagnitude
     );
     ws.textAll(buf);
 }
@@ -867,6 +869,18 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             if (_gaitCtrl) {
                 _gaitCtrl->triggerRecovery(0.0f, -0.20f);
                 Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_L — simulating left push");
+            }
+        }
+        else if (cmd == "GAIT_TEST_RECOVERY_F") {
+            if (_gaitCtrl) {
+                _gaitCtrl->triggerRecovery(+0.20f, 0.0f);
+                Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_F — simulating forward push");
+            }
+        }
+        else if (cmd == "GAIT_TEST_RECOVERY_B") {
+            if (_gaitCtrl) {
+                _gaitCtrl->triggerRecovery(-0.20f, 0.0f);
+                Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_B — simulating backward push");
             }
         }
         else if (cmd.startsWith("GAIT_TUNE:")) {

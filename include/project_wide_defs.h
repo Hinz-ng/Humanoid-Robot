@@ -53,7 +53,7 @@
 // GAIT PARAMETERS — GaitController (weight_shift evolution)
 // ============================================================
 constexpr float GAIT_PHASE_RATE_HZ          = 0.4f;   // start slow; cycles/sec
-constexpr float GAIT_STEP_HEIGHT_MM         = 25.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 10.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 35.0f;  // Phase 3+; forward stride
 constexpr float GAIT_WEIGHT_SHIFT_THRESHOLD_RAD = 0.15f; // ~8.5° — min roll before lift
@@ -83,13 +83,48 @@ constexpr uint32_t GAIT_STABILIZE_MS            = 400;
 constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 
 // ============================================================
-// RECOVERY STEP PARAMETERS — secondary balance system (Stage 1+)
+// RECOVERY STEP PARAMETERS — secondary balance system
 // ============================================================
-constexpr float    RECOVERY_STEP_LATERAL_MM = 30.0f;   // lateral catch step size
-constexpr float    RECOVERY_STEP_FORWARD_MM = 0.0f;    // Stage 2: enable sagittal
-constexpr uint32_t RECOVERY_LIFT_MS         = 200;     // swing foot rise time (ms)
-constexpr uint32_t RECOVERY_LAND_MS         = 200;     // swing foot descent time (ms)
-constexpr uint32_t RECOVERY_DAMP_MS         = 600;     // hold at planted position (ms)
-constexpr float    RECOVERY_STEP_HEIGHT_MM  = 25.0f;   // peak clearance during step
+//
+// Stage 1: lateral-only fixed magnitude.
+// Stage 2: 2D directional, magnitude-scaled, soft-return.
+//
+// Per-trigger magnitude is computed inside GaitController::triggerRecovery()
+// from the pitch/roll passed by BalanceController, then clamped to these caps.
+// ============================================================
+
+// --- Step magnitude caps (hard physical limits) ---
+constexpr float RECOVERY_STEP_LATERAL_MAX_MM = 35.0f;  // was 30 fixed — now ceiling
+constexpr float RECOVERY_STEP_FORWARD_MAX_MM = 35.0f;  // matches lateral cap
+constexpr float RECOVERY_STEP_HEIGHT_MM      = 35.0f;  // unchanged
+
+// --- Magnitude scaling: simplified capture-point ---
+// step_mm = clamp(MAGNITUDE_GAIN_MM_PER_RAD * |tilt|, MIN, MAX)
+// Initial value: 30 mm step at 0.20 rad tilt → 150 mm/rad. Tune after T2.3.
+// Floor prevents trivial steps from triggering motion (less than the IMU noise floor).
+constexpr float RECOVERY_MAGNITUDE_GAIN_MM_PER_RAD = 150.0f;
+constexpr float RECOVERY_STEP_MIN_MAGNITUDE_MM     = 10.0f;
+
+// --- Stance counter-shift fraction ---
+// stance_offset = -counterShift * swing_offset (opposite direction, smaller magnitude)
+// 0.0 disables. 0.3 = 30% counter-shift. UVC equivalent ~0.25.
+constexpr float RECOVERY_STANCE_COUNTERSHIFT_FRAC  = 0.3f;
+
+// --- Sub-state durations (ms) ---
+// LIFT and LAND unchanged from Stage 1.
+// DAMP_HOLD: brief hold at planted offset before soft return begins.
+// SOFT_RETURN: smoothstep decay of step offset back to centered stance.
+//   DAMP_HOLD + SOFT_RETURN ≈ original RECOVERY_DAMP_MS (600).
+constexpr uint32_t RECOVERY_LIFT_MS         = 200;     // unchanged
+constexpr uint32_t RECOVERY_LAND_MS         = 200;     // unchanged
+constexpr uint32_t RECOVERY_DAMP_HOLD_MS    = 200;     // was 600 (combined)
+constexpr uint32_t RECOVERY_SOFT_RETURN_MS  = 400;     // new
+
+// --- Refractory lockout (ms) ---
+// After RecoverySubState::COMPLETE, recovery_flag from BalanceController
+// is ignored for this many ms. Prevents post-step transient retrigger.
+// Set ≥ output_iir time-constant of balance × 5 (~150 ms) plus mechanical
+// settling margin. Tune after T2.5.
+constexpr uint32_t RECOVERY_LOCKOUT_MS      = 500;
 
 #endif // PROJECT_WIDE_DEFS_H

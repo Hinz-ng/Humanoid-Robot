@@ -48,17 +48,19 @@ enum class StepSubState : uint8_t {
 };
 
 // ---------------------------------------------------------------------------
-//  RecoverySubState — sub-states inside RECOVERY_STEP mode.
+//  RecoverySubState — sub-states inside RECOVERY_STEP mode (Stage 2).
 //
-//  TRIGGERED → LIFTING → LANDING → DAMPING → COMPLETE → (back to IDLE)
-//  Open-loop timing: RECOVERY_LIFT_MS / RECOVERY_LAND_MS / RECOVERY_DAMP_MS.
+//  TRIGGERED → LIFTING → LANDING → DAMP_HOLD → SOFT_RETURN → COMPLETE → (back to IDLE)
+//  Open-loop timing: RECOVERY_LIFT_MS / RECOVERY_LAND_MS / RECOVERY_DAMP_HOLD_MS / RECOVERY_SOFT_RETURN_MS.
 // ---------------------------------------------------------------------------
 enum class RecoverySubState : uint8_t {
-    TRIGGERED = 0,  // direction resolved; LIFTING starts next tick
-    LIFTING   = 1,  // swing foot rising on sin arc to peak height + lateral offset
-    LANDING   = 2,  // swing foot descending onto target lateral position
-    DAMPING   = 3,  // both feet planted; hold for oscillation damping
-    COMPLETE  = 4,  // return to IDLE on this tick; clear all recovery state
+    TRIGGERED   = 0,  // direction resolved; LIFTING starts next tick
+    LIFTING     = 1,  // swing foot rising on sin arc to peak height + lateral offset
+    LANDING     = 2,  // swing foot descending onto target lateral position
+    DAMPING     = 3,  // Stage 1 alias — kept for telemetry compat (= DAMP_HOLD)
+    DAMP_HOLD   = 3,  // explicit name — same numeric value
+    SOFT_RETURN = 4,  // Stage 2: foot offset decays smoothly back to centered stance
+    COMPLETE    = 5,  // return to IDLE on this tick; clear all recovery state
 };
 
 // ---------------------------------------------------------------------------
@@ -134,6 +136,11 @@ struct GaitState {
     int8_t           recoveryDirX      = 0;   // sagittal fall direction: -1/0/+1
     int8_t           recoveryDirY      = 0;   // lateral  fall direction: -1/0/+1
     uint32_t         recoveryElapsedMs = 0;   // ms since current sub-state began
+
+    // Stage 2 recovery telemetry. Valid only when mode == RECOVERY_STEP.
+    float    rcvStepX_mm   = 0.0f;   // sagittal step magnitude at trigger (signed)
+    float    rcvStepY_mm   = 0.0f;   // lateral  step magnitude at trigger (signed)
+    float    rcvMagnitude  = 0.0f;   // sqrt(stepX² + stepY²) at trigger
 };
 
 // ---------------------------------------------------------------------------
@@ -208,6 +215,11 @@ private:
     int8_t           _rcvDirY         = 0;     // lateral direction at trigger
     uint32_t         _rcvSubStartMs   = 0;     // millis() when _rcvSub last changed
     bool             _rcvSwingIsRight = false; // which leg is the swing leg
+
+    // Stage 2: per-trigger step magnitudes and refractory lockout.
+    float    _rcvStepX_mm       = 0.0f;  // sagittal step magnitude this recovery (signed)
+    float    _rcvStepY_mm       = 0.0f;  // lateral step magnitude this recovery (signed)
+    uint32_t _rcvLockoutUntilMs = 0;     // millis() until which re-trigger is blocked
 
     void _enterRcvSub(RecoverySubState s);
     void _runRecoveryStep(float dt_s);

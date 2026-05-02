@@ -87,6 +87,10 @@ void oe_clear() {
     // Must run before OE goes LOW to prevent the injected setpoint from triggering
     // an immediate balance correction toward the pre-estop lean target.
     weightShift.forceCenterImmediate();
+    // Force gait to IDLE so any in-progress RECOVERY_STEP (or gait mode) is
+    // terminated immediately. start(IDLE) clears recovery private state and
+    // re-centers WeightShift (harmless after forceCenterImmediate above).
+    gaitController.start(GaitMode::IDLE);
     _oe_estopped = false;
     _oe_released = true;
     digitalWrite(OE_PIN, LOW);
@@ -189,14 +193,21 @@ void loop() {
             // Stage 3: when task_space_output=true, balance runs FIRST so its
             // correction is available when gait builds FootTargets. Legacy order
             // preserved when task_space_output=false.
+            //
+            // Recovery flag wiring: both paths pass a BalanceState* to
+            // gaitController.update() so catch-step detection can observe the flag.
+            // Task-space: current-tick balState (fresh).
+            // Legacy: previous-tick balState via getLastState() — at most 2.5 ms stale,
+            // which is well within the recovery_confirm_ticks debounce window.
             const bool taskSpace = balanceController.getConfig().task_space_output;
             BalanceState balState;
             if (taskSpace) {
                 balState = balanceController.update(state);
                 const BalanceCorrection bc = balanceController.getLastCorrection();
-                gaitController.update(dt, state, &bc);
+                gaitController.update(dt, state, &bc, &balState);
             } else {
-                gaitController.update(dt, state, nullptr);
+                const BalanceState lastBal = balanceController.getLastState();
+                gaitController.update(dt, state, nullptr, &lastBal);
                 balState = balanceController.update(state);
             }
 

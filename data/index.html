@@ -247,6 +247,7 @@
 .gait-mode-step   { background: #1a1a3a; color: #7c83fd; }
 .gait-mode-wshift { background: #003a3a; color: #4dd0e1; }
 .gait-mode-pose   { background: #2a0a4a; color: #ce93d8; }
+.gait-mode-rcv    { background: #3a1a00; color: #ff6d00; }
 
 /* Gait gate badge */
 .gait-gate-badge { display: inline-block; padding: 2px 8px; border-radius: 3px;
@@ -299,6 +300,28 @@
                  padding: 7px 12px; border-radius: 4px; cursor: pointer;
                  font-size: 12px; font-weight: bold; }
 .btn-ik-motion:active { background: #5a3000; }
+
+/* ── Catch-Step Recovery Panel (Stage 0) ─────────────────────────────── */
+.rcv-panel { background: #1a1a2e; border: 1px solid #4a2a0a;
+             border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
+.rcv-header { display: flex; justify-content: space-between; align-items: center;
+              padding: 12px 16px; cursor: pointer; -webkit-user-select: none;
+              -ms-user-select: none; user-select: none; }
+.rcv-header h3 { margin: 0; font-size: 13px; text-transform: uppercase;
+                 letter-spacing: 1px; color: #ffb74d; }
+.rcv-chevron { font-size: 11px; color: #888; transition: transform 0.2s; }
+.rcv-chevron.open { transform: rotate(180deg); }
+.rcv-body { padding: 0 16px 16px; }
+.rcv-status { display: inline-block; padding: 3px 10px; border-radius: 3px;
+              font-size: 11px; font-weight: bold; letter-spacing: 0.5px; margin-bottom: 12px; }
+.rcv-status.off     { background: #2a2a2a; color: #777; }
+.rcv-status.armed   { background: #3a2a00; color: #ffb74d; }
+.rcv-status.trigger { background: #5a0000; color: #ff5252; }
+.rcv-tune-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+.rcv-tune-row  { display: flex; flex-direction: column; font-size: 11px; color: #aaa; }
+.rcv-tune-row .tune-header { display: flex; justify-content: space-between; margin-bottom: 3px; }
+.rcv-tune-row .tune-val    { color: #ffb74d; font-weight: bold; font-family: monospace; }
+.rcv-tune-row input[type="range"] { width: 100%; margin: 0; }
 
 .ik-input-row { display: flex; gap: 10px; align-items: flex-end;
                 flex-wrap: wrap; margin-top: 6px; }
@@ -712,7 +735,129 @@
 
     </div><!-- /.bal-body -->
 </div><!-- /.bal-panel -->
-    
+
+<!-- ── Catch-Step Recovery Panel (Stage 0 — detection only) ───────────── -->
+<div class="rcv-panel">
+    <div class="rcv-header" onclick="toggleRcvPanel()">
+        <h3>&#9888; Catch-Step Recovery</h3>
+        <span class="rcv-chevron" id="rcvChevron">&#9660;</span>
+    </div>
+    <div class="rcv-body" id="rcvBody" style="display:none;">
+
+        <!-- Status badge + enable/disable buttons -->
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+            <span class="rcv-status off" id="rcvStatusBadge">OFF</span>
+            <button class="btn-bal-on"  id="rcvEnBtn"  onclick="sendCmd('RECOVERY_TUNE:enabled=1')">Enable</button>
+            <button class="btn-bal-off" id="rcvDisBtn" onclick="sendCmd('RECOVERY_TUNE:enabled=0')" style="display:none;">Disable</button>
+            <label style="font-size:11px; color:#aaa; display:flex; align-items:center; gap:5px; cursor:pointer;">
+                <input type="checkbox" id="rcvSuppGait" onchange="sendRcvSuppGait()" checked>
+                Suppress during walking
+            </label>
+        </div>
+
+        <!-- Live readouts -->
+        <div class="bal-outputs" style="margin-bottom:14px;">
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Sat count / limit</div>
+                <div class="bal-out-val" id="rcvSatVal">0 / 20</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Debounce / limit</div>
+                <div class="bal-out-val" id="rcvDbVal">0 / 10</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Pitch tilt (°)</div>
+                <div class="bal-out-val" id="rcvPitchVal">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Roll tilt (°)</div>
+                <div class="bal-out-val" id="rcvRollVal">—</div>
+            </div>
+        </div>
+
+        <!-- Tuning sliders -->
+        <div style="font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">
+            Detection thresholds
+        </div>
+        <div class="rcv-tune-grid">
+            <div class="rcv-tune-row">
+                <div class="tune-header">
+                    <span>Pitch tilt thresh (°)</span>
+                    <span class="tune-val" id="tvRcvPitch">11.5</span>
+                </div>
+                <input type="range" id="slRcvPitch" min="1" max="35" step="0.5" value="11.5"
+                       oninput="updateRcvLabel('rcv_pitch',this.value); sendRcvTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Above this pitch angle triggers detection. Set well above normal walking range.
+                </div>
+            </div>
+            <div class="rcv-tune-row">
+                <div class="tune-header">
+                    <span>Roll tilt thresh (°)</span>
+                    <span class="tune-val" id="tvRcvRoll">10.3</span>
+                </div>
+                <input type="range" id="slRcvRoll" min="1" max="35" step="0.5" value="10.3"
+                       oninput="updateRcvLabel('rcv_roll',this.value); sendRcvTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Above this roll angle triggers detection. Set well above normal walking range.
+                </div>
+            </div>
+            <div class="rcv-tune-row">
+                <div class="tune-header">
+                    <span>Saturation ticks</span>
+                    <span class="tune-val" id="tvRcvSat">20</span>
+                </div>
+                <input type="range" id="slRcvSat" min="1" max="100" step="1" value="20"
+                       oninput="updateRcvLabel('rcv_sat',this.value); sendRcvTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    PD output must be saturated for this many consecutive ticks (~2.5 ms each).
+                </div>
+            </div>
+            <div class="rcv-tune-row">
+                <div class="tune-header">
+                    <span>Debounce ticks</span>
+                    <span class="tune-val" id="tvRcvConf">10</span>
+                </div>
+                <input type="range" id="slRcvConf" min="1" max="50" step="1" value="10"
+                       oninput="updateRcvLabel('rcv_conf',this.value); sendRcvTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Conditions must hold for this many ticks before flag fires.
+                </div>
+            </div>
+        </div>
+
+        <div style="font-size:10px; color:#666; margin-top:10px; line-height:1.5;">
+            Stage 0: detection only — no servo actuation. Verify T0.1–T0.7 before enabling Stage 1.<br>
+            Flag clears automatically when conditions go false (no latching).
+        </div>
+
+        <!-- Stage 1: manual trigger test buttons (T1.1 / T1.2) -->
+        <div style="border-top:1px solid #3a2a0a; padding-top:10px; margin-top:10px;">
+            <div style="font-size:10px; color:#888; text-transform:uppercase;
+                        letter-spacing:0.5px; margin-bottom:8px;">
+                Stage 1 manual test — balance armed, robot standing still
+            </div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <button onclick="sendCmd('GAIT_TEST_RECOVERY_R')"
+                        style="background:#7a3a00; color:#fff; border:1px solid #ff6d00;
+                               padding:8px 14px; border-radius:5px; cursor:pointer; font-weight:bold; font-size:12px;">
+                    &#8594; Test Recovery R
+                </button>
+                <button onclick="sendCmd('GAIT_TEST_RECOVERY_L')"
+                        style="background:#7a3a00; color:#fff; border:1px solid #ff6d00;
+                               padding:8px 14px; border-radius:5px; cursor:pointer; font-weight:bold; font-size:12px;">
+                    &#8592; Test Recovery L
+                </button>
+            </div>
+            <div style="font-size:10px; color:#555; margin-top:6px; line-height:1.4;">
+                Triggers RECOVERY_STEP directly (no detection threshold). Gait mode badge
+                shows RECOVERY; sub-state label tracks LIFTING → LANDING → DAMPING → IDLE.
+            </div>
+        </div>
+
+    </div><!-- /.rcv-body -->
+</div><!-- /.rcv-panel -->
+
 <!-- ── Speed Control Panel ───────────────────────────────────────────────── -->
 <div class="spd-panel">
     <div class="spd-header" onclick="toggleSpdPanel()">
@@ -1603,6 +1748,49 @@ function initWebSocket() {
                 if (dxEl) dxEl.textContent = parseFloat(v["dx"] || "0").toFixed(2);
                 if (dyEl) dyEl.textContent = parseFloat(v["dy"] || "0").toFixed(2);
             }
+            // Stage 0: catch-step recovery telemetry.
+            if (v["rcv"] !== undefined) {
+                const rcvFlag = v["rcv"] === "1";
+                const sat     = parseInt(v["sat"] || "0");
+                const rdb     = parseInt(v["rdb"] || "0");
+                const badge   = document.getElementById("rcvStatusBadge");
+                const enBtn   = document.getElementById("rcvEnBtn");
+                const disBtn  = document.getElementById("rcvDisBtn");
+                // Determine armed state from recovery_enabled (firmware sends no dedicated field,
+                // so we infer: if enBtn is hidden the user enabled it this session).
+                // Re-derive from button visibility instead of a separate flag.
+                const armed = enBtn && enBtn.style.display === "none";
+                if (badge) {
+                    if (rcvFlag) {
+                        badge.textContent = "TRIGGERED";
+                        badge.className   = "rcv-status trigger";
+                    } else if (armed) {
+                        badge.textContent = "ARMED";
+                        badge.className   = "rcv-status armed";
+                    } else {
+                        badge.textContent = "OFF";
+                        badge.className   = "rcv-status off";
+                    }
+                }
+                // Saturation counter: read sat limit from slider to display "count / limit"
+                const satLimit  = parseInt(document.getElementById("slRcvSat")?.value  || "20");
+                const confLimit = parseInt(document.getElementById("slRcvConf")?.value || "10");
+                const satEl = document.getElementById("rcvSatVal");
+                const dbEl  = document.getElementById("rcvDbVal");
+                if (satEl) satEl.textContent = sat + " / " + satLimit;
+                if (dbEl)  dbEl.textContent  = rdb + " / " + confLimit;
+            }
+            // Live tilt readout from ESTIMATE packet is already shown there;
+            // mirror into recovery panel cells from the pitch/roll in this BALANCE packet.
+            {
+                const pErrDeg = (parseFloat(v["p_err"] || "0") * 180 / Math.PI).toFixed(2);
+                const rErrDeg = (parseFloat(v["r_err"] || "0") * 180 / Math.PI).toFixed(2);
+                const ppEl = document.getElementById("rcvPitchVal");
+                const rrEl = document.getElementById("rcvRollVal");
+                // p_err is pitch error (pitch - setpoint), close enough to raw pitch for display.
+                if (ppEl) ppEl.textContent = pErrDeg + "°";
+                if (rrEl) rrEl.textContent = rErrDeg + "°";
+            }
         }
         else if (msg.startsWith("WSHIFT_STATE:")) {
             // Firmware source-of-truth sync on connect. Update sliders only —
@@ -1688,6 +1876,70 @@ function toggleBalPanel() {
     const open    = body.style.display !== "none";
     body.style.display   = open ? "none"  : "block";
     chevron.classList.toggle("open", !open);
+}
+
+// ── Recovery panel (Stage 0) ──────────────────────────────────────────────────
+function toggleRcvPanel() {
+    const body    = document.getElementById("rcvBody");
+    const chevron = document.getElementById("rcvChevron");
+    const open    = body.style.display !== "none";
+    body.style.display = open ? "none" : "block";
+    chevron.classList.toggle("open", !open);
+}
+
+// Called when Enable/Disable buttons are pressed — mirrors the balance panel pattern.
+// The BALANCE: packet rcv field drives the badge; buttons drive visibility.
+document.addEventListener("DOMContentLoaded", () => {
+    // Wire Enable button to also flip button visibility immediately.
+    const enBtn  = document.getElementById("rcvEnBtn");
+    const disBtn = document.getElementById("rcvDisBtn");
+    if (enBtn) enBtn.addEventListener("click", () => {
+        enBtn.style.display  = "none";
+        disBtn.style.display = "inline-block";
+    });
+    if (disBtn) disBtn.addEventListener("click", () => {
+        disBtn.style.display = "none";
+        enBtn.style.display  = "inline-block";
+    });
+});
+
+const _rcvTuneMap = {
+    rcv_pitch: { el: "tvRcvPitch", decimals: 1, isAngle: true  },
+    rcv_roll:  { el: "tvRcvRoll",  decimals: 1, isAngle: true  },
+    rcv_sat:   { el: "tvRcvSat",   decimals: 0, isAngle: false },
+    rcv_conf:  { el: "tvRcvConf",  decimals: 0, isAngle: false },
+};
+
+function updateRcvLabel(id, rawVal) {
+    const m = _rcvTuneMap[id];
+    if (m && document.getElementById(m.el)) {
+        document.getElementById(m.el).textContent = parseFloat(rawVal).toFixed(m.decimals);
+    }
+}
+
+// Debounced send — angle sliders are in degrees, firmware expects radians for tilt thresholds.
+function sendRcvTune() {
+    clearTimeout(sendRcvTune._t);
+    sendRcvTune._t = setTimeout(() => {
+        const pitchDeg = parseFloat(document.getElementById("slRcvPitch").value);
+        const rollDeg  = parseFloat(document.getElementById("slRcvRoll").value);
+        const sat      = document.getElementById("slRcvSat").value;
+        const conf     = document.getElementById("slRcvConf").value;
+        const pitchRad = (pitchDeg * Math.PI / 180).toFixed(5);
+        const rollRad  = (rollDeg  * Math.PI / 180).toFixed(5);
+        const msg = `CMD:RECOVERY_TUNE:rcv_pitch=${pitchRad},rcv_roll=${rollRad},rcv_sat=${sat},rcv_conf=${conf}`;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(msg);
+            console.log("[WS TX]", msg);
+        }
+    }, 80);
+}
+
+function sendRcvSuppGait() {
+    const val = document.getElementById("rcvSuppGait").checked ? 1 : 0;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send("CMD:RECOVERY_TUNE:supp_gait=" + val);
+    }
 }
 
 // ── Tune label helper — updates the displayed value next to each slider ───────
@@ -2108,8 +2360,8 @@ function parseGaitState(payload) {
     const stanceH = parseFloat(v["stanceH"] || "185");
 
     // Mode badge
-    const modeNames  = ["IDLE", "RUNNING", "SINGLE STEP", "W-SHIFT ONLY", "POSE STEP"];
-    const modeClass  = ["gait-mode-idle", "gait-mode-run", "gait-mode-step", "gait-mode-wshift", "gait-mode-pose"];
+    const modeNames  = ["IDLE", "RUNNING", "SINGLE STEP", "W-SHIFT ONLY", "POSE STEP", "RECOVERY"];
+    const modeClass  = ["gait-mode-idle", "gait-mode-run", "gait-mode-step", "gait-mode-wshift", "gait-mode-pose", "gait-mode-rcv"];
     const modeBadge  = document.getElementById("gaitModeBadge");
     if (modeBadge) {
         modeBadge.textContent = modeNames[mode] || "?";
@@ -2123,12 +2375,22 @@ function parseGaitState(payload) {
         gateBadge.className   = "gait-gate-badge " + (gateOK ? "gait-gate-open" : "gait-gate-closed");
     }
 
-    // Sub-state label — half=0 swings LEFT, half=1 swings RIGHT (hardware-verified)
+    // Sub-state label — shows recovery sub-state when mode==5, gait sub-state otherwise.
     const subLabel = document.getElementById("gaitSubLabel");
     if (subLabel) {
-        const halfLabel = (phase < 0.5) ? "half=0 (L swing)" : "half=1 (R swing)";
-        const subStateNames = ["WAIT SHIFT", "SWINGING", "STABILIZING", "STOPPING"];
-        subLabel.textContent = (subStateNames[sub] || "WAIT SHIFT") + "  " + halfLabel;
+        if (mode === 5) {
+            const rcvSub  = parseInt(v["rsub"] || "0");
+            const rcvDirY = parseInt(v["rdy"]  || "0");
+            const rcvMs   = parseInt(v["rms"]  || "0");
+            const rcvSubNames = ["TRIGGERED", "LIFTING", "LANDING", "DAMPING", "COMPLETE"];
+            const dirLabel = rcvDirY > 0 ? "→R" : rcvDirY < 0 ? "←L" : "";
+            subLabel.textContent = "RCV: " + (rcvSubNames[rcvSub] || "?")
+                                 + "  " + dirLabel + "  " + rcvMs + "ms";
+        } else {
+            const halfLabel = (phase < 0.5) ? "half=0 (L swing)" : "half=1 (R swing)";
+            const subStateNames = ["WAIT SHIFT", "SWINGING", "STABILIZING", "STOPPING"];
+            subLabel.textContent = (subStateNames[sub] || "WAIT SHIFT") + "  " + halfLabel;
+        }
     }
 
     // Phase bar
@@ -2157,8 +2419,14 @@ function parseGaitState(payload) {
     set("gaitTelemWS",    wsProg.toFixed(3));
     set("gaitTelemHalf",  phase < 0.5 ? "0 (L swing)" : "1 (R swing)");
     {
-        const subTelemNames = ["WAIT", "SWING", "STABILIZE", "STOPPING"];
-        set("gaitTelemSub", subTelemNames[sub] || "WAIT");
+        if (mode === 5) {
+            const rcvSub = parseInt(v["rsub"] || "0");
+            const rcvSubShort = ["TRIGGERED", "LIFTING", "LANDING", "DAMPING", "COMPLETE"];
+            set("gaitTelemSub", "RCV:" + (rcvSubShort[rcvSub] || "?"));
+        } else {
+            const subTelemNames = ["WAIT", "SWING", "STABILIZE", "STOPPING"];
+            set("gaitTelemSub", subTelemNames[sub] || "WAIT");
+        }
     }
     set("gaitTelemHold",  isPoseMode ? (hold > 0 ? "HOLD " + hold : "running") : "—");
 

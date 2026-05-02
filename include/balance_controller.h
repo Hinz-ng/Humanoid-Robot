@@ -121,6 +121,21 @@ struct BalanceConfig {
     // WS: "dx_per_deg", "dy_per_deg"
     float pitch_to_dx_mm_per_deg = 3.0f;
     float roll_to_dy_mm_per_deg  = 3.0f;
+
+    // --- Catch-step recovery — Stage 0 detection ---
+    // Triggers recovery_flag when primary controller cannot stabilise.
+    // Stage 0: flag-only, no actuation. Default disabled — tune thresholds
+    // so flag never fires during M2 walking before enabling.
+    //
+    // Detection: (tilt OR saturation) persistent for recovery_confirm_ticks.
+    // Saturation counted on u_clamped / u_roll_clamped ≥ 95% of clamp ceiling.
+    // WS keys: "rcv_pitch", "rcv_roll", "rcv_sat", "rcv_conf"
+    bool     recovery_enabled              = false;
+    bool     recovery_suppress_during_gait = true;   // F6 mitigation
+    float    recovery_tilt_pitch_rad       = 0.20f;  // ~11.4°
+    float    recovery_tilt_roll_rad        = 0.18f;  // ~10.3°
+    uint16_t recovery_saturation_ticks     = 20;     // ~50 ms at 400 Hz
+    uint16_t recovery_confirm_ticks        = 10;     // ~25 ms debounce
 };
 
 enum BalanceJointIdx : uint8_t {
@@ -161,6 +176,11 @@ struct BalanceState {
     float hip_roll_cmd_deg    = 0.0f;
     float torso_roll_cmd_deg  = 0.0f;
     bool  fell = false;
+
+    // --- Catch-step recovery telemetry (Stage 0) ---
+    bool     recovery_flag     = false;  // true when debounced conditions met
+    uint16_t saturation_count  = 0;      // current saturation streak (ticks)
+    uint16_t recovery_debounce = 0;      // current debounce streak (ticks)
 };
 
 class BalanceController {
@@ -231,6 +251,17 @@ private:
     float _ts_roll_u_clamped  = 0.0f;
     float _ts_pitch_error     = 0.0f;
     float _ts_roll_error      = 0.0f;
+
+    // Stage 0: recovery detection counters.
+    // Incremented each tick saturated / debounced; clamped at the respective
+    // threshold (uint16_t max > 65 k ticks, but we clamp before that).
+    uint16_t _saturationCount  = 0;
+    uint16_t _recoveryDebounce = 0;
+
+    // Populates out.recovery_flag / saturation_count / recovery_debounce.
+    // Called from both the task-space and legacy branches of update(), just
+    // before _lastState = out, so that out.u_clamped is already populated.
+    void _updateRecoveryDetection(BalanceState& out, const IMUState& state);
 };
 
 #endif // BALANCE_CONTROLLER_H

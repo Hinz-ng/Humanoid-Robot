@@ -34,6 +34,7 @@
 // =============================================================================
 
 #include "gait_controller.h"
+#include "balance_controller.h"  // BalanceState — needed for recovery flag observation
 #include "weight_shift.h"
 #include "oe_control.h"
 #include "leg_ik.h"
@@ -86,6 +87,16 @@ void GaitController::start(GaitMode mode) {
         _stopStartMs      = 0;
         _stopSwingFrac    = 0.0f;
         _stopHalf         = 0;
+        // Stage 1: clear recovery state so stale telemetry is not broadcast.
+        _rcvSub              = RecoverySubState::TRIGGERED;
+        _rcvDirX             = 0;
+        _rcvDirY             = 0;
+        _rcvSubStartMs       = 0;
+        _rcvSwingIsRight     = false;
+        _state.recoverySub      = RecoverySubState::TRIGGERED;
+        _state.recoveryDirX     = 0;
+        _state.recoveryDirY     = 0;
+        _state.recoveryElapsedMs = 0;
         if (_ws) _ws->trigger(ShiftDirection::NONE);
         Serial.println("[GaitCtrl] IDLE — weight shift centered.");
         return;
@@ -305,7 +316,8 @@ void GaitController::_advanceHalf() {
 //  update  —  main control loop, every tick from main.cpp.
 // ---------------------------------------------------------------------------
 void GaitController::update(float dt_s, const IMUState& imuState,
-                            const BalanceCorrection* bc) {
+                            const BalanceCorrection* bc,
+                            const BalanceState* balState) {
     if (_mm == nullptr)   return;
     if (oe_is_estopped()) return;
 
@@ -313,6 +325,23 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     _state.liftL_deg  = 0.0f;
     _state.liftR_deg  = 0.0f;
     _state.liftGateOK = false;
+
+    // Stage 1: observe recovery flag from BalanceController.
+    // Suppressed when already in RECOVERY_STEP (no re-trigger mid-step) and
+    // during RUNNING (F6 mitigation — false positives during walking).
+    // balState is the previous-tick BalanceState in legacy mode (2.5 ms stale),
+    // which is within the recovery_confirm_ticks debounce window.
+    if (balState != nullptr
+        && balState->recovery_flag
+        && _state.mode != GaitMode::RECOVERY_STEP
+        && _state.mode != GaitMode::RUNNING) {
+        triggerRecovery(imuState.pitch, imuState.roll);
+    }
+
+    if (_state.mode == GaitMode::RECOVERY_STEP) {
+        _runRecoveryStep(dt_s);
+        return;
+    }
 
     const WeightShiftState wsState = _ws ? _ws->getState() : WeightShiftState{};
     const bool wsActive = (_ws != nullptr) &&
@@ -550,5 +579,176 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         }
         _halfPhase = 0.0f;
         _advanceHalf();
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  triggerRecovery  —  arm a protective lateral catch step.
+// ---------------------------------------------------------------------------
+void GaitController::triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad) {
+    if (oe_is_estopped())                        return;
+    if (_state.mode == GaitMode::RECOVERY_STEP)  return;  // no re-trigger mid-step
+
+    // Lateral direction from roll sign. Stage 1: x component is always 0.
+    _rcvDirX = 0;
+    _rcvDirY = (tilt_roll_rad >= 0.0f) ? +1 : -1;
+
+    // Swing leg = leg on the falling side.
+    // tilt_roll_rad > 0 → robot leaning right → step right with right foot.
+    _rcvSwingIsRight = (tilt_roll_rad >= 0.0f);
+
+    // Clear any residual gait or weight-shift activity.
+    if (_ws) _ws->trigger(ShiftDirection::NONE);
+    _lastShiftDir    = 0;
+    _halfPhase       = 0.0f;
+    _currentHalf     = 0;
+    _poseHoldPt      = 0;
+    _state.poseHold  = 0;
+
+    _state.mode    = GaitMode::RECOVERY_STEP;
+    _state.running = true;
+    _enterRcvSub(RecoverySubState::TRIGGERED);
+
+    Serial.printf("[GaitCtrl] RECOVERY triggered  pitch=%.3f roll=%.3f  "
+                  "swing=%s  dirY=%+d\n",
+                  tilt_pitch_rad, tilt_roll_rad,
+                  _rcvSwingIsRight ? "R" : "L", _rcvDirY);
+}
+
+// ---------------------------------------------------------------------------
+void GaitController::_enterRcvSub(RecoverySubState s) {
+    _rcvSub              = s;
+    _state.recoverySub   = s;
+    _rcvSubStartMs       = millis();
+}
+
+// ---------------------------------------------------------------------------
+//  _runRecoveryStep  —  open-loop catch-step state machine.
+//
+//  Sub-state sequence: TRIGGERED → LIFTING → LANDING → DAMPING → COMPLETE.
+//  Each timed stage submits FootTargets through _submitFootTargetIK() so
+//  MotionManager priority arbitration is respected. Balance controller's
+//  SOURCE_BALANCE submissions still override SOURCE_GAIT on shared joints.
+//
+//  swingTargetY_mm is always +RECOVERY_STEP_LATERAL_MM: "outward" in the
+//  swing leg's own frontal frame. For right-leg swing this is rightward;
+//  for left-leg swing this is leftward — both catch the respective fall.
+// ---------------------------------------------------------------------------
+void GaitController::_runRecoveryStep(float dt_s) {
+    const uint32_t elapsed = millis() - _rcvSubStartMs;
+    _state.recoveryElapsedMs = elapsed;
+    _state.recoveryDirX      = _rcvDirX;
+    _state.recoveryDirY      = _rcvDirY;
+
+    const float swingTargetY_mm = +RECOVERY_STEP_LATERAL_MM;
+    const float swingTargetX_mm = static_cast<float>(_rcvDirX) * RECOVERY_STEP_FORWARD_MM;
+
+    switch (_rcvSub) {
+
+        case RecoverySubState::TRIGGERED:
+            _enterRcvSub(RecoverySubState::LIFTING);
+            break;
+
+        case RecoverySubState::LIFTING: {
+            const float t       = fminf(static_cast<float>(elapsed)
+                                        / static_cast<float>(RECOVERY_LIFT_MS), 1.0f);
+            const float liftFrac = sinf(t * static_cast<float>(M_PI) * 0.5f);
+
+            FootTarget tSwing;
+            tSwing.isRightLeg    = _rcvSwingIsRight;
+            tSwing.x_mm          = swingTargetX_mm * t + GAIT_STANCE_X_OFFSET_MM;
+            tSwing.y_mm          = swingTargetY_mm * t;
+            tSwing.h_sagittal_mm = _cfg.stanceHeightMm - liftFrac * RECOVERY_STEP_HEIGHT_MM;
+            tSwing.h_frontal_mm  = 0.0f;
+            tSwing.valid         = (tSwing.h_sagittal_mm >= 20.0f);
+
+            FootTarget tStance;
+            tStance.isRightLeg    = !_rcvSwingIsRight;
+            tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM;
+            tStance.y_mm          = 0.0f;
+            tStance.h_sagittal_mm = _cfg.stanceHeightMm;
+            tStance.h_frontal_mm  = 0.0f;
+            tStance.valid         = true;
+
+            const LegIKResult rSwing  = _submitFootTargetIK(_rcvSwingIsRight,  tSwing);
+            const LegIKResult rStance = _submitFootTargetIK(!_rcvSwingIsRight, tStance);
+            _state.lastIKStatusL = static_cast<uint8_t>(_rcvSwingIsRight ? rStance.status : rSwing.status);
+            _state.lastIKStatusR = static_cast<uint8_t>(_rcvSwingIsRight ? rSwing.status  : rStance.status);
+            _state.lastReachPctL = _rcvSwingIsRight ? rStance.sagittal_reach_pct : rSwing.sagittal_reach_pct;
+            _state.lastReachPctR = _rcvSwingIsRight ? rSwing.sagittal_reach_pct  : rStance.sagittal_reach_pct;
+
+            if (elapsed >= RECOVERY_LIFT_MS) {
+                _enterRcvSub(RecoverySubState::LANDING);
+            }
+            break;
+        }
+
+        case RecoverySubState::LANDING: {
+            const float t        = fminf(static_cast<float>(elapsed)
+                                         / static_cast<float>(RECOVERY_LAND_MS), 1.0f);
+            const float liftFrac = cosf(t * static_cast<float>(M_PI) * 0.5f);
+
+            FootTarget tSwing;
+            tSwing.isRightLeg    = _rcvSwingIsRight;
+            tSwing.x_mm          = swingTargetX_mm + GAIT_STANCE_X_OFFSET_MM;
+            tSwing.y_mm          = swingTargetY_mm;
+            tSwing.h_sagittal_mm = _cfg.stanceHeightMm - liftFrac * RECOVERY_STEP_HEIGHT_MM;
+            tSwing.h_frontal_mm  = 0.0f;
+            tSwing.valid         = (tSwing.h_sagittal_mm >= 20.0f);
+
+            FootTarget tStance;
+            tStance.isRightLeg    = !_rcvSwingIsRight;
+            tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM;
+            tStance.y_mm          = 0.0f;
+            tStance.h_sagittal_mm = _cfg.stanceHeightMm;
+            tStance.h_frontal_mm  = 0.0f;
+            tStance.valid         = true;
+
+            const LegIKResult rSwing  = _submitFootTargetIK(_rcvSwingIsRight,  tSwing);
+            const LegIKResult rStance = _submitFootTargetIK(!_rcvSwingIsRight, tStance);
+            _state.lastIKStatusL = static_cast<uint8_t>(_rcvSwingIsRight ? rStance.status : rSwing.status);
+            _state.lastIKStatusR = static_cast<uint8_t>(_rcvSwingIsRight ? rSwing.status  : rStance.status);
+            _state.lastReachPctL = _rcvSwingIsRight ? rStance.sagittal_reach_pct : rSwing.sagittal_reach_pct;
+            _state.lastReachPctR = _rcvSwingIsRight ? rSwing.sagittal_reach_pct  : rStance.sagittal_reach_pct;
+
+            if (elapsed >= RECOVERY_LAND_MS) {
+                _enterRcvSub(RecoverySubState::DAMPING);
+            }
+            break;
+        }
+
+        case RecoverySubState::DAMPING: {
+            // Hold both feet at their planted positions.
+            // Primary balance (SOURCE_BALANCE) continues to act on residual oscillation.
+            FootTarget tSwing;
+            tSwing.isRightLeg    = _rcvSwingIsRight;
+            tSwing.x_mm          = swingTargetX_mm + GAIT_STANCE_X_OFFSET_MM;
+            tSwing.y_mm          = swingTargetY_mm;
+            tSwing.h_sagittal_mm = _cfg.stanceHeightMm;
+            tSwing.h_frontal_mm  = 0.0f;
+            tSwing.valid         = true;
+
+            FootTarget tStance;
+            tStance.isRightLeg    = !_rcvSwingIsRight;
+            tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM;
+            tStance.y_mm          = 0.0f;
+            tStance.h_sagittal_mm = _cfg.stanceHeightMm;
+            tStance.h_frontal_mm  = 0.0f;
+            tStance.valid         = true;
+
+            _submitFootTargetIK(_rcvSwingIsRight,  tSwing);
+            _submitFootTargetIK(!_rcvSwingIsRight, tStance);
+
+            if (elapsed >= RECOVERY_DAMP_MS) {
+                _enterRcvSub(RecoverySubState::COMPLETE);
+            }
+            break;
+        }
+
+        case RecoverySubState::COMPLETE:
+            // Return to IDLE. Centered stance was already held in DAMPING.
+            start(GaitMode::IDLE);
+            Serial.println("[GaitCtrl] RECOVERY complete — IDLE.");
+            break;
     }
 }

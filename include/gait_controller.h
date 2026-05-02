@@ -25,7 +25,8 @@
 #include "gait_types.h"
 #include "leg_ik.h"
 
-class WeightShift;  // forward declaration — full include in .cpp only
+class WeightShift;   // forward declaration — full include in .cpp only
+struct BalanceState; // forward declaration — full include in gait_controller.cpp
 
 // ---------------------------------------------------------------------------
 //  Step execution sub-state (within each half-cycle).
@@ -47,15 +48,30 @@ enum class StepSubState : uint8_t {
 };
 
 // ---------------------------------------------------------------------------
+//  RecoverySubState — sub-states inside RECOVERY_STEP mode.
+//
+//  TRIGGERED → LIFTING → LANDING → DAMPING → COMPLETE → (back to IDLE)
+//  Open-loop timing: RECOVERY_LIFT_MS / RECOVERY_LAND_MS / RECOVERY_DAMP_MS.
+// ---------------------------------------------------------------------------
+enum class RecoverySubState : uint8_t {
+    TRIGGERED = 0,  // direction resolved; LIFTING starts next tick
+    LIFTING   = 1,  // swing foot rising on sin arc to peak height + lateral offset
+    LANDING   = 2,  // swing foot descending onto target lateral position
+    DAMPING   = 3,  // both feet planted; hold for oscillation damping
+    COMPLETE  = 4,  // return to IDLE on this tick; clear all recovery state
+};
+
+// ---------------------------------------------------------------------------
 //  GaitMode — top-level controller mode.
 // ---------------------------------------------------------------------------
 enum class GaitMode : uint8_t {
-    IDLE        = 0,  // no motion; WeightShift returns to center on stop
-    RUNNING     = 1,  // continuous stepping in place
-    SINGLE_STEP = 2,  // complete exactly one full cycle (both legs), then IDLE
-    WSHIFT_ONLY = 3,  // CoM shift only — no foot lift (initial CoM verification)
-    POSE_STEP   = 4,  // pose-by-pose: pauses at gate-open, peak, and landing
-                      // call nextPose() each time to advance to the next pose
+    IDLE          = 0,  // no motion; WeightShift returns to center on stop
+    RUNNING       = 1,  // continuous stepping in place
+    SINGLE_STEP   = 2,  // complete exactly one full cycle (both legs), then IDLE
+    WSHIFT_ONLY   = 3,  // CoM shift only — no foot lift (initial CoM verification)
+    POSE_STEP     = 4,  // pose-by-pose: pauses at gate-open, peak, and landing
+                        // call nextPose() each time to advance to the next pose
+    RECOVERY_STEP = 5,  // Stage 1: protective lateral catch step on disturbance
 };
 
 // ---------------------------------------------------------------------------
@@ -112,6 +128,12 @@ struct GaitState {
     uint8_t      lastIKStatusR = 0;
     float        lastReachPctL = 0.0f;
     float        lastReachPctR = 0.0f;
+
+    // Recovery telemetry (Stage 1+). Valid only when mode == RECOVERY_STEP.
+    RecoverySubState recoverySub       = RecoverySubState::TRIGGERED;
+    int8_t           recoveryDirX      = 0;   // sagittal fall direction: -1/0/+1
+    int8_t           recoveryDirY      = 0;   // lateral  fall direction: -1/0/+1
+    uint32_t         recoveryElapsedMs = 0;   // ms since current sub-state began
 };
 
 // ---------------------------------------------------------------------------
@@ -133,11 +155,18 @@ public:
     void nextPose();
 
     // Call every tick from main.cpp, after weightShift.update().
-    // bc: task-space balance correction from BalanceController (Stage 3).
-    //   Pass nullptr (default) for legacy joint-space mode — behavior is identical
-    //   to Stage 2. Pass &correction when task_space_output=true.
+    // bc:       task-space balance correction (Stage 3). Pass nullptr for legacy mode.
+    // balState: current or previous tick's BalanceState. Pass nullptr to disable
+    //           catch-step detection. The recovery_flag field drives triggerRecovery().
     void update(float dt_s, const IMUState& imuState,
-                const BalanceCorrection* bc = nullptr);
+                const BalanceCorrection* bc       = nullptr,
+                const BalanceState*      balState = nullptr);
+
+    // Trigger a single catch-step recovery in the direction implied by the tilt.
+    // No-op if mode == RECOVERY_STEP (no re-trigger mid-step) or estopped.
+    // Called automatically from update() when balState->recovery_flag fires, or
+    // manually from WebComm test commands.
+    void triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad);
 
     GaitConfig       getConfig() const          { return _cfg; }
     void             setConfig(const GaitConfig& cfg) { _cfg = cfg; }
@@ -172,6 +201,16 @@ private:
     uint32_t _stopStartMs      = 0;
     float    _stopSwingFrac    = 0.0f;
     uint8_t  _stopHalf         = 0;
+
+    // Stage 1: catch-step recovery private state.
+    RecoverySubState _rcvSub          = RecoverySubState::TRIGGERED;
+    int8_t           _rcvDirX         = 0;     // sagittal direction at trigger
+    int8_t           _rcvDirY         = 0;     // lateral direction at trigger
+    uint32_t         _rcvSubStartMs   = 0;     // millis() when _rcvSub last changed
+    bool             _rcvSwingIsRight = false; // which leg is the swing leg
+
+    void _enterRcvSub(RecoverySubState s);
+    void _runRecoveryStep(float dt_s);
 
     // Trigger WeightShift direction matching the given half-cycle.
     void  _triggerShiftForHalf(uint8_t half);

@@ -82,4 +82,14 @@ constexpr float GAIT_STANCE_X_OFFSET_MM         = -20.0f;
 constexpr uint32_t GAIT_STABILIZE_MS            = 400;
 constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 
+// ============================================================
+// RECOVERY STEP PARAMETERS — secondary balance system (Stage 1+)
+// ============================================================
+constexpr float    RECOVERY_STEP_LATERAL_MM = 30.0f;   // lateral catch step size
+constexpr float    RECOVERY_STEP_FORWARD_MM = 0.0f;    // Stage 2: enable sagittal
+constexpr uint32_t RECOVERY_LIFT_MS         = 200;     // swing foot rise time (ms)
+constexpr uint32_t RECOVERY_LAND_MS         = 200;     // swing foot descent time (ms)
+constexpr uint32_t RECOVERY_DAMP_MS         = 600;     // hold at planted position (ms)
+constexpr float    RECOVERY_STEP_HEIGHT_MM  = 25.0f;   // peak clearance during step
+
 #endif // PROJECT_WIDE_DEFS_H

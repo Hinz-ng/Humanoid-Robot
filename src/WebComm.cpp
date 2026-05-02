@@ -203,8 +203,8 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
     _lastBalanceBroadcast_us = now;
 
     const BalanceConfig& cfg = _balCtrl->getConfig();
-    // buf sized for full pitch + roll + task-space telemetry payload (~430 chars).
-    char buf[512];
+    // buf sized for full pitch + roll + task-space + recovery telemetry (~470 chars).
+    char buf[560];
     snprintf(buf, sizeof(buf),
         // Controller enable flags + overall active state
         "BALANCE:p_en=%d,r_en=%d,"
@@ -222,7 +222,9 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         // Weight shift telemetry — progress and ramping flag for UI progress bar.
         "ws_prog=%.2f,ws_ramp=%d,ws_rp=%.2f,ws_lp=%.2f,"
         // Stage 3: task-space mode flag and live foot-target corrections.
-        "ts=%d,dx=%.2f,dy=%.2f",
+        "ts=%d,dx=%.2f,dy=%.2f,"
+        // Stage 0: catch-step recovery detection telemetry.
+        "rcv=%d,sat=%u,rdb=%u",
         (int)cfg.pitch_enabled, (int)cfg.roll_enabled,
         state.effective_kp,
         state.effective_kp_roll,
@@ -243,7 +245,10 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         _weightShift ? _weightShift->getState().left_progress    : 0.0f,
         (int)cfg.task_space_output,
         _balCtrl->getLastCorrection().dx_mm,
-        _balCtrl->getLastCorrection().dy_mm
+        _balCtrl->getLastCorrection().dy_mm,
+        (int)state.recovery_flag,
+        (unsigned)state.saturation_count,
+        (unsigned)state.recovery_debounce
     );
     ws.textAll(buf);
 }
@@ -292,10 +297,11 @@ void WebComm::broadcastGaitState() {
     _lastGaitBroadcast_us = now;
 
     const GaitState& s = _gaitCtrl->getState();
-    char buf[192];
+    char buf[256];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
-        "stepH=%.1f,stanceH=%.1f",
+        "stepH=%.1f,stanceH=%.1f,"
+        "rsub=%d,rdx=%d,rdy=%d,rms=%lu",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -305,7 +311,11 @@ void WebComm::broadcastGaitState() {
         static_cast<int>(s.liftGateOK),
         static_cast<int>(s.poseHold),
         _gaitCtrl->getConfig().stepHeightMm,
-        _gaitCtrl->getConfig().stanceHeightMm
+        _gaitCtrl->getConfig().stanceHeightMm,
+        static_cast<int>(s.recoverySub),
+        static_cast<int>(s.recoveryDirX),
+        static_cast<int>(s.recoveryDirY),
+        static_cast<unsigned long>(s.recoveryElapsedMs)
     );
     ws.textAll(buf);
 }
@@ -723,6 +733,39 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         }
        
         // ---------------------------------------------------------------------
+        //  Recovery tuning — Stage 0 detection parameters
+        //  Protocol: CMD:RECOVERY_TUNE:enabled=1,rcv_pitch=0.20,...
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("RECOVERY_TUNE:")) {
+            if (_balCtrl) {
+                BalanceConfig cfg = _balCtrl->getConfig();
+                String params = cmd.substring(14);
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    String pair = (comma == -1) ? params.substring(start)
+                                                : params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq != -1) {
+                        String key = pair.substring(0, eq);
+                        float  val = pair.substring(eq + 1).toFloat();
+                        if      (key == "enabled")   cfg.recovery_enabled              = (val > 0.5f);
+                        else if (key == "supp_gait") cfg.recovery_suppress_during_gait = (val > 0.5f);
+                        else if (key == "rcv_pitch") cfg.recovery_tilt_pitch_rad       = constrain(val, 0.05f, 0.60f);
+                        else if (key == "rcv_roll")  cfg.recovery_tilt_roll_rad        = constrain(val, 0.05f, 0.60f);
+                        else if (key == "rcv_sat")   cfg.recovery_saturation_ticks     = (uint16_t)constrain(val, 1.0f, 200.0f);
+                        else if (key == "rcv_conf")  cfg.recovery_confirm_ticks        = (uint16_t)constrain(val, 1.0f, 100.0f);
+                    }
+                    start = (comma == -1) ? params.length() : comma + 1;
+                }
+                _balCtrl->setConfig(cfg);
+                Serial.printf("[WebComm] RECOVERY_TUNE: en=%d supp=%d pitch=%.3f roll=%.3f sat=%u conf=%u\n",
+                              (int)cfg.recovery_enabled, (int)cfg.recovery_suppress_during_gait,
+                              cfg.recovery_tilt_pitch_rad, cfg.recovery_tilt_roll_rad,
+                              cfg.recovery_saturation_ticks, cfg.recovery_confirm_ticks);
+            }
+        }
+        // ---------------------------------------------------------------------
         //  Per-joint speed control
         //  Protocol: CMD:SPEED:<channel>:<deg_per_sec>
         //  Example:  CMD:SPEED:1:45.0
@@ -809,6 +852,21 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             if (_gaitCtrl) {
                 _gaitCtrl->nextPose();
                 Serial.println("[WebComm] CMD: GAIT_NEXT");
+            }
+        }
+        // Stage 1: manual recovery test commands (diagnostic only).
+        // Simulate a rightward or leftward push at ~11.5° roll without hardware.
+        // Use with balance ARMED and robot standing still. Disable before gait testing.
+        else if (cmd == "GAIT_TEST_RECOVERY_R") {
+            if (_gaitCtrl) {
+                _gaitCtrl->triggerRecovery(0.0f, +0.20f);
+                Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_R — simulating right push");
+            }
+        }
+        else if (cmd == "GAIT_TEST_RECOVERY_L") {
+            if (_gaitCtrl) {
+                _gaitCtrl->triggerRecovery(0.0f, -0.20f);
+                Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_L — simulating left push");
             }
         }
         else if (cmd.startsWith("GAIT_TUNE:")) {

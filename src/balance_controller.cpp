@@ -47,6 +47,10 @@ void BalanceController::resetOutputState() {
     _ts_roll_error       = 0.0f;
     _lastCorrection      = {};
 
+    // Stage 0: zero recovery detection counters.
+    _saturationCount  = 0;
+    _recoveryDebounce = 0;
+
     Serial.printf("[BalanceController] Reset. pitch_en=%s roll_en=%s "
                   "Kp=%.1f(boost×%.1f@%.3f) Kd=%.2f iir=%.2f rate=%.2f\n",
                   _cfg.pitch_enabled ? "Y" : "N",
@@ -260,6 +264,7 @@ BalanceState BalanceController::update(const IMUState& state) {
             _applyRollCorrection(0.0f, 0.0f, 0.0f, 0.0f);
         }
 
+        _updateRecoveryDetection(out, state);
         _lastState = out;
         return out;
     }
@@ -370,6 +375,7 @@ BalanceState BalanceController::update(const IMUState& state) {
 
     out.active = out.pitch_active || out.roll_active;
     out.fell   = false;
+    _updateRecoveryDetection(out, state);
     _lastState = out;
     return out;
 }
@@ -502,6 +508,56 @@ BalanceCorrection BalanceController::computeCorrection(const IMUState& state) {
     // that check valid (e.g. GaitController idle bypass) correctly skip it.
     bc.valid = (_cfg.pitch_enabled || _cfg.roll_enabled);
     return bc;
+}
+
+// ---------------------------------------------------------------------------
+//  _updateRecoveryDetection — Stage 0 catch-step detection.
+//
+//  Reads out.u_clamped / out.u_roll_clamped from the CURRENT tick (not
+//  _lastState, which would lag by one tick). Both legacy and task-space
+//  branches populate these fields before calling this helper.
+//
+//  Conditions (OR):
+//    (a) Either-axis tilt exceeds threshold
+//    (b) Either-axis PD saturated for >= recovery_saturation_ticks consecutive ticks
+//  Debounced by recovery_confirm_ticks before flagging.
+//  Flag clears as soon as conditions go false (no latching).
+// ---------------------------------------------------------------------------
+void BalanceController::_updateRecoveryDetection(BalanceState& out,
+                                                   const IMUState& state) {
+    if (_cfg.recovery_enabled && state.valid && !oe_is_estopped()) {
+        const bool tiltOver =
+            (fabsf(state.pitch) > _cfg.recovery_tilt_pitch_rad) ||
+            (fabsf(state.roll)  > _cfg.recovery_tilt_roll_rad);
+
+        const float satEdgeP = _cfg.max_correction_deg      * 0.95f;
+        const float satEdgeR = _cfg.max_roll_correction_deg * 0.95f;
+        const bool saturated =
+            (fabsf(out.u_clamped)      >= satEdgeP) ||
+            (fabsf(out.u_roll_clamped) >= satEdgeR);
+
+        if (saturated && _saturationCount < _cfg.recovery_saturation_ticks) {
+            _saturationCount++;
+        } else if (!saturated) {
+            _saturationCount = 0;
+        }
+        const bool satOver = (_saturationCount >= _cfg.recovery_saturation_ticks);
+
+        const bool fire = tiltOver || satOver;
+        if (fire && _recoveryDebounce < _cfg.recovery_confirm_ticks) {
+            _recoveryDebounce++;
+        } else if (!fire) {
+            _recoveryDebounce = 0;
+        }
+
+        out.recovery_flag = (_recoveryDebounce >= _cfg.recovery_confirm_ticks);
+    } else {
+        _saturationCount  = 0;
+        _recoveryDebounce = 0;
+        out.recovery_flag = false;
+    }
+    out.saturation_count  = _saturationCount;
+    out.recovery_debounce = _recoveryDebounce;
 }
 
 // ---------------------------------------------------------------------------

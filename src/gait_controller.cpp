@@ -342,7 +342,7 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     }
 
     if (_state.mode == GaitMode::RECOVERY_STEP) {
-        _runRecoveryStep(dt_s);
+        _runRecoveryStep(dt_s, imuState);
         return;
     }
 
@@ -369,13 +369,28 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     const float wsProgress = _ws ? wsState.progress : 1.0f;
     _state.wsProgress = wsProgress;
 
-    // Gate direction check (signed, not just magnitude):
-    //   half=0 (LEFT shift) → wsProgress ramps toward +1 → gate when >= +threshold
-    //   half=1 (RIGHT shift) → wsProgress ramps toward -1 → gate when <= -threshold
+    // Gate direction check: WeightShift progress AND IMU tilt BOTH required.
+    //
+    // Progress gate (liftGateThreshold): ensures the commanded weight shift ramp
+    //   is X% complete before the foot leaves the ground.
+    //
+    // IMU gate (wsThresholdRad): ensures the body has ACTUALLY tilted over the
+    //   stance foot, not just that the WeightShift timer says it should have.
+    //   This matters because ankle servos under full body load may lag the
+    //   commanded bias. Without this gate, the foot lifts when the ramp is
+    //   numerically complete but the CoM hasn't moved — causing the dragging
+    //   seen at low step heights.
+    //
+    //   half=0 (LEFT shift) → CoM tilts right → roll becomes positive
+    //   half=1 (RIGHT shift) → CoM tilts left  → roll becomes negative
     if (_currentHalf == 0) {
-        _state.liftGateOK = (wsProgress >= _cfg.liftGateThreshold);
+        const bool progressOK = (wsProgress    >=  _cfg.liftGateThreshold);
+        const bool imuOK      = (imuState.roll >=  _cfg.wsThresholdRad);
+        _state.liftGateOK = progressOK && imuOK;
     } else {
-        _state.liftGateOK = (wsProgress <= -_cfg.liftGateThreshold);
+        const bool progressOK = (wsProgress    <= -_cfg.liftGateThreshold);
+        const bool imuOK      = (imuState.roll <= -_cfg.wsThresholdRad);
+        _state.liftGateOK = progressOK && imuOK;
     }
 
     _state.subState = _subState;
@@ -676,7 +691,7 @@ void GaitController::_enterRcvSub(RecoverySubState s) {
 //  swingTargetY_mm = _rcvStepY_mm (signed per-trigger). T2.1 on hardware must
 //  verify all four directions; fix any sign errors in triggerRecovery().
 // ---------------------------------------------------------------------------
-void GaitController::_runRecoveryStep(float dt_s) {
+void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
     const uint32_t elapsed = millis() - _rcvSubStartMs;
     _state.recoveryElapsedMs = elapsed;
     _state.recoveryDirX      = _rcvDirX;
@@ -713,7 +728,10 @@ void GaitController::_runRecoveryStep(float dt_s) {
             tStance.isRightLeg    = !_rcvSwingIsRight;
             tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM
                                    - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t;
-            tStance.y_mm          = -swingTargetY_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t;
+            // Positive y_mm = outward in the stance leg's own frontal frame.
+            // Stance hip abducts AWAY from the fall, widening the base of support.
+            // Was: -swingTargetY * frac (pushed stance toward the fall — wrong).
+            tStance.y_mm          = +fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t;
             tStance.h_sagittal_mm = _cfg.stanceHeightMm;
             tStance.h_frontal_mm  = 0.0f;
             tStance.valid         = true;
@@ -748,7 +766,7 @@ void GaitController::_runRecoveryStep(float dt_s) {
             tStance.isRightLeg    = !_rcvSwingIsRight;
             tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM
                                    - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t;
-            tStance.y_mm          = -swingTargetY_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t;
+            tStance.y_mm          = +fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t;
             tStance.h_sagittal_mm = _cfg.stanceHeightMm;
             tStance.h_frontal_mm  = 0.0f;
             tStance.valid         = true;
@@ -781,7 +799,7 @@ void GaitController::_runRecoveryStep(float dt_s) {
             tStance.isRightLeg    = !_rcvSwingIsRight;
             tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM
                                    - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC;
-            tStance.y_mm          = -swingTargetY_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC;
+            tStance.y_mm          = +fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC;
             tStance.h_sagittal_mm = _cfg.stanceHeightMm;
             tStance.h_frontal_mm  = 0.0f;
             tStance.valid         = true;
@@ -813,7 +831,7 @@ void GaitController::_runRecoveryStep(float dt_s) {
             tStance.isRightLeg    = !_rcvSwingIsRight;
             tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM
                                    - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC * decay;
-            tStance.y_mm          = -swingTargetY_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC * decay;
+            tStance.y_mm          = +fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC * decay;
             tStance.h_sagittal_mm = _cfg.stanceHeightMm;
             tStance.h_frontal_mm  = 0.0f;
             tStance.valid         = true;
@@ -827,11 +845,30 @@ void GaitController::_runRecoveryStep(float dt_s) {
             break;
         }
 
-        case RecoverySubState::COMPLETE:
-            _rcvLockoutUntilMs = millis() + RECOVERY_LOCKOUT_MS;
-            start(GaitMode::IDLE);
-            Serial.printf("[GaitCtrl] RECOVERY complete — lockout %u ms.\n",
-                          (unsigned)RECOVERY_LOCKOUT_MS);
+        case RecoverySubState::COMPLETE: {
+            // Chain detection: if the body is still tilted after landing, a single
+            // step was insufficient (large disturbance or marginal catch). Re-trigger
+            // immediately rather than entering the refractory lockout, so the robot
+            // takes a second step while it still has time to recover.
+            //
+            // start(IDLE) must come BEFORE triggerRecovery() because triggerRecovery()
+            // guards against mode == RECOVERY_STEP. start(IDLE) clears that flag.
+            const bool stillTilted =
+                (fabsf(imuState.roll)  > RECOVERY_CHAIN_TILT_THRESHOLD_RAD) ||
+                (fabsf(imuState.pitch) > RECOVERY_CHAIN_TILT_THRESHOLD_RAD);
+            start(GaitMode::IDLE);  // clears recovery state, centers WeightShift
+            if (stillTilted) {
+                Serial.printf("[GaitCtrl] RECOVERY CHAIN — residual tilt "
+                              "roll=%.3f pitch=%.3f — stepping again.\n",
+                              imuState.roll, imuState.pitch);
+                triggerRecovery(imuState.pitch, imuState.roll);
+                // No lockout: triggerRecovery() above is the next step.
+            } else {
+                _rcvLockoutUntilMs = millis() + RECOVERY_LOCKOUT_MS;
+                Serial.printf("[GaitCtrl] RECOVERY complete — lockout %u ms.\n",
+                              (unsigned)RECOVERY_LOCKOUT_MS);
+            }
             break;
+        }
     }
 }

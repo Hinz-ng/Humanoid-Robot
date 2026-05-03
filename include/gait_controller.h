@@ -222,7 +222,8 @@ private:
     uint32_t _rcvLockoutUntilMs = 0;     // millis() until which re-trigger is blocked
 
     void _enterRcvSub(RecoverySubState s);
-    void _runRecoveryStep(float dt_s);
+    // imuState required by COMPLETE case to decide whether to chain a second step.
+    void _runRecoveryStep(float dt_s, const IMUState& imuState);
 
     // Trigger WeightShift direction matching the given half-cycle.
     void  _triggerShiftForHalf(uint8_t half);

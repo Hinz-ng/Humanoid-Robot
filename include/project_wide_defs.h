@@ -52,11 +52,24 @@
 // ============================================================
 // GAIT PARAMETERS — GaitController (weight_shift evolution)
 // ============================================================
-constexpr float GAIT_PHASE_RATE_HZ          = 0.4f;   // start slow; cycles/sec
-constexpr float GAIT_STEP_HEIGHT_MM         = 20.0f;  // swing foot clearance
+// TUNING NOTE (2026-04-xx): Reduced from 0.4 → 0.25 Hz to give the IMU roll
+// gate (wsThresholdRad) more time to satisfy before the half-cycle advances.
+// Return to 0.4 once stance loading is stable at the lower rate.
+constexpr float GAIT_PHASE_RATE_HZ          = 0.25f;  // start slow; cycles/sec
+
+// TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
+// before the stance leg is loaded, so less clearance is needed to avoid drag.
+// If drag returns at 15 mm, the root cause is the gate, not step height.
+constexpr float GAIT_STEP_HEIGHT_MM         = 15.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 35.0f;  // Phase 3+; forward stride
-constexpr float GAIT_WEIGHT_SHIFT_THRESHOLD_RAD = 0.15f; // ~8.5° — min roll before lift
+
+// TUNING NOTE: Reduced from 0.15 (~8.5°) → 0.10 (~5.7°). The previous value
+// was chosen conservatively for Phase 2 diagnostics. At 0.10 rad the gate opens
+// when the CoM is meaningfully over the stance foot without requiring a large
+// visible lean, which the QY3242BLS ankle servos cannot reliably produce under
+// full load against a 500ms ramp. Tighten toward 0.12 if gate opens too easily.
+constexpr float GAIT_WEIGHT_SHIFT_THRESHOLD_RAD = 0.10f; // ~5.7° — min roll before lift
 
 // Stance leg's nominal hip→ankle vertical drop in mm. Used by GaitController
 // to construct FootTargets. Must stay inside LegIK's safe range (130–189 mm).
@@ -72,7 +85,7 @@ constexpr float GAIT_STANCE_HEIGHT_MM           = 186.0f;
 //
 // Tune from 0 in ±1mm increments until ankle-pitch IK output sits near each
 // joint's neutralDeg in standing pose. Typical magnitude: ≤ 10 mm.
-constexpr float GAIT_STANCE_X_OFFSET_MM         = -20.0f;
+constexpr float GAIT_STANCE_X_OFFSET_MM         = -25.0f;
 
 // Hold duration (ms) GaitController inserts between half-cycles. Weight shift
 // is centered (trigger NONE) and held for this duration so mechanical/IIR
@@ -126,5 +139,17 @@ constexpr uint32_t RECOVERY_SOFT_RETURN_MS  = 400;     // new
 // Set ≥ output_iir time-constant of balance × 5 (~150 ms) plus mechanical
 // settling margin. Tune after T2.5.
 constexpr uint32_t RECOVERY_LOCKOUT_MS      = 500;
+
+// --- Recovery step chaining threshold (rad) ---
+// After RecoverySubState::COMPLETE, if |roll| or |pitch| still exceeds this
+// value, a second catch step is triggered immediately instead of entering
+// the refractory lockout. Prevents falls from large disturbances that a
+// single step cannot fully catch.
+//
+// Set below recovery_tilt_roll_rad (~0.18 rad) so it fires on residual lean
+// that the first step reduced but didn't fully recover. Set above normal
+// walking roll (~0.05 rad) so it never fires after a clean step landing.
+// Default 0.07 rad ≈ 4°. Tune after T2.5 if second steps are spurious.
+constexpr float RECOVERY_CHAIN_TILT_THRESHOLD_RAD = 0.07f;
 
 #endif // PROJECT_WIDE_DEFS_H

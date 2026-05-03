@@ -610,12 +610,14 @@ void GaitController::triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad) 
     _rcvSwingIsRight = (tilt_roll_rad >= 0.0f);
 
     // Step magnitudes proportional to per-axis tilt component, capped.
-    // Sign carried through tilt — catch step lands on the falling side.
+    // Sign of lateral recovery is expressed by the swing leg selection, not
+    // by the y_mm magnitude. Use absolute lateral magnitude so left & right
+    // outward steps are both positive in the swing leg frontal frame.
     const float gain = RECOVERY_MAGNITUDE_GAIN_MM_PER_RAD;
     _rcvStepX_mm = constrain(tilt_pitch_rad * gain,
                               -RECOVERY_STEP_FORWARD_MAX_MM,
                               +RECOVERY_STEP_FORWARD_MAX_MM);
-    _rcvStepY_mm = constrain(tilt_roll_rad  * gain,
+    _rcvStepY_mm = constrain(fabsf(tilt_roll_rad) * gain,
                               -RECOVERY_STEP_LATERAL_MAX_MM,
                               +RECOVERY_STEP_LATERAL_MAX_MM);
 

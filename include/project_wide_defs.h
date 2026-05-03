@@ -53,7 +53,7 @@
 // GAIT PARAMETERS — GaitController (weight_shift evolution)
 // ============================================================
 constexpr float GAIT_PHASE_RATE_HZ          = 0.4f;   // start slow; cycles/sec
-constexpr float GAIT_STEP_HEIGHT_MM         = 10.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 20.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 35.0f;  // Phase 3+; forward stride
 constexpr float GAIT_WEIGHT_SHIFT_THRESHOLD_RAD = 0.15f; // ~8.5° — min roll before lift
@@ -61,7 +61,7 @@ constexpr float GAIT_WEIGHT_SHIFT_THRESHOLD_RAD = 0.15f; // ~8.5° — min roll 
 // Stance leg's nominal hip→ankle vertical drop in mm. Used by GaitController
 // to construct FootTargets. Must stay inside LegIK's safe range (130–189 mm).
 // Lower = deeper crouch = more knee flexion at neutral.
-constexpr float GAIT_STANCE_HEIGHT_MM           = 185.0f;
+constexpr float GAIT_STANCE_HEIGHT_MM           = 186.0f;
 
 // Static fore-aft offset applied to every FootTarget.x_mm built by GaitController.
 // Compensates for CoM ≠ hip-pitch axis: with x_mm=0 the foot lands directly under
@@ -96,7 +96,7 @@ constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 // --- Step magnitude caps (hard physical limits) ---
 constexpr float RECOVERY_STEP_LATERAL_MAX_MM = 35.0f;  // was 30 fixed — now ceiling
 constexpr float RECOVERY_STEP_FORWARD_MAX_MM = 35.0f;  // matches lateral cap
-constexpr float RECOVERY_STEP_HEIGHT_MM      = 35.0f;  // unchanged
+constexpr float RECOVERY_STEP_HEIGHT_MM      = 15.0f;  
 
 // --- Magnitude scaling: simplified capture-point ---
 // step_mm = clamp(MAGNITUDE_GAIN_MM_PER_RAD * |tilt|, MIN, MAX)

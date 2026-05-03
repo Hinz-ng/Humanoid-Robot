@@ -52,7 +52,7 @@ struct WeightShiftConfig {
     // SOURCE_GAIT. Set ankle_roll_ratio=0 in BalanceConfig to prevent the
     // balance loop from fighting its own baseline. Default 0 keeps the
     // panel's first left/right trigger as a no-op until tuning is intentional.
-    float ankle_shift_deg = 5.0f;
+    float ankle_shift_deg = 14.0f;
     
     // TASK-2: Phase delay between swing and stance ankle ramps (ms).
     // Swing ankle starts immediately; stance starts after this delay.

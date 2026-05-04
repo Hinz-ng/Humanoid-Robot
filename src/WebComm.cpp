@@ -302,7 +302,7 @@ void WebComm::broadcastGaitState() {
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,"
         "rsub=%d,rdx=%d,rdy=%d,rms=%lu,"
-        "rcvX=%.1f,rcvY=%.1f,rcvMag=%.1f",
+        "rcvX=%.1f,rcvY=%.1f,rcvMag=%.1f,rcvSY=%.1f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -317,7 +317,7 @@ void WebComm::broadcastGaitState() {
         static_cast<int>(s.recoveryDirX),
         static_cast<int>(s.recoveryDirY),
         static_cast<unsigned long>(s.recoveryElapsedMs),
-        s.rcvStepX_mm, s.rcvStepY_mm, s.rcvMagnitude
+        s.rcvStepX_mm, s.rcvStepY_mm, s.rcvMagnitude, s.rcvStanceY_mm
     );
     ws.textAll(buf);
 }

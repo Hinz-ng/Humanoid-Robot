@@ -141,6 +141,10 @@ struct GaitState {
     float    rcvStepX_mm   = 0.0f;   // sagittal step magnitude at trigger (signed)
     float    rcvStepY_mm   = 0.0f;   // lateral  step magnitude at trigger (signed)
     float    rcvMagnitude  = 0.0f;   // sqrt(stepX² + stepY²) at trigger
+    // Stage 2 stance-leg counter-shift telemetry (Issue 2 visibility).
+    // Set per-tick by _runRecoveryStep() so the UI can confirm stance abduction
+    // is happening even before it becomes visually obvious.
+    float    rcvStanceY_mm = 0.0f;
 };
 
 // ---------------------------------------------------------------------------

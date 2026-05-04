@@ -369,27 +369,20 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     const float wsProgress = _ws ? wsState.progress : 1.0f;
     _state.wsProgress = wsProgress;
 
-    // Gate direction check: WeightShift progress AND IMU tilt BOTH required.
-    //
-    // Progress gate (liftGateThreshold): ensures the commanded weight shift ramp
-    //   is X% complete before the foot leaves the ground.
-    //
-    // IMU gate (wsThresholdRad): ensures the body has ACTUALLY tilted over the
-    //   stance foot, not just that the WeightShift timer says it should have.
-    //   This matters because ankle servos under full body load may lag the
-    //   commanded bias. Without this gate, the foot lifts when the ramp is
-    //   numerically complete but the CoM hasn't moved — causing the dragging
-    //   seen at low step heights.
-    //
-    //   half=0 (LEFT shift) → CoM tilts right → roll becomes positive
-    //   half=1 (RIGHT shift) → CoM tilts left  → roll becomes negative
+    // Gate direction check.
+    // RUNNING/SINGLE_STEP: both WS progress AND IMU tilt required (safety).
+    // POSE_STEP: progress only — operator is supervising and can stop manually.
+    //   This restores POSE_STEP usability after the IMU gate (Change 2) made
+    //   gate-open contingent on physical lean the ankles cannot reliably produce
+    //   under load. The Next Pose button advances through holds 1/2/3 manually.
+    const bool poseMode = (_state.mode == GaitMode::POSE_STEP);
     if (_currentHalf == 0) {
         const bool progressOK = (wsProgress    >=  _cfg.liftGateThreshold);
-        const bool imuOK      = (imuState.roll >=  _cfg.wsThresholdRad);
+        const bool imuOK      = poseMode || (imuState.roll >=  _cfg.wsThresholdRad);
         _state.liftGateOK = progressOK && imuOK;
     } else {
         const bool progressOK = (wsProgress    <= -_cfg.liftGateThreshold);
-        const bool imuOK      = (imuState.roll <= -_cfg.wsThresholdRad);
+        const bool imuOK      = poseMode || (imuState.roll <= -_cfg.wsThresholdRad);
         _state.liftGateOK = progressOK && imuOK;
     }
 
@@ -731,7 +724,10 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             // Positive y_mm = outward in the stance leg's own frontal frame.
             // Stance hip abducts AWAY from the fall, widening the base of support.
             // Was: -swingTargetY * frac (pushed stance toward the fall — wrong).
-            tStance.y_mm          = +fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t;
+            const float baseWidenMm = fabsf(swingTargetX_mm) * 0.20f * t;
+            tStance.y_mm          = fmaxf(+fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t,
+                                         baseWidenMm);
+            _state.rcvStanceY_mm  = tStance.y_mm;
             tStance.h_sagittal_mm = _cfg.stanceHeightMm;
             tStance.h_frontal_mm  = 0.0f;
             tStance.valid         = true;
@@ -766,7 +762,10 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tStance.isRightLeg    = !_rcvSwingIsRight;
             tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM
                                    - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t;
-            tStance.y_mm          = +fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t;
+            const float baseWidenMm = fabsf(swingTargetX_mm) * 0.20f * t;
+            tStance.y_mm          = fmaxf(+fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t,
+                                         baseWidenMm);
+            _state.rcvStanceY_mm  = tStance.y_mm;
             tStance.h_sagittal_mm = _cfg.stanceHeightMm;
             tStance.h_frontal_mm  = 0.0f;
             tStance.valid         = true;
@@ -799,7 +798,10 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tStance.isRightLeg    = !_rcvSwingIsRight;
             tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM
                                    - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC;
-            tStance.y_mm          = +fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC;
+            const float baseWidenMm = fabsf(swingTargetX_mm) * 0.20f;
+            tStance.y_mm          = fmaxf(+fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC,
+                                         baseWidenMm);
+            _state.rcvStanceY_mm  = tStance.y_mm;
             tStance.h_sagittal_mm = _cfg.stanceHeightMm;
             tStance.h_frontal_mm  = 0.0f;
             tStance.valid         = true;
@@ -831,7 +833,10 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tStance.isRightLeg    = !_rcvSwingIsRight;
             tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM
                                    - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC * decay;
-            tStance.y_mm          = +fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC * decay;
+            const float baseWidenMm = fabsf(swingTargetX_mm) * 0.20f * decay;
+            tStance.y_mm          = fmaxf(+fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC * decay,
+                                         baseWidenMm);
+            _state.rcvStanceY_mm  = tStance.y_mm;
             tStance.h_sagittal_mm = _cfg.stanceHeightMm;
             tStance.h_frontal_mm  = 0.0f;
             tStance.valid         = true;

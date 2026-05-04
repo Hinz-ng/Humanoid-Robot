@@ -2453,10 +2453,11 @@ function parseGaitState(payload) {
         const rcvX = parseFloat(v["rcvX"] || "0");
         const rcvY = parseFloat(v["rcvY"] || "0");
         const rcvM = parseFloat(v["rcvMag"] || "0");
+        const rcvSY = parseFloat(v["rcvSY"] || "0");
         const xyEl = document.getElementById("rcvStepXY");
         const mgEl = document.getElementById("rcvStepMag");
         if (xyEl) xyEl.textContent = rcvX.toFixed(1) + " / " + rcvY.toFixed(1);
-        if (mgEl) mgEl.textContent = rcvM.toFixed(1) + " mm";
+        if (mgEl) mgEl.textContent = rcvM.toFixed(1) + " / stance " + rcvSY.toFixed(1) + " mm";
     }
 
     if (!_tuneActive) {

@@ -55,7 +55,7 @@
 // TUNING NOTE (2026-04-xx): Reduced from 0.4 → 0.25 Hz to give the IMU roll
 // gate (wsThresholdRad) more time to satisfy before the half-cycle advances.
 // Return to 0.4 once stance loading is stable at the lower rate.
-constexpr float GAIT_PHASE_RATE_HZ          = 0.25f;  // start slow; cycles/sec
+constexpr float GAIT_PHASE_RATE_HZ          = 0.30f;  // start slow; cycles/sec
 
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
@@ -74,7 +74,7 @@ constexpr float GAIT_WEIGHT_SHIFT_THRESHOLD_RAD = 0.10f; // ~5.7° — min roll 
 // Stance leg's nominal hip→ankle vertical drop in mm. Used by GaitController
 // to construct FootTargets. Must stay inside LegIK's safe range (130–189 mm).
 // Lower = deeper crouch = more knee flexion at neutral.
-constexpr float GAIT_STANCE_HEIGHT_MM           = 186.0f;
+constexpr float GAIT_STANCE_HEIGHT_MM           = 185.0f;
 
 // Static fore-aft offset applied to every FootTarget.x_mm built by GaitController.
 // Compensates for CoM ≠ hip-pitch axis: with x_mm=0 the foot lands directly under
@@ -85,7 +85,7 @@ constexpr float GAIT_STANCE_HEIGHT_MM           = 186.0f;
 //
 // Tune from 0 in ±1mm increments until ankle-pitch IK output sits near each
 // joint's neutralDeg in standing pose. Typical magnitude: ≤ 10 mm.
-constexpr float GAIT_STANCE_X_OFFSET_MM         = -25.0f;
+constexpr float GAIT_STANCE_X_OFFSET_MM         = -22.0f;
 
 // Hold duration (ms) GaitController inserts between half-cycles. Weight shift
 // is centered (trigger NONE) and held for this duration so mechanical/IIR
@@ -109,7 +109,7 @@ constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 // --- Step magnitude caps (hard physical limits) ---
 constexpr float RECOVERY_STEP_LATERAL_MAX_MM = 35.0f;  // was 30 fixed — now ceiling
 constexpr float RECOVERY_STEP_FORWARD_MAX_MM = 35.0f;  // matches lateral cap
-constexpr float RECOVERY_STEP_HEIGHT_MM      = 15.0f;  
+constexpr float RECOVERY_STEP_HEIGHT_MM      = 25.0f;  
 
 // --- Magnitude scaling: simplified capture-point ---
 // step_mm = clamp(MAGNITUDE_GAIN_MM_PER_RAD * |tilt|, MIN, MAX)
@@ -119,9 +119,15 @@ constexpr float RECOVERY_MAGNITUDE_GAIN_MM_PER_RAD = 150.0f;
 constexpr float RECOVERY_STEP_MIN_MAGNITUDE_MM     = 10.0f;
 
 // --- Stance counter-shift fraction ---
-// stance_offset = -counterShift * swing_offset (opposite direction, smaller magnitude)
-// 0.0 disables. 0.3 = 30% counter-shift. UVC equivalent ~0.25.
-constexpr float RECOVERY_STANCE_COUNTERSHIFT_FRAC  = 0.3f;
+// stance_offset = +counterShift * |swing_offset| (abducts away from fall).
+// 0.0 disables. UVC reference: ~0.25.
+// TUNING NOTE 2026-05-04: Increased from 0.30 → 0.50.
+//   At 0.30 with swingY=30mm, stance abducts only 9mm → hip_roll≈3.2°. Below
+//   visual perception. At 0.50, abduction is 15mm → hip_roll≈5.3°, clearly
+//   visible. Ceiling: stance hip_roll must stay <12° (well inside
+//   IK_HIP_ROLL_MAX_DEG=20°). At max swingY=35mm, 0.50 gives 17.5mm →
+//   hip_roll≈6.2° — safe.
+constexpr float RECOVERY_STANCE_COUNTERSHIFT_FRAC  = 0.60f;
 
 // --- Sub-state durations (ms) ---
 // LIFT and LAND unchanged from Stage 1.
@@ -138,7 +144,7 @@ constexpr uint32_t RECOVERY_SOFT_RETURN_MS  = 400;     // new
 // is ignored for this many ms. Prevents post-step transient retrigger.
 // Set ≥ output_iir time-constant of balance × 5 (~150 ms) plus mechanical
 // settling margin. Tune after T2.5.
-constexpr uint32_t RECOVERY_LOCKOUT_MS      = 500;
+constexpr uint32_t RECOVERY_LOCKOUT_MS      = 800;
 
 // --- Recovery step chaining threshold (rad) ---
 // After RecoverySubState::COMPLETE, if |roll| or |pitch| still exceeds this
@@ -150,6 +156,6 @@ constexpr uint32_t RECOVERY_LOCKOUT_MS      = 500;
 // that the first step reduced but didn't fully recover. Set above normal
 // walking roll (~0.05 rad) so it never fires after a clean step landing.
 // Default 0.07 rad ≈ 4°. Tune after T2.5 if second steps are spurious.
-constexpr float RECOVERY_CHAIN_TILT_THRESHOLD_RAD = 0.07f;
+constexpr float RECOVERY_CHAIN_TILT_THRESHOLD_RAD = 0.10f;
 
 #endif // PROJECT_WIDE_DEFS_H

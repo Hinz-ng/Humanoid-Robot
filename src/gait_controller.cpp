@@ -764,13 +764,17 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
 
             FootTarget tStance;
             tStance.isRightLeg    = !_rcvSwingIsRight;
+            // Counter-shift is fully established by end of PRE_LIFT. Holding it constant
+            // here prevents the swing hip from being dragged backward during the lift,
+            // which manifests as ground-scrubbing (the "shuffle"). The * t ramp was a
+            // silent bug: it threw away PRE_LIFT's load transfer at every sub-state edge.
             tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM
-                                   - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t;
+                                   - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC;
             // Positive y_mm = outward in the stance leg's own frontal frame.
             // Stance hip abducts AWAY from the fall, widening the base of support.
             // Was: -swingTargetY * frac (pushed stance toward the fall — wrong).
-            const float baseWidenMm = fabsf(swingTargetX_mm) * 0.20f * t;
-            tStance.y_mm          = fmaxf(+fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t,
+            const float baseWidenMm = fabsf(swingTargetX_mm) * 0.20f;
+            tStance.y_mm          = fmaxf(+fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC,
                                          baseWidenMm);
             _state.rcvStanceY_mm  = tStance.y_mm;
             tStance.h_sagittal_mm = _cfg.stanceHeightMm;
@@ -805,10 +809,14 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
 
             FootTarget tStance;
             tStance.isRightLeg    = !_rcvSwingIsRight;
+            // Counter-shift is fully established by end of PRE_LIFT. Holding it constant
+            // here prevents the swing hip from being dragged backward during the lift,
+            // which manifests as ground-scrubbing (the "shuffle"). The * t ramp was a
+            // silent bug: it threw away PRE_LIFT's load transfer at every sub-state edge.
             tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM
-                                   - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t;
-            const float baseWidenMm = fabsf(swingTargetX_mm) * 0.20f * t;
-            tStance.y_mm          = fmaxf(+fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t,
+                                   - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC;
+            const float baseWidenMm = fabsf(swingTargetX_mm) * 0.20f;
+            tStance.y_mm          = fmaxf(+fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC,
                                          baseWidenMm);
             _state.rcvStanceY_mm  = tStance.y_mm;
             tStance.h_sagittal_mm = _cfg.stanceHeightMm;

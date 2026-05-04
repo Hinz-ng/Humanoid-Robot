@@ -133,7 +133,7 @@ constexpr float RECOVERY_STANCE_COUNTERSHIFT_FRAC  = 0.85f;
 // DAMP_HOLD: brief hold at planted offset before soft return begins.
 // SOFT_RETURN: smoothstep decay of step offset back to centered stance.
 //   DAMP_HOLD + SOFT_RETURN ≈ original RECOVERY_DAMP_MS (600).
-constexpr uint32_t RECOVERY_PRE_LIFT_MS     = 70;      // new: load stance before swing lifts
+constexpr uint32_t RECOVERY_PRE_LIFT_MS     = 120;      // new: load stance before swing lifts
 constexpr uint32_t RECOVERY_LIFT_MS         = 200;     // unchanged
 constexpr uint32_t RECOVERY_LAND_MS         = 200;     // unchanged
 constexpr uint32_t RECOVERY_DAMP_HOLD_MS    = 200;     // was 600 (combined)

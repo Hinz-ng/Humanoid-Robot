@@ -50,17 +50,19 @@ enum class StepSubState : uint8_t {
 // ---------------------------------------------------------------------------
 //  RecoverySubState — sub-states inside RECOVERY_STEP mode (Stage 2).
 //
-//  TRIGGERED → LIFTING → LANDING → DAMP_HOLD → SOFT_RETURN → COMPLETE → (back to IDLE)
-//  Open-loop timing: RECOVERY_LIFT_MS / RECOVERY_LAND_MS / RECOVERY_DAMP_HOLD_MS / RECOVERY_SOFT_RETURN_MS.
+//  TRIGGERED → PRE_LIFT → LIFTING → LANDING → DAMP_HOLD → SOFT_RETURN → COMPLETE → (back to IDLE)
+//  Open-loop timing: RECOVERY_PRE_LIFT_MS / RECOVERY_LIFT_MS / RECOVERY_LAND_MS /
+//  RECOVERY_DAMP_HOLD_MS / RECOVERY_SOFT_RETURN_MS.
 // ---------------------------------------------------------------------------
 enum class RecoverySubState : uint8_t {
-    TRIGGERED   = 0,  // direction resolved; LIFTING starts next tick
-    LIFTING     = 1,  // swing foot rising on sin arc to peak height + lateral offset
-    LANDING     = 2,  // swing foot descending onto target lateral position
-    DAMPING     = 3,  // Stage 1 alias — kept for telemetry compat (= DAMP_HOLD)
-    DAMP_HOLD   = 3,  // explicit name — same numeric value
-    SOFT_RETURN = 4,  // Stage 2: foot offset decays smoothly back to centered stance
-    COMPLETE    = 5,  // return to IDLE on this tick; clear all recovery state
+    TRIGGERED   = 0,  // direction resolved; PRE_LIFT starts next tick
+    PRE_LIFT    = 1,  // hold stance counter-shift while swing foot remains planted
+    LIFTING     = 2,  // swing foot rising on sin arc to peak height + lateral offset
+    LANDING     = 3,  // swing foot descending onto target lateral position
+    DAMPING     = 4,  // Stage 1 alias — kept for telemetry compat (= DAMP_HOLD)
+    DAMP_HOLD   = 4,  // explicit name — same numeric value
+    SOFT_RETURN = 5,  // Stage 2: foot offset decays smoothly back to centered stance
+    COMPLETE    = 6,  // return to IDLE on this tick; clear all recovery state
 };
 
 // ---------------------------------------------------------------------------
@@ -91,12 +93,16 @@ struct GaitConfig {
     // foot is allowed to lift. Gate opens when |wsProgress| >= this value.
     // 0.70 = 70% shift complete. Lower to 0.50 if gate never opens.
     // Raise toward 0.90 if robot falls when foot leaves ground.
-    float liftGateThreshold = 0.70f;  // [0, 1). WS: "liftGate"
+    float liftGateThreshold = 0.80f;  // [0, 1). WS: "liftGate"
 
     // Phase 2 IMU roll threshold (rad) — logged for diagnostics but not yet
     // used as a gate. Will gate foot lift in Phase 2 after single-leg stance
     // validation confirms the threshold value is reliable.
     float wsThresholdRad    = GAIT_WEIGHT_SHIFT_THRESHOLD_RAD;  // WS: "wsThresh"
+    
+    // IMU roll gate. Default OFF after Stage 2 task-space WeightShift refactor.
+    // Re-enable only if shift is driven by ankle tilt instead of lateral translation.
+    bool useImuGate       = false;  // WS: "useImuGate"
 
     // Stance hip→ankle drop in mm passed to LegIK as h_sagittal_mm.
     // Sourced from GAIT_STANCE_HEIGHT_MM. Override via WS:"stanceH_mm".

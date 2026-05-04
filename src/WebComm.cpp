@@ -900,6 +900,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         if      (key == "phaseRate")   cfg.phaseRateHz       = constrain(val, 0.05f, 2.0f);
                         else if (key == "liftGate")    cfg.liftGateThreshold = constrain(val, 0.0f, 0.99f);
                         else if (key == "wsThresh")    cfg.wsThresholdRad    = constrain(val, 0.01f, 0.50f);
+                        else if (key == "useImuGate") cfg.useImuGate       = (val > 0.5f);
                         else if (key == "stepH_mm") {
                             const float maxStep = fmaxf(5.0f, cfg.stanceHeightMm - 130.0f);
                             cfg.stepHeightMm = constrain(val, 5.0f, maxStep);

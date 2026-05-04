@@ -378,11 +378,13 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     const bool poseMode = (_state.mode == GaitMode::POSE_STEP);
     if (_currentHalf == 0) {
         const bool progressOK = (wsProgress    >=  _cfg.liftGateThreshold);
-        const bool imuOK      = poseMode || (imuState.roll >=  _cfg.wsThresholdRad);
+        const bool imuOK      = poseMode || !_cfg.useImuGate
+                                || (imuState.roll >=  _cfg.wsThresholdRad);
         _state.liftGateOK = progressOK && imuOK;
     } else {
         const bool progressOK = (wsProgress    <= -_cfg.liftGateThreshold);
-        const bool imuOK      = poseMode || (imuState.roll <= -_cfg.wsThresholdRad);
+        const bool imuOK      = poseMode || !_cfg.useImuGate
+                                || (imuState.roll <= -_cfg.wsThresholdRad);
         _state.liftGateOK = progressOK && imuOK;
     }
 
@@ -697,12 +699,55 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
     // hardware; if a sign is wrong, fix it in triggerRecovery(), not here.
     const float swingTargetX_mm = _rcvStepX_mm;               // sagittal (signed: + = forward)
     const float swingTargetY_mm = _rcvStepY_mm;               // lateral  (signed: + = outward for swing leg)
+    const bool  sagittalDominant = fabsf(_rcvStepX_mm) > fabsf(_rcvStepY_mm);
+    const float effectiveStepHeight_mm = sagittalDominant
+        ? RECOVERY_STEP_HEIGHT_SAGITTAL_MM
+        : RECOVERY_STEP_HEIGHT_LATERAL_MM;
 
     switch (_rcvSub) {
 
         case RecoverySubState::TRIGGERED:
-            _enterRcvSub(RecoverySubState::LIFTING);
+            _enterRcvSub(RecoverySubState::PRE_LIFT);
             break;
+
+        case RecoverySubState::PRE_LIFT: {
+            const float t        = 1.0f;
+            const float liftFrac = 0.0f;
+
+            FootTarget tSwing;
+            tSwing.isRightLeg    = _rcvSwingIsRight;
+            tSwing.x_mm          = GAIT_STANCE_X_OFFSET_MM;
+            tSwing.y_mm          = 0.0f;
+            tSwing.h_sagittal_mm = _cfg.stanceHeightMm;
+            tSwing.h_frontal_mm  = 0.0f;
+            tSwing.valid         = true;
+
+            FootTarget tStance;
+            tStance.isRightLeg    = !_rcvSwingIsRight;
+            tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM
+                                   - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t;
+            // Positive y_mm = outward in the stance leg's own frontal frame.
+            // Stance hip abducts AWAY from the fall, widening the base of support.
+            const float baseWidenMm = fabsf(swingTargetX_mm) * 0.20f * t;
+            tStance.y_mm          = fmaxf(+fabsf(swingTargetY_mm) * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t,
+                                         baseWidenMm);
+            _state.rcvStanceY_mm  = tStance.y_mm;
+            tStance.h_sagittal_mm = _cfg.stanceHeightMm;
+            tStance.h_frontal_mm  = 0.0f;
+            tStance.valid         = true;
+
+            const LegIKResult rSwing  = _submitFootTargetIK(_rcvSwingIsRight,  tSwing);
+            const LegIKResult rStance = _submitFootTargetIK(!_rcvSwingIsRight, tStance);
+            _state.lastIKStatusL = static_cast<uint8_t>(_rcvSwingIsRight ? rStance.status : rSwing.status);
+            _state.lastIKStatusR = static_cast<uint8_t>(_rcvSwingIsRight ? rSwing.status  : rStance.status);
+            _state.lastReachPctL = _rcvSwingIsRight ? rStance.sagittal_reach_pct : rSwing.sagittal_reach_pct;
+            _state.lastReachPctR = _rcvSwingIsRight ? rSwing.sagittal_reach_pct  : rStance.sagittal_reach_pct;
+
+            if (elapsed >= RECOVERY_PRE_LIFT_MS) {
+                _enterRcvSub(RecoverySubState::LIFTING);
+            }
+            break;
+        }
 
         case RecoverySubState::LIFTING: {
             const float t        = fminf(static_cast<float>(elapsed)
@@ -713,7 +758,7 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tSwing.isRightLeg    = _rcvSwingIsRight;
             tSwing.x_mm          = swingTargetX_mm * t + GAIT_STANCE_X_OFFSET_MM;
             tSwing.y_mm          = swingTargetY_mm * t;
-            tSwing.h_sagittal_mm = _cfg.stanceHeightMm - liftFrac * RECOVERY_STEP_HEIGHT_MM;
+            tSwing.h_sagittal_mm = _cfg.stanceHeightMm - liftFrac * effectiveStepHeight_mm;
             tSwing.h_frontal_mm  = 0.0f;
             tSwing.valid         = (tSwing.h_sagittal_mm >= 20.0f);
 
@@ -754,7 +799,7 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tSwing.isRightLeg    = _rcvSwingIsRight;
             tSwing.x_mm          = swingTargetX_mm + GAIT_STANCE_X_OFFSET_MM;
             tSwing.y_mm          = swingTargetY_mm;
-            tSwing.h_sagittal_mm = _cfg.stanceHeightMm - liftFrac * RECOVERY_STEP_HEIGHT_MM;
+            tSwing.h_sagittal_mm = _cfg.stanceHeightMm - liftFrac * effectiveStepHeight_mm;
             tSwing.h_frontal_mm  = 0.0f;
             tSwing.valid         = (tSwing.h_sagittal_mm >= 20.0f);
 

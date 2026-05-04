@@ -85,7 +85,7 @@ constexpr float GAIT_STANCE_HEIGHT_MM           = 185.0f;
 //
 // Tune from 0 in ±1mm increments until ankle-pitch IK output sits near each
 // joint's neutralDeg in standing pose. Typical magnitude: ≤ 10 mm.
-constexpr float GAIT_STANCE_X_OFFSET_MM         = -22.0f;
+constexpr float GAIT_STANCE_X_OFFSET_MM         = -5.0f;
 
 // Hold duration (ms) GaitController inserts between half-cycles. Weight shift
 // is centered (trigger NONE) and held for this duration so mechanical/IIR
@@ -107,9 +107,10 @@ constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 // ============================================================
 
 // --- Step magnitude caps (hard physical limits) ---
-constexpr float RECOVERY_STEP_LATERAL_MAX_MM = 35.0f;  // was 30 fixed — now ceiling
-constexpr float RECOVERY_STEP_FORWARD_MAX_MM = 35.0f;  // matches lateral cap
-constexpr float RECOVERY_STEP_HEIGHT_MM      = 25.0f;  
+constexpr float RECOVERY_STEP_LATERAL_MAX_MM     = 35.0f;  // was 30 fixed — now ceiling
+constexpr float RECOVERY_STEP_FORWARD_MAX_MM     = 35.0f;  // matches lateral cap
+constexpr float RECOVERY_STEP_HEIGHT_LATERAL_MM  = 20.0f;  // tune 18–25
+constexpr float RECOVERY_STEP_HEIGHT_SAGITTAL_MM = 32.0f;  // tune 28–38
 
 // --- Magnitude scaling: simplified capture-point ---
 // step_mm = clamp(MAGNITUDE_GAIN_MM_PER_RAD * |tilt|, MIN, MAX)
@@ -121,19 +122,18 @@ constexpr float RECOVERY_STEP_MIN_MAGNITUDE_MM     = 10.0f;
 // --- Stance counter-shift fraction ---
 // stance_offset = +counterShift * |swing_offset| (abducts away from fall).
 // 0.0 disables. UVC reference: ~0.25.
-// TUNING NOTE 2026-05-04: Increased from 0.30 → 0.50.
+// TUNING NOTE 2026-05-04: Increased from 0.30 → 0.85.
 //   At 0.30 with swingY=30mm, stance abducts only 9mm → hip_roll≈3.2°. Below
-//   visual perception. At 0.50, abduction is 15mm → hip_roll≈5.3°, clearly
-//   visible. Ceiling: stance hip_roll must stay <12° (well inside
-//   IK_HIP_ROLL_MAX_DEG=20°). At max swingY=35mm, 0.50 gives 17.5mm →
-//   hip_roll≈6.2° — safe.
-constexpr float RECOVERY_STANCE_COUNTERSHIFT_FRAC  = 0.60f;
+//   visual perception. At 0.85, abduction is 25.5mm → hip_roll≈9.0°, still inside
+//   the 20° IK limit and much closer to transferring CoM over the stance edge.
+constexpr float RECOVERY_STANCE_COUNTERSHIFT_FRAC  = 0.85f;
 
 // --- Sub-state durations (ms) ---
 // LIFT and LAND unchanged from Stage 1.
 // DAMP_HOLD: brief hold at planted offset before soft return begins.
 // SOFT_RETURN: smoothstep decay of step offset back to centered stance.
 //   DAMP_HOLD + SOFT_RETURN ≈ original RECOVERY_DAMP_MS (600).
+constexpr uint32_t RECOVERY_PRE_LIFT_MS     = 70;      // new: load stance before swing lifts
 constexpr uint32_t RECOVERY_LIFT_MS         = 200;     // unchanged
 constexpr uint32_t RECOVERY_LAND_MS         = 200;     // unchanged
 constexpr uint32_t RECOVERY_DAMP_HOLD_MS    = 200;     // was 600 (combined)

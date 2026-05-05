@@ -752,12 +752,20 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
         case RecoverySubState::LIFTING: {
             const float t        = fminf(static_cast<float>(elapsed)
                                          / static_cast<float>(RECOVERY_LIFT_MS), 1.0f);
-            const float liftFrac = sinf(t * static_cast<float>(M_PI) * 0.5f);
+            // Smoothstep ascent: zero foot velocity at lift-off (t=0) AND at peak (t=1).
+            // sin(t·π/2) had peak velocity at t=0, which slammed the foot off the ground —
+            // only invisible at low servo speeds because the smooth-stepper clipped it.
+            const float liftFrac = 3.0f * t * t - 2.0f * t * t * t;
 
             FootTarget tSwing;
             tSwing.isRightLeg    = _rcvSwingIsRight;
-            tSwing.x_mm          = swingTargetX_mm * t + GAIT_STANCE_X_OFFSET_MM;
-            tSwing.y_mm          = swingTargetY_mm * t;
+            // Smoothstep on horizontal motion: zero velocity at t=0 (foot still grounded)
+            // and t=1 (foot landed). Vertical lift uses sin*π/2 which has FULL velocity at
+            // t=0 — together this means the foot rises before it moves forward, eliminating
+            // the scrub mechanism. Cosmetic improvement at minimum, mechanical at best.
+            const float t_xy = 3.0f * t * t - 2.0f * t * t * t;
+            tSwing.x_mm = swingTargetX_mm * t_xy + GAIT_STANCE_X_OFFSET_MM;
+            tSwing.y_mm = swingTargetY_mm * t_xy;
             tSwing.h_sagittal_mm = _cfg.stanceHeightMm - liftFrac * effectiveStepHeight_mm;
             tSwing.h_frontal_mm  = 0.0f;
             tSwing.valid         = (tSwing.h_sagittal_mm >= 20.0f);
@@ -797,7 +805,11 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
         case RecoverySubState::LANDING: {
             const float t        = fminf(static_cast<float>(elapsed)
                                          / static_cast<float>(RECOVERY_LAND_MS), 1.0f);
-            const float liftFrac = cosf(t * static_cast<float>(M_PI) * 0.5f);
+            // Smoothstep descent: zero foot velocity at peak (t=0) AND at touchdown (t=1).
+            // cos(t·π/2) had peak velocity at touchdown — the literal cause of the high-
+            // speed tipping. The body was experiencing a 250 mm/s vertical foot impulse
+            // at ground contact instead of a smoothed deceleration.
+            const float liftFrac = 1.0f - (3.0f * t * t - 2.0f * t * t * t);
 
             FootTarget tSwing;
             tSwing.isRightLeg    = _rcvSwingIsRight;

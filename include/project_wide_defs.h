@@ -26,7 +26,7 @@
 // DEFAULT_DEG_S: comfortable default for UI interaction — not too sluggish, not snappy.
 // Recalculate MAX_DEG_S if SD_ANGLE_RANGE changes (servo_driver.h):
 //   max_us_per_tick = (MAX_DEG_S / SD_ANGLE_RANGE) * (SD_USMAX - SD_USMIN) * UPDATE_INTERVAL_S
-#define JOINT_SPEED_DEFAULT_DEG_S   50.0f   // All joints at boot
+#define JOINT_SPEED_DEFAULT_DEG_S   70.0f   // All joints at boot
 #define JOINT_SPEED_MIN_DEG_S        1.0f   // Floor — prevents silent frozen-joint bugs
 // No global MAX: upper clamp is now per-joint (JointConfig::noLoadSpeedDegS).
 
@@ -85,7 +85,7 @@ constexpr float GAIT_STANCE_HEIGHT_MM           = 185.0f;
 //
 // Tune from 0 in ±1mm increments until ankle-pitch IK output sits near each
 // joint's neutralDeg in standing pose. Typical magnitude: ≤ 10 mm.
-constexpr float GAIT_STANCE_X_OFFSET_MM         = -5.0f;
+constexpr float GAIT_STANCE_X_OFFSET_MM         = -10.0f;
 
 // Hold duration (ms) GaitController inserts between half-cycles. Weight shift
 // is centered (trigger NONE) and held for this duration so mechanical/IIR
@@ -109,8 +109,8 @@ constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 // --- Step magnitude caps (hard physical limits) ---
 constexpr float RECOVERY_STEP_LATERAL_MAX_MM     = 35.0f;  // was 30 fixed — now ceiling
 constexpr float RECOVERY_STEP_FORWARD_MAX_MM     = 35.0f;  // matches lateral cap
-constexpr float RECOVERY_STEP_HEIGHT_LATERAL_MM  = 20.0f;  // tune 18–25
-constexpr float RECOVERY_STEP_HEIGHT_SAGITTAL_MM = 32.0f;  // tune 28–38
+constexpr float RECOVERY_STEP_HEIGHT_LATERAL_MM  = 0.0f;  // tune 18–25
+constexpr float RECOVERY_STEP_HEIGHT_SAGITTAL_MM = 10.0f;  // tune 28–38
 
 // --- Magnitude scaling: simplified capture-point ---
 // step_mm = clamp(MAGNITUDE_GAIN_MM_PER_RAD * |tilt|, MIN, MAX)
@@ -134,7 +134,7 @@ constexpr float RECOVERY_STANCE_COUNTERSHIFT_FRAC  = 0.85f;
 // SOFT_RETURN: smoothstep decay of step offset back to centered stance.
 //   DAMP_HOLD + SOFT_RETURN ≈ original RECOVERY_DAMP_MS (600).
 constexpr uint32_t RECOVERY_PRE_LIFT_MS     = 120;      // new: load stance before swing lifts
-constexpr uint32_t RECOVERY_LIFT_MS         = 200;     // unchanged
+constexpr uint32_t RECOVERY_LIFT_MS         = 250;     // unchanged
 constexpr uint32_t RECOVERY_LAND_MS         = 200;     // unchanged
 constexpr uint32_t RECOVERY_DAMP_HOLD_MS    = 200;     // was 600 (combined)
 constexpr uint32_t RECOVERY_SOFT_RETURN_MS  = 400;     // new
@@ -156,6 +156,6 @@ constexpr uint32_t RECOVERY_LOCKOUT_MS      = 800;
 // that the first step reduced but didn't fully recover. Set above normal
 // walking roll (~0.05 rad) so it never fires after a clean step landing.
 // Default 0.07 rad ≈ 4°. Tune after T2.5 if second steps are spurious.
-constexpr float RECOVERY_CHAIN_TILT_THRESHOLD_RAD = 0.10f;
+constexpr float RECOVERY_CHAIN_TILT_THRESHOLD_RAD = 0.12f;
 
 #endif // PROJECT_WIDE_DEFS_H

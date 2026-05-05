@@ -100,6 +100,7 @@ void GaitController::start(GaitMode mode) {
         _state.rcvStepX_mm   = 0.0f;
         _state.rcvStepY_mm   = 0.0f;
         _state.rcvMagnitude  = 0.0f;
+        _state.cycleXDispl_mm = 0.0f;
         if (_ws) _ws->trigger(ShiftDirection::NONE);
         Serial.println("[GaitCtrl] IDLE — weight shift centered.");
         return;
@@ -208,13 +209,15 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
     const float liftMm = isSwing ? (swingFrac * _cfg.stepHeightMm) : 0.0f;
     t.h_sagittal_mm = _cfg.stanceHeightMm - liftMm;
 
-    // Stage 2: linear forward stride on the swing leg only.
-    //   localPhase = 0.0  → foot at -stepLength/2 (behind hip)
-    //   localPhase = 0.5  → foot at 0           (under hip)
-    //   localPhase = 1.0  → foot at +stepLength/2 (ahead of hip)
-    // Stance leg gets zero stride — push-back is Stage 3.
-    if (isSwing && _cfg.stepLengthMm > 0.0f) {
-        const float strideX = (localPhase - 0.5f) * _cfg.stepLengthMm;
+    // Stage 3: linear stride applied to BOTH legs.
+    //   Swing  leg: x = (localPhase - 0.5) × L  → starts at -L/2, lands at +L/2
+    //   Stance leg: x = (0.5 - localPhase) × L  → starts at +L/2, retreats to -L/2
+    // Net effect: body advances ≈ L per half-cycle. Foot stays planted while the
+    // hip translates forward in body frame (foot retreats relative to hip).
+    if (_cfg.stepLengthMm > 0.0f) {
+        const float strideX = isSwing
+            ? (localPhase - 0.5f) * _cfg.stepLengthMm
+            : (0.5f - localPhase) * _cfg.stepLengthMm;
         t.x_mm += strideX;
     }
 
@@ -299,6 +302,40 @@ void GaitController::_submitStanceBothLegs(const BalanceCorrection* bc) {
 }
 
 // ---------------------------------------------------------------------------
+//  _submitCycleStanceBoth — Stage 3: cycle-role aware submission.
+//
+//  At any localPhase, exactly one leg is in the swing role (foot on or near
+//  the planting trajectory) and one is in the stance role (foot retreating
+//  through body frame). This helper submits both legs with the correct role
+//  flag so _buildFootTarget applies the appropriate stride formula.
+//
+//  Use during WAIT_SHIFT and STABILIZING active sub-states. SWINGING uses its
+//  own explicit submission (with non-zero swingFrac for the lift). IDLE and
+//  STOPPING continue to use _submitStanceBothLegs (no stride applied).
+//
+//  Note: liftFrac=0 here. The lift trajectory is the responsibility of the
+//  SWINGING branch, which overrides whatever this helper submitted.
+// ---------------------------------------------------------------------------
+void GaitController::_submitCycleStanceBoth(float localPhase,
+                                              const BalanceCorrection* bc) {
+    const bool leftIsSwing = (_currentHalf == 0);
+    const FootTarget tL = _buildFootTarget(/*isRight=*/false, /*liftFrac=*/0.0f,
+                                            /*isSwing=*/  leftIsSwing,
+                                            localPhase, bc);
+    const FootTarget tR = _buildFootTarget(/*isRight=*/true,  /*liftFrac=*/0.0f,
+                                            /*isSwing=*/ !leftIsSwing,
+                                            localPhase, bc);
+
+    const LegIKResult rL = _submitFootTargetIK(false, tL);
+    const LegIKResult rR = _submitFootTargetIK(true,  tR);
+
+    _state.lastIKStatusL = static_cast<uint8_t>(rL.status);
+    _state.lastIKStatusR = static_cast<uint8_t>(rR.status);
+    _state.lastReachPctL = rL.sagittal_reach_pct;
+    _state.lastReachPctR = rR.sagittal_reach_pct;
+}
+
+// ---------------------------------------------------------------------------
 //  _advanceHalf  —  called when _halfPhase >= 1.0 (foot back on ground).
 //  Flips the half-cycle and re-enters WAIT_SHIFT for the next leg.
 //  SINGLE_STEP stops after completing half=1 (both legs have taken one step).
@@ -312,6 +349,7 @@ void GaitController::_advanceHalf() {
 
     _currentHalf      = 1 - _currentHalf;   // 0→1 or 1→0
     _halfPhase        = 0.0f;
+    _state.cycleXDispl_mm = 0.0f;
     _subState         = StepSubState::STABILIZING;
     _stabilizeStartMs = millis();
     // Center the weight shift; the structural/IIR transients from the half just
@@ -400,10 +438,11 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     _state.phase    = _currentHalf * 0.5f + _halfPhase * 0.5f;
     _state.poseHold = _poseHoldPt;
 
-    // Keep the stance baseline alive on every active tick. Later branches may
-    // overwrite one leg with a swing target, but stance-only states still need
-    // fresh IK submissions each loop.
-    _submitStanceBothLegs(bc);
+    // Keep the cycle baseline alive on every active tick. Later branches may
+    // overwrite one leg with a swing target. Stage 3: legs reflect their gait-
+    // cycle role even when not actively lifting, so accumulated body displacement
+    // is preserved through WAIT_SHIFT and STABILIZING.
+    _submitCycleStanceBoth(_halfPhase, bc);
 
     // BUG FIX (weight-shift runaway): when gait mode is IDLE but WeightShift is
     // active (manual WEIGHT_SHIFT:left/right from UI), only the stance IK should
@@ -573,6 +612,10 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     _state.lastIKStatusR = static_cast<uint8_t>(rR.status);
     _state.lastReachPctL = rL.sagittal_reach_pct;
     _state.lastReachPctR = rR.sagittal_reach_pct;
+
+    // Stage 3 telemetry: estimated body translation this half-cycle.
+    // _halfPhase × stepLengthMm. Resets to 0 in _advanceHalf().
+    _state.cycleXDispl_mm = _halfPhase * _cfg.stepLengthMm;
 
     // Repurposed UI fields: hip pitch produced by IK on the swing leg.
     _state.liftL_deg = leftIsSwing  ? rL.hip_pitch_deg : 0.0f;

@@ -93,7 +93,7 @@ struct GaitConfig {
     // foot is allowed to lift. Gate opens when |wsProgress| >= this value.
     // 0.70 = 70% shift complete. Lower to 0.50 if gate never opens.
     // Raise toward 0.90 if robot falls when foot leaves ground.
-    float liftGateThreshold = 0.80f;  // [0, 1). WS: "liftGate"
+    float liftGateThreshold = 0.85f;  // [0, 1). WS: "liftGate"
 
     // Phase 2 IMU roll threshold (rad) — logged for diagnostics but not yet
     // used as a gate. Will gate foot lift in Phase 2 after single-leg stance
@@ -126,7 +126,7 @@ struct GaitConfig {
     // ramp 0 → 10 → 15 → 20 mm in 5 mm increments. Watch lastReachPctL/R
     // and IK status — stop on first LIMIT_CLAMPED. Do not raise phaseRateHz
     // and stepLengthMm in the same session.
-    float stepLengthMm = 0.0f;
+    float stepLengthMm = 10.0f;
 };
 
 // ---------------------------------------------------------------------------
@@ -150,6 +150,10 @@ struct GaitState {
     uint8_t      lastIKStatusR = 0;
     float        lastReachPctL = 0.0f;
     float        lastReachPctR = 0.0f;
+    // Stage 3 — Cumulative body-frame x displacement this cycle, in mm.
+    // Computed as _halfPhase × stepLengthMm. Reset to 0 on _advanceHalf().
+    // Telemetry only — does NOT feed back into FootTarget.
+    float        cycleXDispl_mm = 0.0f;
 
     // Recovery telemetry (Stage 1+). Valid only when mode == RECOVERY_STEP.
     RecoverySubState recoverySub       = RecoverySubState::TRIGGERED;
@@ -284,6 +288,13 @@ private:
     // Used whenever gait or WeightShift owns the legs, even if no swing is active.
     // bc: merged into each stance leg's FootTarget when not nullptr.
     void _submitStanceBothLegs(const BalanceCorrection* bc = nullptr);
+
+    // Stage 3: Submit both legs using their gait-cycle role (swing / stance) at
+    // the given localPhase. Applies stride formula to BOTH legs even when neither
+    // is actively lifting, so legs hold accumulated body displacement through
+    // WAIT_SHIFT and STABILIZING. Used in active gait modes only — IDLE and
+    // STOPPING continue to use _submitStanceBothLegs (no stride).
+    void _submitCycleStanceBoth(float localPhase, const BalanceCorrection* bc = nullptr);
 };
 
 #endif // GAIT_CONTROLLER_H

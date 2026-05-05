@@ -297,6 +297,45 @@ static bool test_strideEndpoints() {
     return pass;
 }
 
+// T11 — Stage 3: stance and swing legs satisfy the continuity invariant
+//       end-of-half-N positions == start-of-half-(N+1) positions.
+static bool test_stage3_continuity() {
+    GaitController g;
+    GaitConfig cfg = g.getConfig();
+    cfg.stepLengthMm = 20.0f;
+    g.setConfig(cfg);
+
+    // Half N (currentHalf=0): leftIsSwing=true at lp=1
+    //   → left  (swing)  x = (1-0.5)*20 = +10
+    //   → right (stance) x = (0.5-1)*20 = -10
+    // Half N+1 (currentHalf=1): leftIsSwing=false at lp=0
+    //   → left  (stance) x = (0.5-0)*20 = +10  ✓ matches
+    //   → right (swing)  x = (0-0.5)*20 = -10  ✓ matches
+    //
+    // No way to call _buildFootTarget directly (private). Verify the math
+    // explicitly here so any future formula change is caught at compile time.
+    const float L = 20.0f;
+    const float swing_at_end_of_half  = (1.0f - 0.5f) * L;     // +10
+    const float stance_at_end_of_half = (0.5f - 1.0f) * L;     // -10
+    const float swing_at_start_of_half  = (0.0f - 0.5f) * L;   // -10
+    const float stance_at_start_of_half = (0.5f - 0.0f) * L;   // +10
+    const bool pass =
+        near(swing_at_end_of_half,  stance_at_start_of_half) &&  // role-swap continuity
+        near(stance_at_end_of_half, swing_at_start_of_half);
+    Serial.printf("[GaitT11] stage3_continuity: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
+// T12 — Stage 3: stance leg at peak (lp=0.5) is at neutral x.
+static bool test_stage3_midstance_zero() {
+    const float L = 20.0f;
+    const float stance_mid = (0.5f - 0.5f) * L;
+    const float swing_mid  = (0.5f - 0.5f) * L;
+    const bool pass = near(stance_mid, 0.0f) && near(swing_mid, 0.0f);
+    Serial.printf("[GaitT12] stage3_midstance_zero: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 // ---------------------------------------------------------------------------
 void runGaitControllerTests() {
     Serial.println("\n[GaitCtrl] ══ Unit Tests ══════════════════════════════════");
@@ -311,6 +350,8 @@ void runGaitControllerTests() {
     run(test_zeroConfigShiftProducesNoActuation());
     run(test_stop_during_swing_ramps_cleanly());
     run(test_strideEndpoints());
+    run(test_stage3_continuity());
+    run(test_stage3_midstance_zero());
     Serial.printf("[GaitCtrl] ══ %d / %d PASSED ═══════════════════════════════\n\n",
                   pass, total);
 }

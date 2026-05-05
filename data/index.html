@@ -1162,6 +1162,19 @@
                 </div>
             </div>
 
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Step length (mm)</span>
+                    <span class="tune-val" id="tvGaitStepLen">0</span>
+                </div>
+                <input type="range" id="slGaitStepLen" min="0" max="40" step="1" value="0"
+                       oninput="updateGaitLabel('stepLen', this.value); sendGaitTune()">
+                <div style="font-size:10px; color:#555; margin-top:3px;">
+                    Phase 2: forward stride per cycle. 0 disables.
+                    Hard-capped at stanceH × 0.20. Start at 10 mm.
+                </div>
+            </div>
+
         </div><!-- /.gait-tune-grid -->
 
         <div style="font-size:10px; color:#555; margin-top:10px; line-height:1.5;">
@@ -2330,6 +2343,7 @@ const _gaitTuneMap = {
     wsThreshDeg:{ el: "tvGaitWsThresh", decimals: 1 },
     stepH:      { el: "tvGaitStep",     decimals: 0 },
     stanceH:    { el: "tvGaitStance",   decimals: 0 },
+    stepLen:    { el: "tvGaitStepLen",  decimals: 0 },
 };
 
 function updateGaitLabel(id, rawVal) {
@@ -2348,8 +2362,10 @@ function sendGaitTune() {
         const wsThreshRad = (wsThreshDeg * Math.PI / 180).toFixed(5);
         const stepH    = document.getElementById("slGaitStep").value;
         const stanceH  = document.getElementById("slGaitStance").value;
+        const stepLen  = document.getElementById("slGaitStepLen").value;
         const msg = `CMD:GAIT_TUNE:phaseRate=${rate},liftGate=${gate},`
-                  + `wsThresh=${wsThreshRad},stepH_mm=${stepH},stanceH_mm=${stanceH}`;
+                  + `wsThresh=${wsThreshRad},stepH_mm=${stepH},stanceH_mm=${stanceH},`
+                  + `stepLength_mm=${stepLen}`;
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(msg);
             console.log("[WS TX]", msg);
@@ -2463,6 +2479,8 @@ function parseGaitState(payload) {
     if (!_tuneActive) {
         _syncSlider("slGaitStep", "tvGaitStep", stepH, 0);
         _syncSlider("slGaitStance", "tvGaitStance", stanceH, 0);
+        const stepLen = parseFloat(v["stepLen"] || "0");
+        _syncSlider("slGaitStepLen", "tvGaitStepLen", stepLen, 0);
     }
 }
 

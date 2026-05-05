@@ -197,18 +197,28 @@ float GaitController::_swingFrac(float localPhase) const {
 FootTarget GaitController::_buildFootTarget(bool isRight,
                                             float swingFrac,
                                             bool isSwing,
+                                            float localPhase,
                                             const BalanceCorrection* bc) const {
     FootTarget t;
     t.isRightLeg   = isRight;
     t.x_mm         = GAIT_STANCE_X_OFFSET_MM;
     t.y_mm         = 0.0f;
-    t.h_frontal_mm = 0.0f;  // 0 = auto-derive from sagittal in LegIK::solve
+    t.h_frontal_mm = 0.0f;
 
     const float liftMm = isSwing ? (swingFrac * _cfg.stepHeightMm) : 0.0f;
     t.h_sagittal_mm = _cfg.stanceHeightMm - liftMm;
 
-    // Stage 2: compose WeightShift's task-space contribution. Body forward-lean
-    // applies to both legs symmetrically; lateral shift is signed per leg side.
+    // Stage 2: linear forward stride on the swing leg only.
+    //   localPhase = 0.0  → foot at -stepLength/2 (behind hip)
+    //   localPhase = 0.5  → foot at 0           (under hip)
+    //   localPhase = 1.0  → foot at +stepLength/2 (ahead of hip)
+    // Stance leg gets zero stride — push-back is Stage 3.
+    if (isSwing && _cfg.stepLengthMm > 0.0f) {
+        const float strideX = (localPhase - 0.5f) * _cfg.stepLengthMm;
+        t.x_mm += strideX;
+    }
+
+    // Stage 2: WeightShift task-space contribution (forward lean + lateral shift).
     if (_ws != nullptr) {
         float wsX_mm = 0.0f, wsY_mm = 0.0f;
         _ws->getStanceShift(isRight, wsX_mm, wsY_mm);
@@ -216,13 +226,11 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
         t.y_mm += wsY_mm;
     }
 
-    // Stage 3: merge balance correction onto stance leg only.
-    // Swing leg keeps its planned trajectory unmodified.
+    // Stage 3: balance correction merges onto stance leg only.
     if (bc != nullptr && !isSwing) {
         mergeBalanceCorrection(t, *bc);
     }
 
-    // Defensive guard — LegIK rejects < 10mm; flag earlier here.
     t.valid = (t.h_sagittal_mm >= 20.0f);
     return t;
 }
@@ -278,8 +286,8 @@ LegIKResult GaitController::_submitFootTargetIK(bool isRight,
 
 // ---------------------------------------------------------------------------
 void GaitController::_submitStanceBothLegs(const BalanceCorrection* bc) {
-    const FootTarget tL = _buildFootTarget(/*isRight=*/false, 0.0f, /*isSwing=*/false, bc);
-    const FootTarget tR = _buildFootTarget(/*isRight=*/true,  0.0f, /*isSwing=*/false, bc);
+    const FootTarget tL = _buildFootTarget(/*isRight=*/false, 0.0f, /*isSwing=*/false, 0.0f, bc);
+    const FootTarget tR = _buildFootTarget(/*isRight=*/true,  0.0f, /*isSwing=*/false, 0.0f, bc);
 
     const LegIKResult rL = _submitFootTargetIK(false, tL);
     const LegIKResult rR = _submitFootTargetIK(true,  tR);
@@ -422,8 +430,12 @@ void GaitController::update(float dt_s, const IMUState& imuState,
                                 * (1.0f - (float)elapsed / (float)GAIT_STOP_RAMP_MS));
 
         const bool leftIsSwing = (_stopHalf == 0);
-        const FootTarget tL = _buildFootTarget(false, stopFrac,  leftIsSwing, bc);
-        const FootTarget tR = _buildFootTarget(true,  stopFrac, !leftIsSwing, bc);
+        // During stop ramp, freeze stride at the position the swing foot was
+        // at when stop() was called. _halfPhase still reflects that position.
+        const FootTarget tL = _buildFootTarget(false, stopFrac,  leftIsSwing,
+                                               _halfPhase, bc);
+        const FootTarget tR = _buildFootTarget(true,  stopFrac, !leftIsSwing,
+                                               _halfPhase, bc);
         const LegIKResult rL = _submitFootTargetIK(false, tL);
         const LegIKResult rR = _submitFootTargetIK(true,  tR);
 
@@ -468,9 +480,11 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             const bool leftIsSwing = (_currentHalf == 0);
 
             const FootTarget tL = _buildFootTarget(/*isRight=*/false, liftFrac,
-                                                    /*isSwing=*/  leftIsSwing, bc);
+                                                    /*isSwing=*/  leftIsSwing,
+                                                    _halfPhase, bc);
             const FootTarget tR = _buildFootTarget(/*isRight=*/true,  liftFrac,
-                                                    /*isSwing=*/ !leftIsSwing, bc);
+                                                    /*isSwing=*/ !leftIsSwing,
+                                                    _halfPhase, bc);
 
             const LegIKResult rL = _submitFootTargetIK(false, tL);
             const LegIKResult rR = _submitFootTargetIK(true,  tR);
@@ -546,9 +560,11 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // Build BOTH foot targets every tick. Stance leg also goes through IK
     // so it holds its commanded pose against priority arbitration.
     const FootTarget tL = _buildFootTarget(/*isRight=*/false, liftFrac,
-                                            /*isSwing=*/  leftIsSwing, bc);
+                                            /*isSwing=*/  leftIsSwing,
+                                            _halfPhase, bc);
     const FootTarget tR = _buildFootTarget(/*isRight=*/true,  liftFrac,
-                                            /*isSwing=*/ !leftIsSwing, bc);
+                                            /*isSwing=*/ !leftIsSwing,
+                                            _halfPhase, bc);
 
     const LegIKResult rL = _submitFootTargetIK(false, tL);
     const LegIKResult rR = _submitFootTargetIK(true,  tR);

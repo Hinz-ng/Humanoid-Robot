@@ -300,7 +300,7 @@ void WebComm::broadcastGaitState() {
     char buf[320];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
-        "stepH=%.1f,stanceH=%.1f,"
+        "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
         "rsub=%d,rdx=%d,rdy=%d,rms=%lu,"
         "rcvX=%.1f,rcvY=%.1f,rcvMag=%.1f,rcvSY=%.1f",
         s.phase,
@@ -313,6 +313,7 @@ void WebComm::broadcastGaitState() {
         static_cast<int>(s.poseHold),
         _gaitCtrl->getConfig().stepHeightMm,
         _gaitCtrl->getConfig().stanceHeightMm,
+        _gaitCtrl->getConfig().stepLengthMm,
         static_cast<int>(s.recoverySub),
         static_cast<int>(s.recoveryDirX),
         static_cast<int>(s.recoveryDirY),
@@ -909,14 +910,26 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             const float minStance = 130.0f + cfg.stepHeightMm;
                             cfg.stanceHeightMm = constrain(val, minStance, gaitMaxReachMm);
                         }
+                        else if (key == "stepLength_mm") {
+                            // Hard cap at 20% of stance height to protect IK
+                            // hip pitch limits at full extension. At stanceH=185
+                            // this is 37 mm. Floor at 0 (disables stride entirely).
+                            const float maxStride = cfg.stanceHeightMm * 0.20f;
+                            cfg.stepLengthMm = constrain(val, 0.0f, maxStride);
+                            if (val > maxStride) {
+                                Serial.printf("[WebComm] GAIT_TUNE: stepLength_mm=%.1f "
+                                              "clamped to %.1f (20%% of stanceH=%.1f)\n",
+                                              val, maxStride, cfg.stanceHeightMm);
+                            }
+                        }
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
                 _gaitCtrl->setConfig(cfg);
                 Serial.printf("[WebComm] GAIT_TUNE: rate=%.2f Hz  gate=%.2f  wsThresh=%.3f rad  "
-                              "stepH=%.1f mm  stanceH=%.1f mm\n",
+                              "stepH=%.1f mm  stanceH=%.1f mm  stepLen=%.1f mm\n",
                               cfg.phaseRateHz, cfg.liftGateThreshold, cfg.wsThresholdRad,
-                              cfg.stepHeightMm, cfg.stanceHeightMm);
+                              cfg.stepHeightMm, cfg.stanceHeightMm, cfg.stepLengthMm);
             }
         }
 

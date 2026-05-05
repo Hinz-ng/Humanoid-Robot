@@ -113,6 +113,20 @@ struct GaitConfig {
     // Swing foot peak vertical clearance (mm). Bounded by the caller so
     // stanceHeightMm - stepHeightMm stays inside IK's safe range.
     float stepHeightMm      = GAIT_STEP_HEIGHT_MM;
+
+    // Forward stride per cycle (mm). Swing leg's foot moves linearly from
+    // -stepLengthMm/2 (behind hip) to +stepLengthMm/2 (ahead of hip) over
+    // its swing phase. Stance leg is unaffected (Stage 2 — push-back is Stage 3).
+    //
+    // Hard-capped at stanceHeightMm × 0.20 by the WebComm parser to protect
+    // hip pitch IK soft limits. Default 0.0 keeps this opt-in: existing
+    // GAIT_START with no GAIT_TUNE will produce identical Phase 1 behavior.
+    //
+    // Tuning order: confirm Phase 1 unchanged at stepLengthMm=0, then
+    // ramp 0 → 10 → 15 → 20 mm in 5 mm increments. Watch lastReachPctL/R
+    // and IK status — stop on first LIMIT_CLAMPED. Do not raise phaseRateHz
+    // and stepLengthMm in the same session.
+    float stepLengthMm = 0.0f;
 };
 
 // ---------------------------------------------------------------------------
@@ -252,7 +266,12 @@ private:
     // stance target before returning. Swing leg never receives the correction.
     // Returns target with valid=true on success. valid=false means the
     // caller should not submit (used for IDLE / paused states).
+    // localPhase: position within the current half-cycle [0, 1).
+    //   Stance leg ignores it. Swing leg uses it for linear stride.
+    //   Pass 0.0f from contexts that don't have a meaningful phase
+    //   (stop ramp, idle stance refresh).
     FootTarget _buildFootTarget(bool isRight, float swingFrac, bool isSwing,
+                                float localPhase = 0.0f,
                                 const BalanceCorrection* bc = nullptr) const;
 
     // Resolve a FootTarget through LegIK and submit the joint angles via

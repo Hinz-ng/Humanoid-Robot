@@ -116,6 +116,16 @@ struct BalanceConfig {
     // WS: "task_space"
     bool task_space_output = false;
 
+    // --- Joint-space torso balance toggle ---
+    // Independently gates the torso_pitch and torso_roll submissions emitted by
+    // BalanceController. When false, the PD output still drives ankle/hip (legacy)
+    // and dx/dy (task-space) but the torso joints are left to other authorities.
+    // Decoupled from task_space_output so torso balance can run in BOTH modes.
+    // The ankle:hip:torso ratio sliders still scale the per-joint contribution;
+    // this flag is the master enable for the torso channel.
+    // WS: "torso_bal"
+    bool torso_balance_enabled = true;
+
     // Conversion gain: PD output (deg) → task-space body shift (mm).
     // At h_sagittal ≈ 185 mm: 1° ≈ 3.2 mm. Default 3.0 is conservative.
     // WS: "dx_per_deg", "dy_per_deg"
@@ -132,8 +142,8 @@ struct BalanceConfig {
     // WS keys: "rcv_pitch", "rcv_roll", "rcv_sat", "rcv_conf"
     bool     recovery_enabled              = false;
     bool     recovery_suppress_during_gait = true;   // F6 mitigation
-    float    recovery_tilt_pitch_rad       = 0.20f;  // ~11.4°
-    float    recovery_tilt_roll_rad        = 0.18f;  // ~10.3°
+    float    recovery_tilt_pitch_rad       = 0.15f;  
+    float    recovery_tilt_roll_rad        = 0.13f;  
     uint16_t recovery_saturation_ticks     = 20;     // ~50 ms at 400 Hz
     uint16_t recovery_confirm_ticks        = 10;     // ~25 ms debounce
 };

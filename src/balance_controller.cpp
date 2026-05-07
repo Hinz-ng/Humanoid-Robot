@@ -231,15 +231,19 @@ BalanceState BalanceController::update(const IMUState& state) {
     if (_cfg.task_space_output) {
         _lastCorrection = computeCorrection(state);
 
-        // Torso pitch — still joint-space; uses cached _ts_pitch_u_clamped.
-        if (_motionManager && _cfg.pitch_enabled && _cfg.torso_ratio > 0.001f) {
+        // Torso pitch — joint-space submission, runs alongside dx/dy task-space.
+        // Gated by torso_balance_enabled so the user can disable torso balance
+        // without zeroing torso_ratio (which still scales the contribution).
+        if (_motionManager && _cfg.pitch_enabled && _cfg.torso_balance_enabled
+            && _cfg.torso_ratio > 0.001f) {
             float torso_cmd = _ts_pitch_u_clamped * _cfg.torso_ratio;
             float shaped    = _shapeOutput(BJI_TORSO_PITCH, -torso_cmd,
                                            _pitchRateFiltered);
             _motionManager->submit(SOURCE_BALANCE, IDX_TORSO_PITCH, shaped);
         }
-        // Torso roll — still joint-space; uses cached _ts_roll_u_clamped.
-        if (_motionManager && _cfg.roll_enabled && _cfg.torso_roll_ratio > 0.001f) {
+        // Torso roll — joint-space submission, runs alongside dx/dy task-space.
+        if (_motionManager && _cfg.roll_enabled && _cfg.torso_balance_enabled
+            && _cfg.torso_roll_ratio > 0.001f) {
             float torso_cmd = _ts_roll_u_clamped * _cfg.torso_roll_ratio;
             float shaped    = _shapeOutput(BJI_TORSO_ROLL, torso_cmd,
                                            _rollRateFiltered);
@@ -273,8 +277,9 @@ BalanceState BalanceController::update(const IMUState& state) {
     //  PITCH PD (legacy joint-space path)
     // =========================================================================
     if (_cfg.pitch_enabled) {
-        // Derivative filter — updated every tick to keep IIR warm.
-        // A cold state causes a Kd spike on deadband exit.
+        // Derivative LPF — only advanced while pitch is enabled. The disable
+        // transition (BUG-04 block above) zeros the filter so the next enable
+        // does not see a stale state, preventing a Kd spike on re-arm.
         _pitchRateFiltered = _cfg.derivative_lpf_alpha * _pitchRateFiltered
                            + (1.0f - _cfg.derivative_lpf_alpha) * state.pitchRate;
 
@@ -476,12 +481,8 @@ BalanceCorrection BalanceController::computeCorrection(const IMUState& state) {
         }
         _ts_roll_u_clamped = u_roll_clamped;
 
-        // Soft clamp: prevent dy_mm from pushing the combined y_mm (lateral_shift +
-        // dy) beyond IK reach. ±25 mm leaves headroom for WeightShift's contribution.
-        u_roll_clamped = constrain(u_roll_clamped,
-                                   -_cfg.max_roll_correction_deg,
-                                    _cfg.max_roll_correction_deg);
-
+        // u_roll_clamped is already constrained to ±max_roll_correction_deg above.
+        // The outer ±25 mm clamp on bc.dy_mm (after IIR) is what protects IK reach.
         const float raw_dy_mm = u_roll_clamped * _cfg.roll_to_dy_mm_per_deg;
         float clamped_dy;
         if (fabsf(raw_dy_mm) < 1e-4f) {
@@ -582,7 +583,7 @@ void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg,
             _motionManager->submit(SOURCE_BALANCE, IDX_R_HIP_PITCH, r_hip);
             _motionManager->submit(SOURCE_BALANCE, IDX_L_HIP_PITCH, l_hip);
         }
-        if (_cfg.torso_ratio > 0.001f) {
+        if (_cfg.torso_balance_enabled && _cfg.torso_ratio > 0.001f) {
             _motionManager->submit(SOURCE_BALANCE, IDX_TORSO_PITCH, torso);
         }
         return;
@@ -605,7 +606,7 @@ void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg,
         _servo->setJointAngleDirect(IDX_R_HIP_PITCH, r_hip);
         _servo->setJointAngleDirect(IDX_L_HIP_PITCH, l_hip);
     }
-    if (_cfg.torso_ratio > 0.001f) {
+    if (_cfg.torso_balance_enabled && _cfg.torso_ratio > 0.001f) {
         _servo->setJointAngleDirect(IDX_TORSO_PITCH, torso);
     }
 }
@@ -665,7 +666,7 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg,
             _motionManager->submit(SOURCE_BALANCE, IDX_R_HIP_ROLL, r_hip);
             _motionManager->submit(SOURCE_BALANCE, IDX_L_HIP_ROLL, l_hip);
         }
-        if (_cfg.torso_roll_ratio > 0.001f) {
+        if (_cfg.torso_balance_enabled && _cfg.torso_roll_ratio > 0.001f) {
             _motionManager->submit(SOURCE_BALANCE, IDX_TORSO_ROLL, torso);
         }
         return;
@@ -680,10 +681,10 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg,
 
     float final_r = shaped_r + _cfg.ankle_roll_bias_r_deg;
     float final_l = shaped_l + _cfg.ankle_roll_bias_l_deg;
-        float maxBias  = fmaxf(fabsf(_cfg.ankle_roll_bias_l_deg),
-                                fabsf(_cfg.ankle_roll_bias_r_deg));
-        float maxAnkle = _cfg.max_roll_correction_deg + maxBias;
-        maxAnkle = constrain(maxAnkle, 1.0f, 30.0f);
+    float maxBias  = fmaxf(fabsf(_cfg.ankle_roll_bias_l_deg),
+                           fabsf(_cfg.ankle_roll_bias_r_deg));
+    float maxAnkle = _cfg.max_roll_correction_deg + maxBias;
+    maxAnkle = constrain(maxAnkle, 1.0f, 30.0f);
     final_r = constrain(final_r, -maxAnkle, maxAnkle);
     final_l = constrain(final_l, -maxAnkle, maxAnkle);
 
@@ -693,7 +694,7 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg,
         _servo->setJointAngleDirect(IDX_R_HIP_ROLL, r_hip);
         _servo->setJointAngleDirect(IDX_L_HIP_ROLL, l_hip);
     }
-    if (_cfg.torso_roll_ratio > 0.001f) {
+    if (_cfg.torso_balance_enabled && _cfg.torso_roll_ratio > 0.001f) {
         _servo->setJointAngleDirect(IDX_TORSO_ROLL, torso);
     }
 }

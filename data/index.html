@@ -430,7 +430,6 @@
                     <button class="btn-bal-off" id="rollOffBtn" onclick="sendCmd('ROLL_OFF')" style="display:none;">Disable</button>
                 </div>
             </div>
-            <span class="bal-status disabled" id="balStatus" style="display:none;"></span><!-- kept for JS compat -->
         </div>
 
         <!--
@@ -499,14 +498,14 @@
         <div class="bal-tune-grid">
 
             <div class="bal-tune-row">
-                <div class="tune-header"><span>Kp</span><span class="tune-val" id="tvKp">10.00</span></div>
-                <input type="range" id="slKp" min="0" max="60" step="0.5" value="20"
+                <div class="tune-header"><span>Kp</span><span class="tune-val" id="tvKp">8.00</span></div>
+                <input type="range" id="slKp" min="0" max="60" step="0.5" value="8"
                        oninput="updateTuneLabel('Kp',this.value); sendTune()">
             </div>
 
             <div class="bal-tune-row">
-                <div class="tune-header"><span>Kd</span><span class="tune-val" id="tvKd">0.50</span></div>
-                <input type="range" id="slKd" min="0" max="3" step="0.02" value="0.3"
+                <div class="tune-header"><span>Kd</span><span class="tune-val" id="tvKd">0.10</span></div>
+                <input type="range" id="slKd" min="0" max="3" step="0.02" value="0.1"
                        oninput="updateTuneLabel('Kd',this.value); sendTune()">
             </div>
 
@@ -545,18 +544,13 @@
                        oninput="updateTuneLabel('torso',this.value); sendTune()">
             </div>
 
-            <!-- correction_sign toggle — must verify on first enable -->
+            <!-- Live read-out of correction_sign. The bring-up inversion buttons
+                 were removed — sign is confirmed (+1 pitch) and a UI toggle is now
+                 a fall hazard. Override via serial: CMD:BALANCE_TUNE:sign=-1 -->
 <div class="bal-tune-row" style="grid-column: span 2; margin-top: 4px;">
     <div class="tune-header">
-        <span>Correction sign</span>
+        <span>Correction sign (read-only)</span>
         <span class="tune-val" id="tvSign">+1</span>
-    </div>
-    <div style="display:flex; gap:8px; margin-top:4px;">
-        <button id="btnSignPos" class="btn-sign btn-sign-active" onclick="setSign(1)">+1 — fwd lean corrects</button>
-        <button id="btnSignNeg" class="btn-sign"                 onclick="setSign(-1)">−1 — flip direction</button>
-    </div>
-    <div style="font-size:10px; color:#666; margin-top:4px;">
-        Tilt forward: if ankle cmd goes negative, flip to −1.
     </div>
 </div>
 
@@ -585,9 +579,9 @@
     <div class="bal-tune-row">
         <div class="tune-header">
             <span>Boost Factor</span>
-            <span class="tune-val" id="tvBoostFactor">2.0</span>
+            <span class="tune-val" id="tvBoostFactor">1.3</span>
         </div>
-        <input type="range" id="slBoostFactor" min="1.0" max="4.0" step="0.1" value="2.0"
+        <input type="range" id="slBoostFactor" min="1.0" max="4.0" step="0.1" value="1.3"
                oninput="updateBoostLabel('boost_factor', this.value); sendBoostTune()">
         <div style="font-size:10px; color:#555; margin-top:3px;">
             Kp multiplier at large errors. 1.0 = disabled. Start at 2.0.
@@ -614,8 +608,8 @@
         <div class="bal-tune-grid">
 
             <div class="bal-tune-row">
-                <div class="tune-header"><span>Kp_roll</span><span class="tune-val" id="tvKp_r">5.00</span></div>
-                <input type="range" id="slKp_r" min="0" max="60" step="0.5" value="5"
+                <div class="tune-header"><span>Kp_roll</span><span class="tune-val" id="tvKp_r">15.00</span></div>
+                <input type="range" id="slKp_r" min="0" max="60" step="0.5" value="15"
                        oninput="updateRollTuneLabel('Kp_r',this.value); sendRollTune()">
             </div>
 
@@ -655,17 +649,12 @@
                        oninput="updateRollTuneLabel('t_roll',this.value); sendRollTune()">
             </div>
 
+            <!-- Live read-out only — see pitch comment above. Override via
+                 CMD:BALANCE_TUNE:sign_r=-1 from serial. -->
             <div class="bal-tune-row" style="grid-column: span 2; margin-top: 4px;">
                 <div class="tune-header">
-                    <span>Roll correction sign</span>
-                    <span class="tune-val" id="tvSign_r">+1</span>
-                </div>
-                <div style="display:flex; gap:8px; margin-top:4px;">
-                    <button id="btnSignPos_r" class="btn-sign btn-sign-active" onclick="setRollSign(1)">+1 — right lean corrects</button>
-                    <button id="btnSignNeg_r" class="btn-sign"                 onclick="setRollSign(-1)">−1 — flip direction</button>
-                </div>
-                <div style="font-size:10px; color:#666; margin-top:4px;">
-                    Verify BEFORE enabling: tilt right → confirm ankle roll correction pushes back left.
+                    <span>Roll correction sign (read-only)</span>
+                    <span class="tune-val" id="tvSign_r">−1</span>
                 </div>
             </div>
 
@@ -688,6 +677,17 @@
                             onclick="setTaskSpace(false)">OFF (joint-space)</button>
                     <button id="btnTsOn"  class="btn-bal-on btn-sign"
                             onclick="setTaskSpace(true)">ON (task-space)</button>
+                </div>
+                <!-- Joint-space torso balance — independent of task-space toggle.
+                     Default ON (matches firmware). When OFF, torso pitch/roll
+                     servos are not driven by BalanceController even if task-space
+                     leg corrections (dx/dy) are active. -->
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                    <span style="font-size:11px; color:#aaa; width:80px;">Torso bal.</span>
+                    <button id="btnTbOff" class="btn-bal-off btn-sign"
+                            onclick="setTorsoBalance(false)">OFF</button>
+                    <button id="btnTbOn"  class="btn-bal-on btn-sign btn-sign-active"
+                            onclick="setTorsoBalance(true)">ON (joint-space)</button>
                 </div>
                 <!-- Live readouts -->
                 <div class="bal-outputs" style="margin-bottom:10px;">
@@ -886,10 +886,10 @@
 
         <!-- Global speed row -->
         <div class="spd-global">
-            <label>Global Speed (all joints)</label>
-            <input type="range" id="slSpdAll" min="1" max="100" step="1" value="10"
+            <label>Apply % to all joints</label>
+            <input type="range" id="slSpdAll" min="1" max="100" step="1" value="14"
                    oninput="document.getElementById('tvSpdAll').textContent = this.value + '%'">
-            <span class="spd-val" id="tvSpdAll">10%</span>
+            <span class="spd-val" id="tvSpdAll">14%</span>
             <button class="btn-spd-apply" onclick="applySpeedAll()">Apply to All</button>
         </div>
 
@@ -933,10 +933,10 @@
             <div class="wshift-tune-row">
                 <div class="tune-header">
                     <span>Setpoint shift (°)</span>
-                    <span class="tune-val" id="tvWsSp">0.0</span>
+                    <span class="tune-val" id="tvWsSp">2.9</span>
                 </div>
                 <!-- Slider in degrees for readability; converted to rad on send -->
-                <input type="range" id="slWsSp" min="0" max="8" step="0.1" value="0"
+                <input type="range" id="slWsSp" min="0" max="8" step="0.1" value="2.9"
                        oninput="updateWSTuneLabel('setpoint', this.value); sendWSTune()">
                 <div style="font-size:10px; color:#555; margin-top:3px;">
                     Roll setpoint injected into balance controller. Leave at 0 for a no-motion baseline.
@@ -970,9 +970,9 @@
             </div>            <div class="wshift-tune-row">
                 <div class="tune-header">
                     <span>Ankle shift (°)</span>
-                    <span class="tune-val" id="tvWsAnkle">0.0</span>
+                    <span class="tune-val" id="tvWsAnkle">15.5</span>
                 </div>
-                <input type="range" id="slWsAnkle" min="0" max="20" step="0.5" value="0"
+                <input type="range" id="slWsAnkle" min="0" max="20" step="0.5" value="15.5"
                        oninput="updateWSTuneLabel('ankle', this.value); sendWSTune()">
                 <div style="font-size:10px; color:#555; margin-top:3px;">
                     Primary shift driver. Set ankle_roll_ratio=0 in Balance panel first.
@@ -983,9 +983,9 @@
             <div class="wshift-tune-row">
                 <div class="tune-header">
                     <span>Lateral shift (mm)</span>
-                    <span class="tune-val" id="tvWsLateral">-10.0</span>
+                    <span class="tune-val" id="tvWsLateral">-20.0</span>
                 </div>
-                <input type="range" id="slWsLateral" min="-50" max="50" step="0.5" value="-10"
+                <input type="range" id="slWsLateral" min="-50" max="50" step="0.5" value="-20"
                        oninput="updateWSTuneLabel('lateral_mm', this.value); sendWSTune()">
                 <div style="font-size:10px; color:#555; margin-top:3px;">
                     Body lateral shift (mm) at full progress. Negative values invert the left/right mapping for adduction tests.
@@ -995,9 +995,9 @@
             <div class="wshift-tune-row">
                 <div class="tune-header">
                     <span>Forward lean (mm)</span>
-                    <span class="tune-val" id="tvWsForward">0.0</span>
+                    <span class="tune-val" id="tvWsForward">5.0</span>
                 </div>
-                <input type="range" id="slWsForward" min="0" max="50" step="0.5" value="0"
+                <input type="range" id="slWsForward" min="0" max="50" step="0.5" value="5"
                        oninput="updateWSTuneLabel('forward_mm', this.value); sendWSTune()">
                 <div style="font-size:10px; color:#555; margin-top:3px;">
                     Body forward shift (mm) during shift. Folded into FootTarget.x_mm via IK.
@@ -1105,9 +1105,9 @@
             <div class="gait-tune-row">
                 <div class="tune-header">
                     <span>Phase rate (Hz)</span>
-                    <span class="tune-val" id="tvGaitRate">0.40</span>
+                    <span class="tune-val" id="tvGaitRate">0.30</span>
                 </div>
-                <input type="range" id="slGaitRate" min="0.05" max="1.0" step="0.05" value="0.4"
+                <input type="range" id="slGaitRate" min="0.05" max="1.0" step="0.05" value="0.30"
                        oninput="updateGaitLabel('phaseRate', this.value); sendGaitTune()">
                 <div style="font-size:10px; color:#555; margin-top:3px;">
                     Cycle/sec. Start at 0.3. Raise only after stance confirmed.
@@ -1117,9 +1117,9 @@
             <div class="gait-tune-row">
                 <div class="tune-header">
                     <span>Lift gate threshold</span>
-                    <span class="tune-val" id="tvGaitGate">0.70</span>
+                    <span class="tune-val" id="tvGaitGate">0.85</span>
                 </div>
-                <input type="range" id="slGaitGate" min="0.0" max="0.99" step="0.05" value="0.70"
+                <input type="range" id="slGaitGate" min="0.0" max="0.99" step="0.05" value="0.85"
                        oninput="updateGaitLabel('liftGate', this.value); sendGaitTune()">
                 <div style="font-size:10px; color:#555; margin-top:3px;">
                     |WS progress| needed before foot can lift. Lower → lifts sooner.
@@ -1141,9 +1141,9 @@
             <div class="gait-tune-row">
                 <div class="tune-header">
                     <span>Step height (mm)</span>
-                    <span class="tune-val" id="tvGaitStep">20</span>
+                    <span class="tune-val" id="tvGaitStep">15</span>
                 </div>
-                <input type="range" id="slGaitStep" min="5" max="55" step="1" value="20"
+                <input type="range" id="slGaitStep" min="5" max="55" step="1" value="15"
                        oninput="updateGaitLabel('stepH', this.value); sendGaitTune()">
                 <div style="font-size:10px; color:#555; margin-top:3px;">
                     Swing foot clearance. Capped so peak swing height ≥ 130 mm.
@@ -1165,9 +1165,9 @@
             <div class="gait-tune-row">
                 <div class="tune-header">
                     <span>Step length (mm)</span>
-                    <span class="tune-val" id="tvGaitStepLen">0</span>
+                    <span class="tune-val" id="tvGaitStepLen">10</span>
                 </div>
-                <input type="range" id="slGaitStepLen" min="0" max="40" step="1" value="0"
+                <input type="range" id="slGaitStepLen" min="0" max="40" step="1" value="10"
                        oninput="updateGaitLabel('stepLen', this.value); sendGaitTune()">
                 <div style="font-size:10px; color:#555; margin-top:3px;">
                     Phase 2: forward stride per cycle. 0 disables.
@@ -1747,8 +1747,6 @@ function initWebSocket() {
                 _syncSlider("slTorso", "tvTorso", parseFloat(v["t_r"] || "0"),  2);
                 const sign = parseFloat(v["sgn"] || "1");
                 document.getElementById("tvSign").textContent = sign >= 0 ? "+1" : "−1";
-                document.getElementById("btnSignPos").className = "btn-sign" + (sign >= 0 ? " btn-sign-active" : "");
-                document.getElementById("btnSignNeg").className = "btn-sign" + (sign <  0 ? " btn-sign-active" : "");
 
                 // Roll sliders
                 _syncSlider("slKp_r",    "tvKp_r",    parseFloat(v["Kp_r"]  || "5"),   2);
@@ -1758,10 +1756,8 @@ function initWebSocket() {
                 _syncSlider("slAnkle_r", "tvAnkle_r", parseFloat(v["a_rr"]  || "1"),   2);
                 _syncSlider("slHip_r",   "tvHip_r",   parseFloat(v["h_rr"]  || "0"),   2);
                 _syncSlider("slTorso_r", "tvTorso_r", parseFloat(v["t_rr"]  || "0"),   2);
-                const signR = parseFloat(v["sgn_r"] || "1");
+                const signR = parseFloat(v["sgn_r"] || "-1");
                 document.getElementById("tvSign_r").textContent = signR >= 0 ? "+1" : "−1";
-                document.getElementById("btnSignPos_r").className = "btn-sign" + (signR >= 0 ? " btn-sign-active" : "");
-                document.getElementById("btnSignNeg_r").className = "btn-sign" + (signR <  0 ? " btn-sign-active" : "");
             }
             // Weight shift progress bar — driven by ws_prog field in BALANCE: packet.
             if (v["ws_prog"] !== undefined) {
@@ -1778,6 +1774,14 @@ function initWebSocket() {
                 const dyEl = document.getElementById("tsDy");
                 if (dxEl) dxEl.textContent = parseFloat(v["dx"] || "0").toFixed(2);
                 if (dyEl) dyEl.textContent = parseFloat(v["dy"] || "0").toFixed(2);
+            }
+            // Joint-space torso balance toggle sync (tb=1 default).
+            if (v["tb"] !== undefined) {
+                const tbOn = v["tb"] === "1";
+                const tbOff = document.getElementById("btnTbOff");
+                const tbOnB = document.getElementById("btnTbOn");
+                if (tbOff)  tbOff.className  = "btn-bal-off btn-sign" + (!tbOn ? " btn-sign-active" : "");
+                if (tbOnB)  tbOnB.className  = "btn-bal-on btn-sign"  + ( tbOn ? " btn-sign-active" : "");
             }
             // Stage 0: catch-step recovery telemetry.
             if (v["rcv"] !== undefined) {
@@ -2002,17 +2006,9 @@ function updateTuneLabel(id, rawVal) {
     if (m) document.getElementById(m.el).textContent = parseFloat(rawVal).toFixed(m.decimals);
 }
 
-// Correction sign toggle — sends immediately (not batched with sendTune)
-function setSign(val) {
-    _setTuneActive();
-    document.getElementById("tvSign").textContent = val > 0 ? "+1" : "−1";
-    document.getElementById("btnSignPos").className = "btn-sign" + (val > 0 ? " btn-sign-active" : "");
-    document.getElementById("btnSignNeg").className = "btn-sign" + (val < 0 ? " btn-sign-active" : "");
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send("CMD:BALANCE_TUNE:sign=" + val);
-        console.log("[WS TX] CMD:BALANCE_TUNE:sign=" + val);
-    }
-}
+// Sign-inversion buttons removed; correction_sign is read-only in the UI.
+// Override from serial: CMD:BALANCE_TUNE:sign=-1 (or sign_r=-1) if a hardware
+// change ever requires re-bring-up.
 
 // ── Roll tune label helper ────────────────────────────────────────────────────
 const _rollTuneMap = {
@@ -2028,17 +2024,6 @@ function updateRollTuneLabel(id, rawVal) {
     _setTuneActive();
     const m = _rollTuneMap[id];
     if (m) document.getElementById(m.el).textContent = parseFloat(rawVal).toFixed(m.decimals);
-}
-
-// Roll correction sign toggle — sends immediately, not batched.
-function setRollSign(val) {
-    _setTuneActive();
-    document.getElementById("tvSign_r").textContent = val > 0 ? "+1" : "−1";
-    document.getElementById("btnSignPos_r").className = "btn-sign" + (val > 0 ? " btn-sign-active" : "");
-    document.getElementById("btnSignNeg_r").className = "btn-sign" + (val < 0 ? " btn-sign-active" : "");
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send("CMD:BALANCE_TUNE:sign_r=" + val);
-    }
 }
 
 // Roll tuning send (80ms debounce — mirrors sendTune pattern exactly).
@@ -2123,6 +2108,18 @@ function setTaskSpace(enable) {
         document.getElementById("btnTsOn").className  = "btn-bal-on btn-sign"  + ( enable ? " btn-sign-active" : "");
     }
 }
+
+// Joint-space torso balance toggle — independent of task-space mode.
+// Sends torso_bal=0|1; the active-button styling is also synced from the
+// `tb=` field in the BALANCE: packet (handles startup state + multi-client).
+function setTorsoBalance(enable) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const val = enable ? 1 : 0;
+        ws.send(`CMD:BALANCE_TUNE:torso_bal=${val}`);
+        document.getElementById("btnTbOff").className = "btn-bal-off btn-sign" + (!enable ? " btn-sign-active" : "");
+        document.getElementById("btnTbOn").className  = "btn-bal-on btn-sign"  + ( enable ? " btn-sign-active" : "");
+    }
+}
 function updateTsLabel(key, val) {
     _setTuneActive();
     if (key === "dx_per_deg") document.getElementById("tvDxPerDeg").textContent = parseFloat(val).toFixed(1);
@@ -2179,14 +2176,17 @@ function buildSpeedPanel() {
     const grid = document.getElementById("spdJointGrid");
     if (!grid) return;
     grid.innerHTML = "";
+    // Boot default is JOINT_SPEED_DEFAULT_DEG_S in project_wide_defs.h (70 °/s).
+    // The per-joint slider gets immediately overwritten by the SPEED: broadcast,
+    // but matching the firmware default avoids a misleading flash on first paint.
+    const FIRMWARE_DEFAULT_DEG_S = 70;
     JOINT_DEFAULTS.forEach(j => {
-        // Compute boot default % from JOINT_SPEED_DEFAULT_DEG_S equivalent (60 °/s).
-        const bootPct = Math.round(60 / j.noLoadSpeedDegS * 100);
+        const bootPct = Math.round(FIRMWARE_DEFAULT_DEG_S / j.noLoadSpeedDegS * 100);
         grid.innerHTML += `
         <div class="spd-joint-row">
             <div class="spd-jname">
                 <span>CH${j.ch} — ${j.name}</span>
-                <span class="spd-jval" id="tvSpd${j.ch}">${bootPct}% (60 °/s)</span>
+                <span class="spd-jval" id="tvSpd${j.ch}">${bootPct}% (${FIRMWARE_DEFAULT_DEG_S} °/s)</span>
             </div>
             <input type="range" id="slSpd${j.ch}" min="1" max="100" step="1" value="${bootPct}"
                    oninput="onJointSpeedChange(${j.ch}, this.value)">

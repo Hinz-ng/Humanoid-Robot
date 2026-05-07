@@ -203,8 +203,8 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
     _lastBalanceBroadcast_us = now;
 
     const BalanceConfig& cfg = _balCtrl->getConfig();
-    // buf sized for full pitch + roll + task-space + recovery telemetry (~470 chars).
-    char buf[560];
+    // buf sized for full pitch + roll + task-space + recovery telemetry (~480 chars).
+    char buf[600];
     snprintf(buf, sizeof(buf),
         // Controller enable flags + overall active state
         "BALANCE:p_en=%d,r_en=%d,"
@@ -223,6 +223,8 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         "ws_prog=%.2f,ws_ramp=%d,ws_rp=%.2f,ws_lp=%.2f,"
         // Stage 3: task-space mode flag and live foot-target corrections.
         "ts=%d,dx=%.2f,dy=%.2f,"
+        // Joint-space torso balance master enable (independent of ts).
+        "tb=%d,"
         // Stage 0: catch-step recovery detection telemetry.
         "rcv=%d,sat=%u,rdb=%u",
         (int)cfg.pitch_enabled, (int)cfg.roll_enabled,
@@ -246,6 +248,7 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         (int)cfg.task_space_output,
         _balCtrl->getLastCorrection().dx_mm,
         _balCtrl->getLastCorrection().dy_mm,
+        (int)cfg.torso_balance_enabled,
         (int)state.recovery_flag,
         (unsigned)state.saturation_count,
         (unsigned)state.recovery_debounce
@@ -374,6 +377,15 @@ void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
                 stateStr, prog, remaining_s
             );
             client->text(buf);
+        }
+
+        // Push current BALANCE state immediately so the UI's tuning sliders sync
+        // to firmware on first paint instead of flashing the HTML defaults until
+        // the next 50 ms broadcast tick. Resetting the rate-limit timestamp
+        // disarms the throttle for this call only — the next tick re-arms it.
+        if (_balCtrl) {
+            _lastBalanceBroadcast_us = 0;
+            broadcastBalanceState(_balCtrl->getLastState());
         }
     }
     if (type == WS_EVT_DISCONNECT) {
@@ -702,6 +714,10 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         }
                         else if (key == "dx_per_deg") cfg.pitch_to_dx_mm_per_deg = constrain(val, 0.5f, 6.0f);
                         else if (key == "dy_per_deg") cfg.roll_to_dy_mm_per_deg  = constrain(val, 0.5f, 6.0f);
+                        // Joint-space torso balance master enable — independent of task_space_output.
+                        // When false, torso_pitch / torso_roll are not submitted by BalanceController
+                        // even if torso_ratio / torso_roll_ratio are non-zero.
+                        else if (key == "torso_bal") cfg.torso_balance_enabled = (val > 0.5f);
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }

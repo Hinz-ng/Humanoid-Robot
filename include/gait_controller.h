@@ -126,7 +126,7 @@ struct GaitConfig {
     // ramp 0 → 10 → 15 → 20 mm in 5 mm increments. Watch lastReachPctL/R
     // and IK status — stop on first LIMIT_CLAMPED. Do not raise phaseRateHz
     // and stepLengthMm in the same session.
-    float stepLengthMm = 10.0f;
+    float stepLengthMm = 30.0f;
 };
 
 // ---------------------------------------------------------------------------
@@ -150,6 +150,11 @@ struct GaitState {
     uint8_t      lastIKStatusR = 0;
     float        lastReachPctL = 0.0f;
     float        lastReachPctR = 0.0f;
+    // Stage 1.1 — flat-foot diagnostic. Nonzero means the ankle pitch was
+    // clamped to its soft limit; the sole is no longer flat against the ground.
+    // Treat |value| > 2° as a tuning red flag — gait should pause/abort.
+    float        lastFlatFootErrL_deg = 0.0f;
+    float        lastFlatFootErrR_deg = 0.0f;
     // Stage 3 — Cumulative body-frame x displacement this cycle, in mm.
     // Computed as _halfPhase × stepLengthMm. Reset to 0 on _advanceHalf().
     // Telemetry only — does NOT feed back into FootTarget.

@@ -55,12 +55,12 @@
 // TUNING NOTE (2026-04-xx): Reduced from 0.4 → 0.25 Hz to give the IMU roll
 // gate (wsThresholdRad) more time to satisfy before the half-cycle advances.
 // Return to 0.4 once stance loading is stable at the lower rate.
-constexpr float GAIT_PHASE_RATE_HZ          = 0.30f;  // start slow; cycles/sec
+constexpr float GAIT_PHASE_RATE_HZ          = 0.45f;  // cycles/sec
 
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
 // If drag returns at 15 mm, the root cause is the gate, not step height.
-constexpr float GAIT_STEP_HEIGHT_MM         = 15.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 16.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 35.0f;  // Phase 3+; forward stride
 

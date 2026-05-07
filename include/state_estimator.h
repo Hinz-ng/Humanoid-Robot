@@ -29,6 +29,18 @@ struct IMUState {
     float roll;       // Body tilt left/right  (rad). Positive = leaning right.
     float pitchRate;  // Angular velocity about pitch axis (rad/s).
     float rollRate;   // Angular velocity about roll  axis (rad/s).
+    // Stage 2.1 — inverted-pendulum CoM velocity estimate.
+    //   vx_CoM_mm_s = H_COM_MM × pitchRate  (sagittal: + = body advancing forward)
+    //   vy_CoM_mm_s = H_COM_MM × rollRate   (lateral:  + = body translating right)
+    //
+    // Valid during rotation about the stance ankle. At static lean (no rotation),
+    // both return to ≈0. This is correct — velocity is the derivative of position.
+    //
+    // LIMITATION: assumes single-pivot pendulum dynamics. Degrades during
+    // foot-strike transients, double support, and when the body bends at the hip
+    // rather than rotating as a rigid mass. For Tier 2 first-pass, acceptable.
+    float vx_CoM_mm_s;
+    float vy_CoM_mm_s;
     bool  valid;      // false until calibration finishes + first valid tick.
 };
 

@@ -147,10 +147,12 @@ void WebComm::broadcastEstimate(IMUState state) {
     if ((now - _lastEstimateBroadcast_us) < INTERVAL_US) return;
     _lastEstimateBroadcast_us = now;
 
-    char buf[96];
+    char buf[128];
     snprintf(buf, sizeof(buf),
-        "ESTIMATE:pitch=%.4f,roll=%.4f,pitchRate=%.4f,rollRate=%.4f",
-        state.pitch, state.roll, state.pitchRate, state.rollRate
+        "ESTIMATE:pitch=%.4f,roll=%.4f,pitchRate=%.4f,rollRate=%.4f,"
+        "vxCoM=%.1f,vyCoM=%.1f",
+        state.pitch, state.roll, state.pitchRate, state.rollRate,
+        state.vx_CoM_mm_s, state.vy_CoM_mm_s
     );
     ws.textAll(buf);
 }
@@ -300,12 +302,13 @@ void WebComm::broadcastGaitState() {
     _lastGaitBroadcast_us = now;
 
     const GaitState& s = _gaitCtrl->getState();
-    char buf[320];
+    char buf[400];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
         "rsub=%d,rdx=%d,rdy=%d,rms=%lu,"
-        "rcvX=%.1f,rcvY=%.1f,rcvMag=%.1f,rcvSY=%.1f,xDispl=%.1f",
+        "rcvX=%.1f,rcvY=%.1f,rcvMag=%.1f,rcvSY=%.1f,xDispl=%.1f,"
+        "ikL=%d,ikR=%d,reachL=%.1f,reachR=%.1f,ffL=%.3f,ffR=%.3f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -322,7 +325,11 @@ void WebComm::broadcastGaitState() {
         static_cast<int>(s.recoveryDirY),
         static_cast<unsigned long>(s.recoveryElapsedMs),
         s.rcvStepX_mm, s.rcvStepY_mm, s.rcvMagnitude, s.rcvStanceY_mm,
-        s.cycleXDispl_mm
+        s.cycleXDispl_mm,
+        static_cast<int>(s.lastIKStatusL),
+        static_cast<int>(s.lastIKStatusR),
+        s.lastReachPctL, s.lastReachPctR,
+        s.lastFlatFootErrL_deg, s.lastFlatFootErrR_deg
     );
     ws.textAll(buf);
 }

@@ -26,6 +26,7 @@
 
 #include "state_estimator.h"
 #include <math.h>   // atan2f, sqrtf, fabsf
+#include "robot_geometry.h"   // H_COM_MM
 
 StateEstimator::StateEstimator(FilterConfig cfg) : _cfg(cfg) {}
 
@@ -269,6 +270,11 @@ if (dt > 0.05f) dt = 0.05f;
     _state.roll      = _roll;
     _state.pitchRate = gy_rs;
     _state.rollRate  = gx_rs;
+    // Stage 2.1 — CoM velocity from inverted-pendulum model.
+    // Uses post-deadband, post-sign-corrected gyro rates so this stays
+    // consistent with pitchRate / rollRate exposed above.
+    _state.vx_CoM_mm_s = H_COM_MM * gy_rs;
+    _state.vy_CoM_mm_s = H_COM_MM * gx_rs;
     _state.valid     = true;
 
     return _state;

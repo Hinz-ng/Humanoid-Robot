@@ -299,6 +299,8 @@ void GaitController::_submitStanceBothLegs(const BalanceCorrection* bc) {
     _state.lastIKStatusR = static_cast<uint8_t>(rR.status);
     _state.lastReachPctL = rL.sagittal_reach_pct;
     _state.lastReachPctR = rR.sagittal_reach_pct;
+    _state.lastFlatFootErrL_deg = rL.flat_foot_error_deg;
+    _state.lastFlatFootErrR_deg = rR.flat_foot_error_deg;
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +335,8 @@ void GaitController::_submitCycleStanceBoth(float localPhase,
     _state.lastIKStatusR = static_cast<uint8_t>(rR.status);
     _state.lastReachPctL = rL.sagittal_reach_pct;
     _state.lastReachPctR = rR.sagittal_reach_pct;
+    _state.lastFlatFootErrL_deg = rL.flat_foot_error_deg;
+    _state.lastFlatFootErrR_deg = rR.flat_foot_error_deg;
 }
 
 // ---------------------------------------------------------------------------
@@ -482,6 +486,8 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         _state.lastIKStatusR = static_cast<uint8_t>(rR.status);
         _state.lastReachPctL = rL.sagittal_reach_pct;
         _state.lastReachPctR = rR.sagittal_reach_pct;
+        _state.lastFlatFootErrL_deg = rL.flat_foot_error_deg;
+        _state.lastFlatFootErrR_deg = rR.flat_foot_error_deg;
         _state.liftL_deg = leftIsSwing  ? rL.hip_pitch_deg : 0.0f;
         _state.liftR_deg = !leftIsSwing ? rR.hip_pitch_deg : 0.0f;
 
@@ -532,6 +538,8 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _state.lastIKStatusR = static_cast<uint8_t>(rR.status);
             _state.lastReachPctL = rL.sagittal_reach_pct;
             _state.lastReachPctR = rR.sagittal_reach_pct;
+            _state.lastFlatFootErrL_deg = rL.flat_foot_error_deg;
+            _state.lastFlatFootErrR_deg = rR.flat_foot_error_deg;
 
             // Repurposed UI fields: hip pitch produced by IK on the swing leg.
             // (Renaming to liftL_hipDeg in Stage 2 alongside the UI.)
@@ -612,6 +620,8 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     _state.lastIKStatusR = static_cast<uint8_t>(rR.status);
     _state.lastReachPctL = rL.sagittal_reach_pct;
     _state.lastReachPctR = rR.sagittal_reach_pct;
+    _state.lastFlatFootErrL_deg = rL.flat_foot_error_deg;
+    _state.lastFlatFootErrR_deg = rR.flat_foot_error_deg;
 
     // Stage 3 telemetry: estimated body translation this half-cycle.
     // _halfPhase × stepLengthMm. Resets to 0 in _advanceHalf().
@@ -801,6 +811,8 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             _state.lastIKStatusR = static_cast<uint8_t>(_rcvSwingIsRight ? rSwing.status  : rStance.status);
             _state.lastReachPctL = _rcvSwingIsRight ? rStance.sagittal_reach_pct : rSwing.sagittal_reach_pct;
             _state.lastReachPctR = _rcvSwingIsRight ? rSwing.sagittal_reach_pct  : rStance.sagittal_reach_pct;
+            _state.lastFlatFootErrL_deg = _rcvSwingIsRight ? rStance.flat_foot_error_deg : rSwing.flat_foot_error_deg;
+            _state.lastFlatFootErrR_deg = _rcvSwingIsRight ? rSwing.flat_foot_error_deg  : rStance.flat_foot_error_deg;
 
             if (elapsed >= RECOVERY_PRE_LIFT_MS) {
                 _enterRcvSub(RecoverySubState::LIFTING);
@@ -854,6 +866,8 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             _state.lastIKStatusR = static_cast<uint8_t>(_rcvSwingIsRight ? rSwing.status  : rStance.status);
             _state.lastReachPctL = _rcvSwingIsRight ? rStance.sagittal_reach_pct : rSwing.sagittal_reach_pct;
             _state.lastReachPctR = _rcvSwingIsRight ? rSwing.sagittal_reach_pct  : rStance.sagittal_reach_pct;
+            _state.lastFlatFootErrL_deg = _rcvSwingIsRight ? rStance.flat_foot_error_deg : rSwing.flat_foot_error_deg;
+            _state.lastFlatFootErrR_deg = _rcvSwingIsRight ? rSwing.flat_foot_error_deg  : rStance.flat_foot_error_deg;
 
             if (elapsed >= RECOVERY_LIFT_MS) {
                 _enterRcvSub(RecoverySubState::LANDING);
@@ -900,6 +914,8 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             _state.lastIKStatusR = static_cast<uint8_t>(_rcvSwingIsRight ? rSwing.status  : rStance.status);
             _state.lastReachPctL = _rcvSwingIsRight ? rStance.sagittal_reach_pct : rSwing.sagittal_reach_pct;
             _state.lastReachPctR = _rcvSwingIsRight ? rSwing.sagittal_reach_pct  : rStance.sagittal_reach_pct;
+            _state.lastFlatFootErrL_deg = _rcvSwingIsRight ? rStance.flat_foot_error_deg : rSwing.flat_foot_error_deg;
+            _state.lastFlatFootErrR_deg = _rcvSwingIsRight ? rSwing.flat_foot_error_deg  : rStance.flat_foot_error_deg;
 
             if (elapsed >= RECOVERY_LAND_MS) {
                 _enterRcvSub(RecoverySubState::DAMP_HOLD);

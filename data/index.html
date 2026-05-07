@@ -32,6 +32,58 @@
         input[type="text"], input[type="number"] {
             padding: 8px; border-radius: 4px; border: 1px solid #555; background: #333; color: white;
         }
+        .pose-name-input { width: 100px; }
+        .ws-status { color: gray; }
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+        .hidden { display: none; }
+        .flex-row-wrap-gap { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:14px; }
+        .flex-col-gap-sm { display:flex; flex-direction:column; gap:4px; }
+        .flex-row-gap-sm { display:flex; align-items:center; gap:8px; }
+        .label-inline-small { font-size:11px; color:#aaa; width:36px; display:inline-block; }
+        .section-label { font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px; }
+        .mb-8 { margin-bottom:8px; }
+        .mb-14 { margin-bottom:14px; }
+        .grid-span-2-mt4 { grid-column: span 2; margin-top: 4px; }
+        .note-muted { color:#555; font-weight:normal; margin-left:6px; }
+        .mb-0 { margin-bottom:0; }
+        .small-note { font-size:10px; color:#555; margin-top:3px; }
+        .small-note-no-margin { font-size:10px; color:#555; }
+        .section-separator { margin-top:14px; border-top:1px solid #2e4a2e; padding-top:10px; }
+        .flex-row-gap-bottom { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+        .label-inline-medium { font-size:11px; color:#aaa; width:80px; display:inline-block; }
+        .note-secondary { font-size:10px; color:#666; margin-top:8px; line-height:1.5; }
+        .panel-divider { border-top:1px solid #3a2a0a; padding-top:10px; margin-top:10px; }
+        .section-divider { margin-top:14px; border-top:1px solid #2e4a2e; padding-top:10px; }
+        .panel-subtitle-divider { font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; border-top:1px solid #3a2a5e; padding-top:10px; }
+        .text-muted-gray { font-size:11px; color:#888; }
+        .mb-10 { margin-bottom:10px; }
+        .gait-pose-hold { display:none; margin-bottom:10px; padding:8px 10px; background:#1a0a2a; border:1px solid #7b1fa2; border-radius:5px; }
+        .gait-pose-hold-label { font-size:13px; font-weight:bold; color:#ce93d8; }
+        .ml-10 { margin-left:10px; }
+        .vertical-center-line { position:absolute; top:0; left:50%; width:1px; height:100%; background:#555; }
+        .summary-toggle { font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; cursor:pointer; user-select:none; }
+        .flex-row-wrap-sm { display:flex; gap:10px; flex-wrap:wrap; }
+        .btn-panel-action { background:#7a3a00; color:#fff; border:1px solid #ff6d00; padding:8px 14px; border-radius:5px; cursor:pointer; font-weight:bold; font-size:12px; }
+        .small-note-sm { font-size:10px; color:#555; margin-top:6px; line-height:1.4; }
+        .select-input { background:#333; color:white; border:1px solid #555; }
+        .mt-8 { margin-top:8px; }
+        .mt-10 { margin-top:10px; }
+        .align-self-end { align-self:flex-end; }
+        .panel-header-dark { background:#1e1e1e; }
+        .text-muted-light { color:#ccc; }
+        .panel-padding { padding:0 16px 16px; }
+        .spd-panel-border { border-color:#3a3a3a; }
+        .form-label-inline { font-size:11px; color:#aaa; display:flex; align-items:center; gap:5px; cursor:pointer; }
 
         .container { max-width: 720px; margin: 0 auto; padding-bottom: 60px; }
         .preset-box { background: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 20px;
@@ -342,13 +394,14 @@
 
 <div class="toolbar">
     <button class="btn-neutral" onclick="sendCmd('RESETP')">Neutral</button>
-    <input  type="text" id="poseName" placeholder="Pose name" style="width:100px;">
+    <label class="sr-only" for="poseName">Pose name</label>
+    <input  type="text" id="poseName" class="pose-name-input" placeholder="Pose name" title="Pose name">
     <button class="btn-save"    onclick="savePose()">Save</button>
     <!-- ADD START: E-stop controls -->
     <button class="btn-estop"   onclick="emergencyStop()">⛔ E-STOP</button>
     <button class="btn-clear"   onclick="clearEstop()" id="clearBtn" disabled>✅ Clear E-Stop</button>
     <!-- ADD END -->
-    <span   id="ws-status" style="color:gray;">Connecting…</span>
+    <span id="ws-status" class="ws-status">Connecting…</span>
 </div>
 
 <div class="container">
@@ -388,8 +441,8 @@
             </div>
         </div>
         <!-- Complementary filter output -->
-        <div class="imu-group-label" style="margin-top:12px;">Orientation Estimate</div>
-        <div class="imu-grid" style="margin-top:6px;">
+        <div class="imu-group-label top-gap">Orientation Estimate</div>
+        <div class="imu-grid top-gap-sm">
             <div class="imu-group">
                 <div class="imu-group-label">Angle (deg)</div>
                 <div class="imu-row"><span class="imu-axis">P</span><span class="imu-value" id="est-pitch">—</span></div>
@@ -399,6 +452,23 @@
                 <div class="imu-group-label">Rate (rad/s)</div>
                 <div class="imu-row"><span class="imu-axis">P</span><span class="imu-value" id="est-pitchRate">—</span></div>
                 <div class="imu-row"><span class="imu-axis">R</span><span class="imu-value" id="est-rollRate">—</span></div>
+            </div>
+        </div>
+        <div class="imu-group-label top-gap">CoM Velocity (mm/s)</div>
+        <div class="imu-grid top-gap-sm">
+            <div class="imu-group">
+                <div class="imu-group-label">Sagittal vx</div>
+                <div class="imu-row">
+                    <span class="imu-axis"></span>
+                    <span class="imu-value" id="est-vxCoM">—</span>
+                </div>
+            </div>
+            <div class="imu-group">
+                <div class="imu-group-label">Lateral vy</div>
+                <div class="imu-row">
+                    <span class="imu-axis"></span>
+                    <span class="imu-value" id="est-vyCoM">—</span>
+                </div>
             </div>
         </div>
         <div class="imu-status" id="imu-status">Waiting for data...</div>
@@ -412,22 +482,22 @@
         <span class="bal-chevron" id="balChevron">▼</span>
     </div>
 
-    <div class="bal-body" id="balBody" style="display:none;">
+    <div class="bal-body hidden" id="balBody">
 
         <!-- Status badges + independent pitch / roll enable buttons -->
-        <div style="display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:14px;">
-            <div style="display:flex; flex-direction:column; gap:4px;">
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <span style="font-size:11px; color:#aaa; width:36px;">PITCH</span>
+        <div class="flex-row-wrap-gap">
+            <div class="flex-col-gap-sm">
+                <div class="flex-row-gap-sm">
+                    <span class="label-inline-small">PITCH</span>
                     <span class="bal-status disabled" id="pitchStatus">OFF</span>
                     <button class="btn-bal-on"  id="pitchOnBtn"  onclick="sendCmd('PITCH_ON')">Enable</button>
-                    <button class="btn-bal-off" id="pitchOffBtn" onclick="sendCmd('PITCH_OFF')" style="display:none;">Disable</button>
+                    <button class="btn-bal-off hidden" id="pitchOffBtn" onclick="sendCmd('PITCH_OFF')">Disable</button>
                 </div>
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <span style="font-size:11px; color:#aaa; width:36px;">ROLL</span>
+                <div class="flex-row-gap-sm">
+                    <span class="label-inline-small">ROLL</span>
                     <span class="bal-status disabled" id="rollStatus">OFF</span>
                     <button class="btn-bal-on"  id="rollOnBtn"  onclick="sendCmd('ROLL_ON')">Enable</button>
-                    <button class="btn-bal-off" id="rollOffBtn" onclick="sendCmd('ROLL_OFF')" style="display:none;">Disable</button>
+                    <button class="btn-bal-off hidden" id="rollOffBtn" onclick="sendCmd('ROLL_OFF')">Disable</button>
                 </div>
             </div>
         </div>
@@ -447,8 +517,8 @@
         </div>
 
         <!-- Live output cells — pitch row then roll row -->
-        <div style="font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Pitch outputs</div>
-        <div class="bal-outputs" style="margin-bottom:8px;">
+        <div class="section-label">Pitch outputs</div>
+        <div class="bal-outputs mb-8">
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">Pitch error</div>
                 <div class="bal-out-val" id="bErr">—</div>
@@ -470,8 +540,8 @@
                 <div class="bal-out-val" id="bTorso">—</div>
             </div>
         </div>
-        <div style="font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Roll outputs</div>
-        <div class="bal-outputs" style="margin-bottom:14px;">
+        <div class="section-label">Roll outputs</div>
+        <div class="bal-outputs mb-14">
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">Roll error</div>
                 <div class="bal-out-val" id="bRErr">—</div>
@@ -547,7 +617,7 @@
             <!-- Live read-out of correction_sign. The bring-up inversion buttons
                  were removed — sign is confirmed (+1 pitch) and a UI toggle is now
                  a fall hazard. Override via serial: CMD:BALANCE_TUNE:sign=-1 -->
-<div class="bal-tune-row" style="grid-column: span 2; margin-top: 4px;">
+<div class="bal-tune-row grid-span-2-mt4">
     <div class="tune-header">
         <span>Correction sign (read-only)</span>
         <span class="tune-val" id="tvSign">+1</span>
@@ -555,15 +625,13 @@
 </div>
 
 <!-- Nonlinear gain boost — pitch -->
-<div style="font-size:10px; color:#888; text-transform:uppercase;
-            letter-spacing:0.5px; margin:12px 0 6px;
-            border-top:1px solid #2e4a2e; padding-top:8px;">
+<div class="section-label section-divider">
     Nonlinear Gain Boost (Pitch)
-    <span style="color:#555; font-weight:normal; margin-left:6px;">
+    <span class="note-muted">
         Kp below threshold=base, above threshold=Kp×factor
     </span>
 </div>
-<div class="bal-tune-grid" style="margin-bottom:0;">
+<div class="bal-tune-grid mb-0">
     <div class="bal-tune-row">
         <div class="tune-header">
             <span>Boost Threshold (°)</span>
@@ -572,7 +640,7 @@
         <!-- slider in degrees; sent as radians -->
         <input type="range" id="slBoostThresh" min="1" max="20" step="0.5" value="5.7"
                oninput="updateBoostLabel('boost_thresh', this.value); sendBoostTune()">
-        <div style="font-size:10px; color:#555; margin-top:3px;">
+        <div class="small-note">
             Above this error (°) the boost kicks in. Set > oscillation amplitude.
         </div>
     </div>
@@ -583,7 +651,7 @@
         </div>
         <input type="range" id="slBoostFactor" min="1.0" max="4.0" step="0.1" value="1.3"
                oninput="updateBoostLabel('boost_factor', this.value); sendBoostTune()">
-        <div style="font-size:10px; color:#555; margin-top:3px;">
+        <div class="small-note">
             Kp multiplier at large errors. 1.0 = disabled. Start at 2.0.
         </div>
     </div>
@@ -592,7 +660,7 @@
             <span>Effective Kp (live)</span>
             <span class="tune-val" id="tvEffKp">—</span>
         </div>
-        <div style="font-size:10px; color:#555;">
+        <div class="small-note-no-margin">
             Actual Kp used last tick (base × boost factor at current error).
         </div>
     </div>
@@ -601,8 +669,7 @@
         </div><!-- /.bal-tune-grid -->
 
          <!-- ── Roll tuning sliders ──────────────────────────────────────────── -->
-        <div style="font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px;
-                    margin:14px 0 8px; border-top:1px solid #2e4a2e; padding-top:10px;">
+        <div class="section-label section-divider">
             Roll controller gains
         </div>
         <div class="bal-tune-grid">
@@ -651,7 +718,7 @@
 
             <!-- Live read-out only — see pitch comment above. Override via
                  CMD:BALANCE_TUNE:sign_r=-1 from serial. -->
-            <div class="bal-tune-row" style="grid-column: span 2; margin-top: 4px;">
+            <div class="bal-tune-row grid-span-2-mt4">
                 <div class="tune-header">
                     <span>Roll correction sign (read-only)</span>
                     <span class="tune-val" id="tvSign_r">−1</span>
@@ -661,18 +728,17 @@
         </div><!-- /.roll tune grid -->
 
         <!-- ── Task-space mode (Stage 3) ─────────────────────────────────── -->
-        <details id="tsDetails" style="margin-top:14px; border-top:1px solid #2e4a2e; padding-top:10px;">
-            <summary style="font-size:10px; color:#888; text-transform:uppercase;
-                            letter-spacing:0.5px; cursor:pointer; user-select:none;">
+        <details id="tsDetails" class="panel-divider">
+            <summary class="summary-toggle">
                 Task-space mode (Stage 3)
-                <span style="color:#555; font-weight:normal; margin-left:6px;">
+                <span class="note-muted">
                     Balance outputs dx/dy mm → merged into FootTarget before IK
                 </span>
             </summary>
-            <div style="margin-top:10px;">
+            <div class="mt-10">
                 <!-- Toggle -->
-                <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
-                    <span style="font-size:11px; color:#aaa; width:80px;">Task-space</span>
+                <div class="flex-row-gap-bottom">
+                    <span class="label-inline-medium">Task-space</span>
                     <button id="btnTsOff" class="btn-bal-off btn-sign btn-sign-active"
                             onclick="setTaskSpace(false)">OFF (joint-space)</button>
                     <button id="btnTsOn"  class="btn-bal-on btn-sign"
@@ -682,15 +748,15 @@
                      Default ON (matches firmware). When OFF, torso pitch/roll
                      servos are not driven by BalanceController even if task-space
                      leg corrections (dx/dy) are active. -->
-                <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
-                    <span style="font-size:11px; color:#aaa; width:80px;">Torso bal.</span>
+                <div class="flex-row-gap-bottom">
+                    <span class="label-inline-medium">Torso bal.</span>
                     <button id="btnTbOff" class="btn-bal-off btn-sign"
                             onclick="setTorsoBalance(false)">OFF</button>
                     <button id="btnTbOn"  class="btn-bal-on btn-sign btn-sign-active"
                             onclick="setTorsoBalance(true)">ON (joint-space)</button>
                 </div>
                 <!-- Live readouts -->
-                <div class="bal-outputs" style="margin-bottom:10px;">
+                <div class="bal-outputs mb-10">
                     <div class="bal-out-cell">
                         <div class="bal-out-lbl">dx (mm)</div>
                         <div class="bal-out-val" id="tsDx">—</div>
@@ -709,7 +775,7 @@
                         </div>
                         <input type="range" id="slDxPerDeg" min="0.5" max="6.0" step="0.1" value="3.0"
                                oninput="updateTsLabel('dx_per_deg',this.value); sendTsTune()">
-                        <div style="font-size:10px; color:#555; margin-top:3px;">
+                        <div class="small-note">
                             Pitch PD → foot x offset. Start low; increase if static balance undershoots.
                         </div>
                     </div>
@@ -720,12 +786,12 @@
                         </div>
                         <input type="range" id="slDyPerDeg" min="0.5" max="6.0" step="0.1" value="3.0"
                                oninput="updateTsLabel('dy_per_deg',this.value); sendTsTune()">
-                        <div style="font-size:10px; color:#555; margin-top:3px;">
+                        <div class="small-note">
                             Roll PD → foot y offset. Tune after pitch confirmed stable.
                         </div>
                     </div>
                 </div>
-                <div style="font-size:10px; color:#666; margin-top:8px; line-height:1.5;">
+                <div class="note-secondary">
                     ⚠ Reorders tick: balance → gait(merge) instead of gait → balance(override).<br>
                     ⚠ Enable roll controller when using task-space roll correction.<br>
                     ⚠ roll_setpoint injection from WeightShift is suppressed in this mode.
@@ -742,21 +808,21 @@
         <h3>&#9888; Catch-Step Recovery</h3>
         <span class="rcv-chevron" id="rcvChevron">&#9660;</span>
     </div>
-    <div class="rcv-body" id="rcvBody" style="display:none;">
+    <div class="rcv-body hidden" id="rcvBody">
 
         <!-- Status badge + enable/disable buttons -->
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+        <div class="flex-row-wrap-gap">
             <span class="rcv-status off" id="rcvStatusBadge">OFF</span>
             <button class="btn-bal-on"  id="rcvEnBtn"  onclick="sendCmd('RECOVERY_TUNE:enabled=1')">Enable</button>
-            <button class="btn-bal-off" id="rcvDisBtn" onclick="sendCmd('RECOVERY_TUNE:enabled=0')" style="display:none;">Disable</button>
-            <label style="font-size:11px; color:#aaa; display:flex; align-items:center; gap:5px; cursor:pointer;">
+            <button class="btn-bal-off hidden" id="rcvDisBtn" onclick="sendCmd('RECOVERY_TUNE:enabled=0')">Disable</button>
+            <label class="form-label-inline">
                 <input type="checkbox" id="rcvSuppGait" onchange="sendRcvSuppGait()" checked>
                 Suppress during walking
             </label>
         </div>
 
         <!-- Live readouts -->
-        <div class="bal-outputs" style="margin-bottom:14px;">
+        <div class="bal-outputs">
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">Sat count / limit</div>
                 <div class="bal-out-val" id="rcvSatVal">0 / 20</div>
@@ -784,7 +850,7 @@
         </div>
 
         <!-- Tuning sliders -->
-        <div style="font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">
+        <div class="section-label mb-8">
             Detection thresholds
         </div>
         <div class="rcv-tune-grid">
@@ -795,7 +861,7 @@
                 </div>
                 <input type="range" id="slRcvPitch" min="1" max="35" step="0.5" value="11.5"
                        oninput="updateRcvLabel('rcv_pitch',this.value); sendRcvTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Above this pitch angle triggers detection. Set well above normal walking range.
                 </div>
             </div>
@@ -806,7 +872,7 @@
                 </div>
                 <input type="range" id="slRcvRoll" min="1" max="35" step="0.5" value="10.3"
                        oninput="updateRcvLabel('rcv_roll',this.value); sendRcvTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Above this roll angle triggers detection. Set well above normal walking range.
                 </div>
             </div>
@@ -817,7 +883,7 @@
                 </div>
                 <input type="range" id="slRcvSat" min="1" max="100" step="1" value="20"
                        oninput="updateRcvLabel('rcv_sat',this.value); sendRcvTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     PD output must be saturated for this many consecutive ticks (~2.5 ms each).
                 </div>
             </div>
@@ -828,46 +894,37 @@
                 </div>
                 <input type="range" id="slRcvConf" min="1" max="50" step="1" value="10"
                        oninput="updateRcvLabel('rcv_conf',this.value); sendRcvTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Conditions must hold for this many ticks before flag fires.
                 </div>
             </div>
         </div>
 
-        <div style="font-size:10px; color:#666; margin-top:10px; line-height:1.5;">
+        <div class="note-secondary">
             Stage 0: detection only — no servo actuation. Verify T0.1–T0.7 before enabling Stage 1.<br>
             Flag clears automatically when conditions go false (no latching).
         </div>
 
         <!-- Stage 1: manual trigger test buttons (T1.1 / T1.2) -->
-        <div style="border-top:1px solid #3a2a0a; padding-top:10px; margin-top:10px;">
-            <div style="font-size:10px; color:#888; text-transform:uppercase;
-                        letter-spacing:0.5px; margin-bottom:8px;">
+        <div class="panel-divider">
+            <div class="section-label mb-8">
                 Stage 1 manual test — balance armed, robot standing still
             </div>
-            <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                <button onclick="sendCmd('GAIT_TEST_RECOVERY_R')"
-                        style="background:#7a3a00; color:#fff; border:1px solid #ff6d00;
-                               padding:8px 14px; border-radius:5px; cursor:pointer; font-weight:bold; font-size:12px;">
+            <div class="flex-row-wrap-sm">
+                <button class="btn-panel-action" onclick="sendCmd('GAIT_TEST_RECOVERY_R')">
                     &#8594; Test Recovery R
                 </button>
-                <button onclick="sendCmd('GAIT_TEST_RECOVERY_L')"
-                        style="background:#7a3a00; color:#fff; border:1px solid #ff6d00;
-                               padding:8px 14px; border-radius:5px; cursor:pointer; font-weight:bold; font-size:12px;">
+                <button class="btn-panel-action" onclick="sendCmd('GAIT_TEST_RECOVERY_L')">
                     &#8592; Test Recovery L
                 </button>
-                <button onclick="sendCmd('GAIT_TEST_RECOVERY_F')"
-                        style="background:#7a3a00; color:#fff; border:1px solid #ff6d00;
-                               padding:8px 14px; border-radius:5px; cursor:pointer; font-weight:bold; font-size:12px;">
+                <button class="btn-panel-action" onclick="sendCmd('GAIT_TEST_RECOVERY_F')">
                     &#8593; Test Recovery Forward
                 </button>
-                <button onclick="sendCmd('GAIT_TEST_RECOVERY_B')"
-                        style="background:#7a3a00; color:#fff; border:1px solid #ff6d00;
-                               padding:8px 14px; border-radius:5px; cursor:pointer; font-weight:bold; font-size:12px;">
+                <button class="btn-panel-action" onclick="sendCmd('GAIT_TEST_RECOVERY_B')">
                     &#8595; Test Recovery Back
                 </button>
             </div>
-            <div style="font-size:10px; color:#555; margin-top:6px; line-height:1.4;">
+            <div class="small-note-sm">
                 Triggers RECOVERY_STEP directly (no detection threshold). Gait mode badge
                 shows RECOVERY; sub-state label tracks LIFTING → LANDING → DAMP_HOLD → SOFT_RETURN → IDLE.
             </div>
@@ -882,7 +939,7 @@
         <h3>🎚 Speed Control</h3>
         <span class="spd-chevron" id="spdChevron">▼</span>
     </div>
-    <div class="spd-body" id="spdBody" style="display:none;">
+    <div class="spd-body hidden" id="spdBody">
 
         <!-- Global speed row -->
         <div class="spd-global">
@@ -905,7 +962,7 @@
         <h3>⚖ Weight Shift</h3>
         <span class="wshift-chevron" id="wshiftChevron">▼</span>
     </div>
-    <div class="wshift-body" id="wshiftBody" style="display:none;">
+    <div class="wshift-body hidden" id="wshiftBody">
 
         <!-- Shift trigger buttons -->
         <div class="wshift-btn-row">
@@ -919,15 +976,13 @@
             <div class="wshift-progress-bg">
                 <div class="wshift-progress-bar" id="wshiftBar"></div>
                 <!-- Center marker -->
-                <div style="position:absolute; top:0; left:50%; width:1px;
-                             height:100%; background:#555;"></div>
+                <div class="vertical-center-line"></div>
             </div>
             <div class="wshift-progress-label" id="wshiftLabel">Progress: center</div>
         </div>
 
         <!-- Tuning controls -->
-        <div style="font-size:10px; color:#888; text-transform:uppercase;
-                    letter-spacing:0.5px; margin-bottom:8px;">Tuning</div>
+        <div class="section-label mb-8">Tuning</div>
         <div class="wshift-tune-grid">
 
             <div class="wshift-tune-row">
@@ -938,7 +993,7 @@
                 <!-- Slider in degrees for readability; converted to rad on send -->
                 <input type="range" id="slWsSp" min="0" max="8" step="0.1" value="2.9"
                        oninput="updateWSTuneLabel('setpoint', this.value); sendWSTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Roll setpoint injected into balance controller. Leave at 0 for a no-motion baseline.
                 </div>
             </div>
@@ -950,7 +1005,7 @@
                 </div>
                 <input type="range" id="slWsRamp" min="100" max="2000" step="50" value="500"
                        oninput="updateWSTuneLabel('ramp', this.value); sendWSTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Start ≥ 500 ms; reduce only after shift is stable
                 </div>
             </div>
@@ -963,7 +1018,7 @@
                 </div>
                 <input type="range" id="slWsPhaseDelay" min="0" max="2000" step="50" value="500"
                        oninput="updateWSTuneLabel('phase_delay', this.value); sendWSTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Swing ankle starts first; stance ankle follows after this delay.
                     0 = simultaneous (no phasing).
                 </div>
@@ -974,7 +1029,7 @@
                 </div>
                 <input type="range" id="slWsAnkle" min="0" max="20" step="0.5" value="15.5"
                        oninput="updateWSTuneLabel('ankle', this.value); sendWSTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Primary shift driver. Set ankle_roll_ratio=0 in Balance panel first.
                     Start at 5°, verify direction, increase toward 13°.
                 </div>
@@ -987,7 +1042,7 @@
                 </div>
                 <input type="range" id="slWsLateral" min="-50" max="50" step="0.5" value="-20"
                        oninput="updateWSTuneLabel('lateral_mm', this.value); sendWSTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Body lateral shift (mm) at full progress. Negative values invert the left/right mapping for adduction tests.
                 </div>
             </div>
@@ -999,7 +1054,7 @@
                 </div>
                 <input type="range" id="slWsForward" min="0" max="50" step="0.5" value="5"
                        oninput="updateWSTuneLabel('forward_mm', this.value); sendWSTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Body forward shift (mm) during shift. Folded into FootTarget.x_mm via IK.
                 </div>
             </div>
@@ -1011,7 +1066,7 @@
                 </div>
                 <input type="range" id="slWsTorso" min="-20" max="20" step="0.5" value="0"
                        oninput="updateWSTuneLabel('torso', this.value); sendWSTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Direction unverified — keep 0 until torso_roll confirmed.
                 </div>
             </div>
@@ -1026,13 +1081,13 @@
         <h3>🚶 Gait Controller — Phase 1 Stepping</h3>
         <span class="gait-chevron" id="gaitChevron">▼</span>
     </div>
-    <div class="gait-body" id="gaitBody" style="display:none;">
+    <div class="gait-body hidden" id="gaitBody">
 
         <!-- Status row: mode badge + gate badge + sub-state -->
-        <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+        <div class="flex-row-wrap-sm mb-10">
             <span class="gait-mode-badge gait-mode-idle" id="gaitModeBadge">IDLE</span>
             <span class="gait-gate-badge gait-gate-closed" id="gaitGateBadge">GATE CLOSED</span>
-            <span style="font-size:11px; color:#888;" id="gaitSubLabel">—</span>
+            <span class="text-muted-gray" id="gaitSubLabel">—</span>
         </div>
 
         <!-- Phase progress bar -->
@@ -1053,15 +1108,14 @@
             <button class="btn-gait-next"  id="btnGaitNext" onclick="sendCmd('GAIT_NEXT')" disabled>→ Next Pose</button>
         </div>
         <!-- Pose step hold point indicator -->
-        <div id="gaitPoseHoldRow" style="display:none; margin-bottom:10px; padding:8px 10px;
-             background:#1a0a2a; border:1px solid #7b1fa2; border-radius:5px;">
-            <span style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.5px;">Pose hold: </span>
-            <span id="gaitPoseHoldLabel" style="font-size:13px; font-weight:bold; color:#ce93d8;">—</span>
-            <span style="font-size:11px; color:#555; margin-left:10px;">Press → Next Pose to advance</span>
+        <div id="gaitPoseHoldRow" class="gait-pose-hold">
+            <span class="text-muted-gray">Pose hold: </span>
+            <span id="gaitPoseHoldLabel" class="gait-pose-hold-label">—</span>
+            <span class="note-muted ml-10">Press → Next Pose to advance</span>
         </div>
 
         <!-- Live telemetry -->
-        <div style="font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">
+        <div class="section-label">
             Live outputs (this tick)
         </div>
         <div class="gait-telem-grid">
@@ -1093,11 +1147,18 @@
                 <div class="bal-out-lbl">Hold Pt</div>
                 <div class="bal-out-val" id="gaitTelemHold">—</div>
             </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">IK L</div>
+                <div class="bal-out-val" id="gaitTelemIkL">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">IK R</div>
+                <div class="bal-out-val" id="gaitTelemIkR">—</div>
+            </div>
         </div>
 
         <!-- Tune sliders -->
-        <div style="font-size:10px; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;
-                    border-top:1px solid #3a2a5e; padding-top:10px;">
+        <div class="panel-subtitle-divider">
             Tuning — send takes effect immediately
         </div>
         <div class="gait-tune-grid">
@@ -1109,7 +1170,7 @@
                 </div>
                 <input type="range" id="slGaitRate" min="0.05" max="1.0" step="0.05" value="0.30"
                        oninput="updateGaitLabel('phaseRate', this.value); sendGaitTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Cycle/sec. Start at 0.3. Raise only after stance confirmed.
                 </div>
             </div>
@@ -1121,7 +1182,7 @@
                 </div>
                 <input type="range" id="slGaitGate" min="0.0" max="0.99" step="0.05" value="0.85"
                        oninput="updateGaitLabel('liftGate', this.value); sendGaitTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     |WS progress| needed before foot can lift. Lower → lifts sooner.
                 </div>
             </div>
@@ -1133,7 +1194,7 @@
                 </div>
                 <input type="range" id="slGaitWsThresh" min="1" max="15" step="0.5" value="5.73"
                        oninput="updateGaitLabel('wsThreshDeg', this.value); sendGaitTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     IMU roll gate (Phase 2 only — logged but not active in Phase 1).
                 </div>
             </div>
@@ -1145,7 +1206,7 @@
                 </div>
                 <input type="range" id="slGaitStep" min="5" max="55" step="1" value="15"
                        oninput="updateGaitLabel('stepH', this.value); sendGaitTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Swing foot clearance. Capped so peak swing height ≥ 130 mm.
                 </div>
             </div>
@@ -1157,7 +1218,7 @@
                 </div>
                 <input type="range" id="slGaitStance" min="135" max="189" step="1" value="185"
                        oninput="updateGaitLabel('stanceH', this.value); sendGaitTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Hip-to-ankle vertical drop. Lower = deeper crouch.
                 </div>
             </div>
@@ -1169,7 +1230,7 @@
                 </div>
                 <input type="range" id="slGaitStepLen" min="0" max="40" step="1" value="10"
                        oninput="updateGaitLabel('stepLen', this.value); sendGaitTune()">
-                <div style="font-size:10px; color:#555; margin-top:3px;">
+                <div class="small-note">
                     Phase 2: forward stride per cycle. 0 disables.
                     Hard-capped at stanceH × 0.20. Start at 10 mm.
                 </div>
@@ -1177,7 +1238,7 @@
 
         </div><!-- /.gait-tune-grid -->
 
-        <div style="font-size:10px; color:#555; margin-top:10px; line-height:1.5;">
+        <div class="note-secondary">
             ⚠ Disable balance roll controller before first lift test.<br>
             ⚠ Keep Weight Shift <em>swing_hip=0</em> and <em>swing_knee=0</em> while gait is running.<br>
             ⚠ SOURCE_GAIT (priority 1) loses to SOURCE_BALANCE (priority 2) on shared joints — expected.
@@ -1187,26 +1248,25 @@
 </div><!-- /.gait-panel -->
 
 <div class="preset-box">
-        <span style="color:#aaa;font-size:12px;">Saved Presets:</span><br>
-        <div id="presetList" style="margin-top:10px;"></div>
-    </div>
+        <span class="note-secondary">Saved Presets:</span><br>
+        <div id="presetList" class="mt-8"></div>
 
     <!-- Named Movement Panel -->
     <div class="move-panel">
         <h3>⚡ Named Movement</h3>
         <div class="move-row">
-            <select id="mv-joint"><option value="">— joint —</option></select>
-            <select id="mv-type">
+            <select id="mv-joint" title="Select joint"></select>
+            <select id="mv-type" title="Select movement type">
                 <option value="flex">flex</option>
                 <option value="extend">extend</option>
             </select>
             <div class="input-group">
                 <!-- ADD: step="0.5" and explicit Number() in sendNamedMove() -->
-                <input type="number" id="mv-mag" value="20" min="-270" max="270" step="0.5">
+                <input type="number" id="mv-mag" value="20" min="-270" max="270" step="0.5" title="Movement magnitude in degrees">
                 magnitude (°)
             </div>
             <button class="btn-move" onclick="sendNamedMove()">Send</button>
-            <span style="font-size:11px;color:#aaa;">→ MOVE_NAMED:ch:type:mag</span>
+            <span class="note-muted">→ MOVE_NAMED:ch:type:mag</span>
         </div>
     </div>
 
@@ -1216,7 +1276,7 @@
         <h3>📐 IK Tests</h3>
         <span class="ik-chevron" id="ikChevron">▼</span>
     </div>
-    <div class="ik-body" id="ikBody" style="display:none;">
+    <div class="ik-body hidden" id="ikBody">
 
         <!-- Last result summary ─────────────────────────────────────────── -->
         <div class="ik-result-box" id="ikResultBox">No test run yet.</div>
@@ -1235,30 +1295,29 @@
         </div>
 
         <!-- Neutral validation with editable inputs ─────────────────────── -->
-        <div style="font-size:10px; color:#888; margin:8px 0 4px;">
+        <div class="note-secondary">
             Neutral comparison — supply measured hardware angles
         </div>
         <div class="ik-input-row">
             <div class="ik-input-group">
                 <span>Hip (°)</span>
-                <input type="number" id="ikNeutralHip" value="0" step="0.5">
+                <input type="number" id="ikNeutralHip" value="0" step="0.5" title="Neutral hip angle">
             </div>
             <div class="ik-input-group">
                 <span>Knee (°)</span>
-                <input type="number" id="ikNeutralKnee" value="0" step="0.5">
+                <input type="number" id="ikNeutralKnee" value="0" step="0.5" title="Neutral knee angle">
             </div>
             <div class="ik-input-group">
                 <span>Ankle (°)</span>
-                <input type="number" id="ikNeutralAnkle" value="0" step="0.5">
+                <input type="number" id="ikNeutralAnkle" value="0" step="0.5" title="Neutral ankle angle">
             </div>
-            <button class="btn-ik-validate" onclick="sendNeutralValidate()"
-                    style="align-self:flex-end;">
+            <button class="btn-ik-validate mt-8" onclick="sendNeutralValidate()">
                 Validate
             </button>
         </div>
 
         <!-- Section 2: Motion tests — MOVES SERVOS ─────────────────────── -->
-        <div class="ik-section-label" style="color:#ff9800;">
+        <div class="ik-section-label ik-section-highlight">
             Motion tests — disable balance before use — MOVES SERVOS
         </div>
         <div class="ik-btn-row">
@@ -1278,28 +1337,26 @@
         <div class="ik-input-row">
             <div class="ik-input-group">
                 <span>x (mm)</span>
-                <input type="number" id="ikX" value="0" step="1">
+                <input type="number" id="ikX" value="0" step="1" title="Foot target sagittal x position">
             </div>
             <div class="ik-input-group">
                 <span>h_sag (mm)</span>
-                <input type="number" id="ikH" value="160" step="1">
+                <input type="number" id="ikH" value="160" step="1" title="Foot target sag height">
             </div>
             <div class="ik-input-group">
                 <span>y (mm)</span>
-                <input type="number" id="ikY" value="0" step="1">
+                <input type="number" id="ikY" value="0" step="1" title="Foot target lateral y position">
             </div>
             <div class="ik-input-group">
                 <span>Leg</span>
-                <select id="ikLegSel"
-                        style="background:#333;color:white;border:1px solid #555;
-                               padding:5px;border-radius:4px;">
+                <select id="ikLegSel" class="select-input" title="Select leg target">
                     <option value="both">Both</option>
                     <option value="right">Right only</option>
                     <option value="left">Left only</option>
                 </select>
             </div>
         </div>
-        <div class="ik-btn-row" style="margin-top:8px;">
+        <div class="ik-btn-row mt-8">
             <button class="btn-ik-validate" onclick="sendCustomIKSolve(false)">
                 Solve only (no movement)
             </button>
@@ -1349,12 +1406,12 @@
 </div><!-- /.ik-panel -->
 
     <!-- ── Joint Control Panel ────────────────────────────────────────────────── -->
-<div class="spd-panel" style="border-color:#3a3a3a;">
-    <div class="spd-header" onclick="toggleJointPanel()" style="background:#1e1e1e;">
-        <h3 style="color:#ccc;">🦾 Joint Control</h3>
+<div class="spd-panel spd-panel-border">
+    <div class="spd-header panel-header-dark" onclick="toggleJointPanel()">
+        <h3 class="text-muted-light">🦾 Joint Control</h3>
         <span class="spd-chevron" id="jointChevron">▼</span>
     </div>
-    <div id="jointBody" style="padding:0 16px 16px;">
+    <div id="jointBody" class="panel-padding">
         <div id="servosContainer"></div>
     </div>
 </div>
@@ -1615,6 +1672,12 @@ function initWebSocket() {
             document.getElementById("est-roll").textContent      = values["roll"]  != null ? toDeg(values["roll"])  : "—";
             document.getElementById("est-pitchRate").textContent = values["pitchRate"] ?? "—";
             document.getElementById("est-rollRate").textContent  = values["rollRate"]  ?? "—";
+            const vx = parseFloat(values["vxCoM"]);
+            const vy = parseFloat(values["vyCoM"]);
+            document.getElementById("est-vxCoM").textContent =
+                isNaN(vx) ? "—" : vx.toFixed(0) + " mm/s";
+            document.getElementById("est-vyCoM").textContent =
+                isNaN(vy) ? "—" : vy.toFixed(0) + " mm/s";
         }
         // AFTER:
         else if (msg.startsWith("CALIB:")) {
@@ -2463,6 +2526,24 @@ function parseGaitState(payload) {
         }
     }
     set("gaitTelemHold",  isPoseMode ? (hold > 0 ? "HOLD " + hold : "running") : "—");
+
+    const ikNames  = {0: "OK", 1: "UNREACH", 2: "CLAMPED", 3: "DOMAIN!"};
+    const ikColors = {0: "#4caf50", 1: "#ff9800", 2: "#ff9800", 3: "#f44336"};
+
+    const ikL    = parseInt(v["ikL"]    || "0");
+    const ikR    = parseInt(v["ikR"]    || "0");
+    const reachL = parseFloat(v["reachL"] || "0");
+    const reachR = parseFloat(v["reachR"] || "0");
+    const ffL    = parseFloat(v["ffL"]    || "0");
+    const ffR    = parseFloat(v["ffR"]    || "0");
+
+    set("gaitTelemIkL", ikNames[ikL] + " " + reachL.toFixed(0) + "% ff=" + ffL.toFixed(2) + "°");
+    set("gaitTelemIkR", ikNames[ikR] + " " + reachR.toFixed(0) + "% ff=" + ffR.toFixed(2) + "°");
+
+    const elL = document.getElementById("gaitTelemIkL");
+    const elR = document.getElementById("gaitTelemIkR");
+    if (elL) elL.style.color = ikColors[ikL];
+    if (elR) elR.style.color = ikColors[ikR];
 
     // Stage 2 recovery step telemetry
     {

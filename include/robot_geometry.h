@@ -46,4 +46,16 @@ const float HIP_PITCH_FORE_AFT_OFFSET_MM = 12.8f;
 // Foot sole midpoint is approximately this far forward of hip pitch axis at neutral.
 const float FOOT_FORE_OF_HIP_PITCH_MM = 2.0f;
 
+// =============================================================================
+//  Center-of-mass height above sole (mm).
+//  Used by StateEstimator to compute approximate CoM velocity from IMU
+//  rotation rates via the inverted-pendulum model: v_CoM ≈ h × ω.
+//
+//  Measured: ~25 cm from sole at neutral standing pose.
+//  Re-measure if mass distribution changes (new battery, new IMU mount, etc.).
+//
+//  Tier 2 dependency: capture-point math uses ω₀ = sqrt(g / (h/1000)) = ~6.26 rad/s
+//  at h = 250 mm. Capture-point offset = vx_CoM / ω₀.
+// =============================================================================
+const float H_COM_MM = 250.0f;
 #endif

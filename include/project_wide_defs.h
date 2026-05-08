@@ -103,7 +103,7 @@ constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 // Stored as 1/omega0 to avoid recomputing sqrt each tick.
 // Recompute if H_COM_MM changes:
 //   1.0f / sqrtf(9810.0f / H_COM_MM)   (using mm units consistently)
-constexpr float GAIT_CAPTURE_INV_OMEGA0_S = 0.1597f;  // s; = 1/6.26
+constexpr float GAIT_CAPTURE_INV_OMEGA0_S = 0.1498f;
 
 // Capture-point default gain. 1.0 = full LIP correction.
 // Reduce toward 0.5 if hardware capture-point is hot. Increase only after

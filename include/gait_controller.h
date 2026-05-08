@@ -195,6 +195,7 @@ struct GaitState {
     // Set per-tick by _runRecoveryStep() so the UI can confirm stance abduction
     // is happening even before it becomes visually obvious.
     float    rcvStanceY_mm = 0.0f;
+    
 };
 
 // ---------------------------------------------------------------------------
@@ -326,7 +327,8 @@ private:
     //   (stop ramp, idle stance refresh).
     FootTarget _buildFootTarget(bool isRight, float swingFrac, bool isSwing,
                                 float localPhase = 0.0f,
-                                const BalanceCorrection* bc = nullptr) const;
+                                const BalanceCorrection* bc = nullptr,
+                                float strideScale = 1.0f) const;
 
     // Resolve a FootTarget through LegIK and submit the joint angles via
     // SOURCE_GAIT. Logs (rate-limited) and skips submission on

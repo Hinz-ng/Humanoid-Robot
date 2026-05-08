@@ -57,5 +57,5 @@ const float FOOT_FORE_OF_HIP_PITCH_MM = 2.0f;
 //  Tier 2 dependency: capture-point math uses ω₀ = sqrt(g / (h/1000)) = ~6.26 rad/s
 //  at h = 250 mm. Capture-point offset = vx_CoM / ω₀.
 // =============================================================================
-const float H_COM_MM = 250.0f;
+const float H_COM_MM = 220.0f;
 #endif

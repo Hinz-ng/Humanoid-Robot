@@ -238,7 +238,8 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
                                             float swingFrac,
                                             bool isSwing,
                                             float localPhase,
-                                            const BalanceCorrection* bc) const {
+                                            const BalanceCorrection* bc,
+                                            float strideScale) const {
     FootTarget t;
     t.isRightLeg   = isRight;
     t.x_mm         = GAIT_STANCE_X_OFFSET_MM;
@@ -253,15 +254,12 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
     //   Stance leg: x = (0.5 - localPhase) × L  → starts at +L/2, retreats to -L/2
     // Net effect: body advances ≈ L per half-cycle. Foot stays planted while the
     // hip translates forward in body frame (foot retreats relative to hip).
-    if (_cfg.stepLengthMm > 0.0f) {
-        // Stage 2.2 — capture-point: only the swing leg picks up the correction.
-        // Stance leg continues with the unmodified retreat trajectory; treating
-        // capture as foot placement, not body translation, matches the LIP model.
-        const float capture = isSwing ? _captureOffsetMm() : 0.0f;
-        const float strideX = isSwing
-            ? (localPhase - 0.5f) * _cfg.stepLengthMm + capture
+    if (_cfg.stepLengthMm > 0.0f && strideScale > 0.0f) {
+        const float captureRaw = isSwing ? _captureOffsetMm() : 0.0f;
+        const float strideRaw  = isSwing
+            ? (localPhase - 0.5f) * _cfg.stepLengthMm + captureRaw
             : (0.5f - localPhase) * _cfg.stepLengthMm;
-        t.x_mm += strideX;
+        t.x_mm += strideRaw * strideScale;
     }
 
     // Stage 2: WeightShift task-space contribution (forward lean + lateral shift).
@@ -332,8 +330,11 @@ LegIKResult GaitController::_submitFootTargetIK(bool isRight,
 
 // ---------------------------------------------------------------------------
 void GaitController::_submitStanceBothLegs(const BalanceCorrection* bc) {
-    const FootTarget tL = _buildFootTarget(/*isRight=*/false, 0.0f, /*isSwing=*/false, 0.0f, bc);
-    const FootTarget tR = _buildFootTarget(/*isRight=*/true,  0.0f, /*isSwing=*/false, 0.0f, bc);
+    // strideScale=0: stride and capture suppressed. Yields x=GAIT_STANCE_X_OFFSET_MM,
+    // y=0 (plus WS task-space and balance correction). Used as the neutral
+    // baseline whenever no leg is in an active swing role.
+    const FootTarget tL = _buildFootTarget(false, 0.0f, false, 0.0f, bc, 0.0f);
+    const FootTarget tR = _buildFootTarget(true,  0.0f, false, 0.0f, bc, 0.0f);
 
     const LegIKResult rL = _submitFootTargetIK(false, tL);
     const LegIKResult rR = _submitFootTargetIK(true,  tR);
@@ -511,18 +512,17 @@ void GaitController::update(float dt_s, const IMUState& imuState,
 
     if (_subState == StepSubState::STOPPING) {
         const uint32_t elapsed = millis() - _stopStartMs;
-        const float stopFrac = (elapsed >= GAIT_STOP_RAMP_MS)
+        const float liftRamp = (elapsed >= GAIT_STOP_RAMP_MS)
                              ? 0.0f
-                             : (_stopSwingFrac
-                                * (1.0f - (float)elapsed / (float)GAIT_STOP_RAMP_MS));
+                             : (1.0f - (float)elapsed / (float)GAIT_STOP_RAMP_MS);
+        const float stopFrac    = _stopSwingFrac * liftRamp;
+        const float strideScale = liftRamp;   // identical time profile
 
         const bool leftIsSwing = (_stopHalf == 0);
-        // During stop ramp, freeze stride at the position the swing foot was
-        // at when stop() was called. _halfPhase still reflects that position.
         const FootTarget tL = _buildFootTarget(false, stopFrac,  leftIsSwing,
-                                               _halfPhase, bc);
+                                               _halfPhase, bc, strideScale);
         const FootTarget tR = _buildFootTarget(true,  stopFrac, !leftIsSwing,
-                                               _halfPhase, bc);
+                                               _halfPhase, bc, strideScale);
         const LegIKResult rL = _submitFootTargetIK(false, tL);
         const LegIKResult rR = _submitFootTargetIK(true,  tR);
 
@@ -534,6 +534,10 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         _state.lastFlatFootErrR_deg = rR.flat_foot_error_deg;
         _state.liftL_deg = leftIsSwing  ? rL.hip_pitch_deg : 0.0f;
         _state.liftR_deg = !leftIsSwing ? rR.hip_pitch_deg : 0.0f;
+
+        // Telemetry: applied capture also fades — surface the actual value.
+        _state.captureOffsetMm = _captureOffsetMm() * strideScale;
+        _state.cycleXDispl_mm  = _halfPhase * _cfg.stepLengthMm * strideScale;
 
         if (elapsed >= GAIT_STOP_RAMP_MS / 2 && _ws && _lastShiftDir != 0) {
             _ws->trigger(ShiftDirection::NONE);
@@ -557,6 +561,8 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _state.phase     = 0.0f;
             _state.wsProgress = wsSettled ? 0.0f : _state.wsProgress;
             _state.poseHold  = 0;
+            _state.captureOffsetMm = 0.0f;   // ADD
+            _state.cycleXDispl_mm  = 0.0f;   // ADD
         }
         return;
     }

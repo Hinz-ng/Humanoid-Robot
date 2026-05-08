@@ -1102,6 +1102,9 @@
         <div class="gait-btn-row">
             <button class="btn-gait-start" onclick="sendCmd('GAIT_START')">▶ Start</button>
             <button class="btn-gait-stop"  onclick="sendCmd('GAIT_STOP')">■ Stop</button>
+            <button class="btn-gait-step" id="btnGaitCapToggle" onclick="toggleCapture()">
+                Capture: OFF
+            </button>
             <button class="btn-gait-step"  onclick="sendCmd('GAIT_STEP')">↷ Single Step</button>
             <button class="btn-gait-wshift" onclick="sendCmd('GAIT_WSHIFT')">⇆ W-Shift Only</button>
             <button class="btn-gait-pose"  onclick="sendCmd('GAIT_POSE_STEP')">⏸ Pose Step</button>
@@ -1154,6 +1157,10 @@
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">IK R</div>
                 <div class="bal-out-val" id="gaitTelemIkR">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Capture (mm)</div>
+                <div class="bal-out-val" id="gaitTelemCapture">0.0</div>
             </div>
         </div>
 
@@ -1233,6 +1240,30 @@
                 <div class="small-note">
                     Phase 2: forward stride per cycle. 0 disables.
                     Hard-capped at stanceH × 0.20. Start at 10 mm.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Capture-point gain</span>
+                    <span class="tune-val" id="tvGaitCapGain">0.60</span>
+                </div>
+                <input type="range" id="slGaitCapGain" min="0.0" max="1.5" step="0.05" value="0.6"
+                       oninput="updateGaitLabel('captureGain', this.value); sendGaitTune()">
+                <div class="small-note">
+                    LIP correction strength. 0 = disabled. 1.0 = full model. Start at 0.5.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Capture max (mm)</span>
+                    <span class="tune-val" id="tvGaitCapMax">15</span>
+                </div>
+                <input type="range" id="slGaitCapMax" min="0" max="30" step="1" value="15"
+                       oninput="updateGaitLabel('captureMax', this.value); sendGaitTune()">
+                <div class="small-note">
+                    Hard cap on capture offset (mm). Protects IK reach budget.
                 </div>
             </div>
 
@@ -2407,6 +2438,8 @@ const _gaitTuneMap = {
     stepH:      { el: "tvGaitStep",     decimals: 0 },
     stanceH:    { el: "tvGaitStance",   decimals: 0 },
     stepLen:    { el: "tvGaitStepLen",  decimals: 0 },
+    captureGain: { el: "tvGaitCapGain", decimals: 2 },
+    captureMax:  { el: "tvGaitCapMax",  decimals: 0 },
 };
 
 function updateGaitLabel(id, rawVal) {
@@ -2426,14 +2459,26 @@ function sendGaitTune() {
         const stepH    = document.getElementById("slGaitStep").value;
         const stanceH  = document.getElementById("slGaitStance").value;
         const stepLen  = document.getElementById("slGaitStepLen").value;
+        const capGain  = parseFloat(document.getElementById("slGaitCapGain").value).toFixed(2);
+        const capMax   = document.getElementById("slGaitCapMax").value;
         const msg = `CMD:GAIT_TUNE:phaseRate=${rate},liftGate=${gate},`
                   + `wsThresh=${wsThreshRad},stepH_mm=${stepH},stanceH_mm=${stanceH},`
-                  + `stepLength_mm=${stepLen}`;
+                  + `stepLength_mm=${stepLen},captureGain=${capGain},captureMax=${capMax}`;
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(msg);
             console.log("[WS TX]", msg);
         }
     }, 80);
+}
+
+function toggleCapture() {
+    // Read current state from the badge element. Toggle and send.
+    const btn = document.getElementById('btnGaitCapToggle');
+    const enable = btn.textContent.indexOf('OFF') !== -1;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(`CMD:GAIT_TUNE:captureEnabled=${enable ? 1 : 0}`);
+    }
+    // Button text syncs from broadcast — see parseGaitState extension below.
 }
 
 // Parses GAIT: telemetry broadcast from firmware and updates the Phase 1 panel.
@@ -2545,6 +2590,22 @@ function parseGaitState(payload) {
     if (elL) elL.style.color = ikColors[ikL];
     if (elR) elR.style.color = ikColors[ikR];
 
+    const capOffset = parseFloat(v["capOffset"] || "0");
+    const capEn     = (v["capEn"] === "1");
+    const capGain   = parseFloat(v["capGain"] || "0");
+
+    const btn = document.getElementById('btnGaitCapToggle');
+    if (btn) {
+        btn.textContent = capEn ? `Capture: ON (${capOffset.toFixed(1)}mm)` : "Capture: OFF";
+        btn.style.background = capEn ? "#1565c0" : "#e65100";
+    }
+
+    set("gaitTelemCapture", capOffset.toFixed(1));
+
+    if (!_tuneActive) {
+        _syncSlider("slGaitCapGain", "tvGaitCapGain", capGain, 2);
+    }
+
     // Stage 2 recovery step telemetry
     {
         const rcvX = parseFloat(v["rcvX"] || "0");
@@ -2562,6 +2623,9 @@ function parseGaitState(payload) {
         _syncSlider("slGaitStance", "tvGaitStance", stanceH, 0);
         const stepLen = parseFloat(v["stepLen"] || "0");
         _syncSlider("slGaitStepLen", "tvGaitStepLen", stepLen, 0);
+        _syncSlider("slGaitCapGain", "tvGaitCapGain", capGain, 2);
+        const capMax = parseFloat(v["capMax"] || "15");
+        _syncSlider("slGaitCapMax", "tvGaitCapMax", capMax, 0);
     }
 }
 

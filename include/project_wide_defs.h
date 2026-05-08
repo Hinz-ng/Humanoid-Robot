@@ -96,6 +96,28 @@ constexpr uint32_t GAIT_STABILIZE_MS            = 400;
 constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 
 // ============================================================
+// CAPTURE-POINT — Stage 2.2 (sagittal only)
+// ============================================================
+// LIP natural frequency at H_COM_MM = 250 mm:
+//   omega0 = sqrt(g / h) = sqrt(9.81 / 0.25) ≈ 6.26 rad/s
+// Stored as 1/omega0 to avoid recomputing sqrt each tick.
+// Recompute if H_COM_MM changes:
+//   1.0f / sqrtf(9810.0f / H_COM_MM)   (using mm units consistently)
+constexpr float GAIT_CAPTURE_INV_OMEGA0_S = 0.1597f;  // s; = 1/6.26
+
+// Capture-point default gain. 1.0 = full LIP correction.
+// Reduce toward 0.5 if hardware capture-point is hot. Increase only after
+// confirming the LIP model is conservative on this platform.
+constexpr float GAIT_CAPTURE_GAIN_DEFAULT = 0.6f;
+
+// Hard cap on the capture offset's contribution to a single step (mm).
+// Must remain inside the IK reach budget after combining with stepLengthMm.
+// At stanceHeightMm=185 and stepLengthMm=30, the swing foot already reaches
+// ~98% at peak. This 15 mm cap leaves ~2% IK headroom before clamping.
+// Re-tune after first hardware run; do not raise blindly.
+constexpr float GAIT_CAPTURE_OFFSET_MAX_MM = 15.0f;
+
+// ============================================================
 // RECOVERY STEP PARAMETERS — secondary balance system
 // ============================================================
 //

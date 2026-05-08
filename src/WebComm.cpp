@@ -302,13 +302,13 @@ void WebComm::broadcastGaitState() {
     _lastGaitBroadcast_us = now;
 
     const GaitState& s = _gaitCtrl->getState();
-    char buf[400];
+    char buf[480];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
         "rsub=%d,rdx=%d,rdy=%d,rms=%lu,"
         "rcvX=%.1f,rcvY=%.1f,rcvMag=%.1f,rcvSY=%.1f,xDispl=%.1f,"
-        "ikL=%d,ikR=%d,reachL=%.1f,reachR=%.1f,ffL=%.3f,ffR=%.3f",
+        "ikL=%d,ikR=%d,reachL=%.1f,reachR=%.1f,ffL=%.3f,ffR=%.3f,capOffset=%.1f,capEn=%d,capGain=%.2f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -329,7 +329,10 @@ void WebComm::broadcastGaitState() {
         static_cast<int>(s.lastIKStatusL),
         static_cast<int>(s.lastIKStatusR),
         s.lastReachPctL, s.lastReachPctR,
-        s.lastFlatFootErrL_deg, s.lastFlatFootErrR_deg
+        s.lastFlatFootErrL_deg, s.lastFlatFootErrR_deg,
+        s.captureOffsetMm,
+        static_cast<int>(_gaitCtrl->getConfig().captureEnabled),
+        _gaitCtrl->getConfig().captureGain
     );
     ws.textAll(buf);
 }
@@ -946,14 +949,22 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                                               val, maxStride, cfg.stanceHeightMm);
                             }
                         }
+                        else if (key == "captureEnabled") cfg.captureEnabled = (val > 0.5f);
+                        else if (key == "captureGain")    cfg.captureGain = constrain(val, 0.0f, 1.5f);
+                        else if (key == "captureMax") {
+                            // Hard ceiling: 30 mm. Anything more risks passing IK reach budget on
+                            // most stance heights. Re-evaluate the cap before raising.
+                            cfg.captureOffsetMaxMm = constrain(val, 0.0f, 30.0f);
+                        }
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
                 _gaitCtrl->setConfig(cfg);
                 Serial.printf("[WebComm] GAIT_TUNE: rate=%.2f Hz  gate=%.2f  wsThresh=%.3f rad  "
-                              "stepH=%.1f mm  stanceH=%.1f mm  stepLen=%.1f mm\n",
+                              "stepH=%.1f mm  stanceH=%.1f mm  stepLen=%.1f mm  capEn=%d capGain=%.2f capMax=%.1f\n",
                               cfg.phaseRateHz, cfg.liftGateThreshold, cfg.wsThresholdRad,
-                              cfg.stepHeightMm, cfg.stanceHeightMm, cfg.stepLengthMm);
+                              cfg.stepHeightMm, cfg.stanceHeightMm, cfg.stepLengthMm,
+                              (int)cfg.captureEnabled, cfg.captureGain, cfg.captureOffsetMaxMm);
             }
         }
 

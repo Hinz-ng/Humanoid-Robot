@@ -127,6 +127,20 @@ struct GaitConfig {
     // and IK status — stop on first LIMIT_CLAMPED. Do not raise phaseRateHz
     // and stepLengthMm in the same session.
     float stepLengthMm = 30.0f;
+
+    // Stage 2.2 — sagittal capture-point step placement.
+    // When enabled, swing leg's stride x_mm is augmented by:
+    //   capture_offset = clamp(vx_CoM × inv_omega0 × captureGain,
+    //                          -captureOffsetMaxMm, +captureOffsetMaxMm)
+    // Composed onto stepLengthMm BEFORE per-tick stride formula evaluates,
+    // so the swing foot lands at +stepLengthMm/2 + capture_offset and the
+    // stance leg retreats with the unmodified stepLengthMm (capture is a
+    // foot-placement correction, not a body-translation correction).
+    // Default disabled — opt-in via UI toggle. Enables side-by-side comparison
+    // of pre-Stage-2.2 vs post-Stage-2.2 walking on identical settings.
+    bool  captureEnabled    = false;       // WS: "captureEnabled"
+    float captureGain       = GAIT_CAPTURE_GAIN_DEFAULT;  // WS: "captureGain"
+    float captureOffsetMaxMm = GAIT_CAPTURE_OFFSET_MAX_MM; // WS: "captureMax"
 };
 
 // ---------------------------------------------------------------------------
@@ -159,6 +173,13 @@ struct GaitState {
     // Computed as _halfPhase × stepLengthMm. Reset to 0 on _advanceHalf().
     // Telemetry only — does NOT feed back into FootTarget.
     float        cycleXDispl_mm = 0.0f;
+
+    // Stage 2.2 — last computed sagittal capture offset (mm). Telemetry only.
+    // Sign matches stride x: positive = foot placed further forward than
+    // the open-loop nominal. At zero CoM velocity or with capture disabled,
+    // this stays at 0. Updated whenever _buildFootTarget() runs on the swing
+    // leg — value reflects the offset applied to that tick's swing foot.
+    float captureOffsetMm = 0.0f;
 
     // Recovery telemetry (Stage 1+). Valid only when mode == RECOVERY_STEP.
     RecoverySubState recoverySub       = RecoverySubState::TRIGGERED;
@@ -231,6 +252,8 @@ private:
     // +1 = LEFT shift, -1 = RIGHT shift, 0 = none/center.
     int8_t _lastShiftDir = 0;
 
+    IMUState _lastImuState{};   // cached at top of update() for trajectory helpers
+
     // POSE_STEP pause state.
     // 0 = not paused. 1 = held at gate-open. 2 = held at peak. 3 = held at landing.
     uint8_t _poseHoldPt = 0;
@@ -266,6 +289,28 @@ private:
 
     // sin(localPhase × π) → swing fraction [0, 1] from grounded to peak and back.
     float _swingFrac(float localPhase) const;
+
+    // -----------------------------------------------------------------------
+    //  _captureOffsetMm — sagittal capture-point step-placement correction.
+    //
+    //  Returns the mm offset to add to the swing leg's stride. Zero when
+    //  capture is disabled, IMU invalid, or estopped. Sign convention:
+    //    vx_CoM > 0 (body advancing forward) → positive offset
+    //                                          (foot lands further forward)
+    //
+    //  Capping logic (composite, conservative):
+    //    raw      = vx_CoM × INV_OMEGA0 × captureGain
+    //    by_field = clamp(raw, ±captureOffsetMaxMm)
+    //    by_step  = clamp(by_field, ±stepLengthMm)
+    //
+    //  by_step is the second cap: the capture offset alone never exceeds the
+    //  open-loop nominal stride. Without this, a noisy IMU spike could double
+    //  the stride in one tick.
+    //
+    //  IK reach is checked separately at submit time via the existing
+    //  IK status path — this function is intentionally pure-math.
+    // -----------------------------------------------------------------------
+    float _captureOffsetMm() const;
 
     // Build the FootTarget for one leg this tick.
     //   Stance leg: y_mm=0, x_mm=0, h_sagittal_mm = stanceHeightMm.

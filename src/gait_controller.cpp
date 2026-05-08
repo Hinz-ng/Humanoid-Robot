@@ -190,6 +190,45 @@ float GaitController::_swingFrac(float localPhase) const {
 }
 
 // ---------------------------------------------------------------------------
+//  _captureOffsetMm — sagittal capture-point step-placement correction.
+//
+//  Returns the mm offset to add to the swing leg's stride. Zero when
+//  capture is disabled, IMU invalid, or estopped. Sign convention:
+//    vx_CoM > 0 (body advancing forward) → positive offset
+//                                          (foot lands further forward)
+//
+//  Capping logic (composite, conservative):
+//    raw      = vx_CoM × INV_OMEGA0 × captureGain
+//    by_field = clamp(raw, ±captureOffsetMaxMm)
+//    by_step  = clamp(by_field, ±stepLengthMm)
+//
+//  by_step is the second cap: the capture offset alone never exceeds the
+//  open-loop nominal stride. Without this, a noisy IMU spike could double
+//  the stride in one tick.
+//
+//  IK reach is checked separately at submit time via the existing
+//  IK status path — this function is intentionally pure-math.
+// ---------------------------------------------------------------------------
+float GaitController::_captureOffsetMm() const {
+    if (!_cfg.captureEnabled)        return 0.0f;
+    if (!_lastImuState.valid)        return 0.0f;
+    if (oe_is_estopped())            return 0.0f;
+    if (_cfg.stepLengthMm <= 0.01f)  return 0.0f;  // capture meaningless without nominal stride
+
+    const float raw = _lastImuState.vx_CoM_mm_s
+                    * GAIT_CAPTURE_INV_OMEGA0_S
+                    * _cfg.captureGain;
+
+    const float byField = constrain(raw,
+                                    -_cfg.captureOffsetMaxMm,
+                                    +_cfg.captureOffsetMaxMm);
+    const float byStep  = constrain(byField,
+                                    -_cfg.stepLengthMm,
+                                    +_cfg.stepLengthMm);
+    return byStep;
+}
+
+// ---------------------------------------------------------------------------
 //  _buildFootTarget — Stage 1: vertical lift only.
 //  Stance leg returns the neutral pose (x=0, y=0, h=stanceHeight).
 //  Swing  leg returns same x,y with h reduced by swingFrac × stepHeight.
@@ -215,8 +254,12 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
     // Net effect: body advances ≈ L per half-cycle. Foot stays planted while the
     // hip translates forward in body frame (foot retreats relative to hip).
     if (_cfg.stepLengthMm > 0.0f) {
+        // Stage 2.2 — capture-point: only the swing leg picks up the correction.
+        // Stance leg continues with the unmodified retreat trajectory; treating
+        // capture as foot placement, not body translation, matches the LIP model.
+        const float capture = isSwing ? _captureOffsetMm() : 0.0f;
         const float strideX = isSwing
-            ? (localPhase - 0.5f) * _cfg.stepLengthMm
+            ? (localPhase - 0.5f) * _cfg.stepLengthMm + capture
             : (0.5f - localPhase) * _cfg.stepLengthMm;
         t.x_mm += strideX;
     }
@@ -371,6 +414,7 @@ void GaitController::_advanceHalf() {
 void GaitController::update(float dt_s, const IMUState& imuState,
                             const BalanceCorrection* bc,
                             const BalanceState* balState) {
+    _lastImuState = imuState;   // available to _buildFootTarget this tick
     if (_mm == nullptr)   return;
     if (oe_is_estopped()) return;
 
@@ -626,6 +670,9 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // Stage 3 telemetry: estimated body translation this half-cycle.
     // _halfPhase × stepLengthMm. Resets to 0 in _advanceHalf().
     _state.cycleXDispl_mm = _halfPhase * _cfg.stepLengthMm;
+    // Stage 2.2 — broadcast the capture offset that was applied this tick.
+    // Reads as 0 when capture disabled or vx_CoM ≈ 0.
+    _state.captureOffsetMm = _captureOffsetMm();
 
     // Repurposed UI fields: hip pitch produced by IK on the swing leg.
     _state.liftL_deg = leftIsSwing  ? rL.hip_pitch_deg : 0.0f;

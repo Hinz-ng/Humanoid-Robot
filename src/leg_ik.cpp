@@ -229,8 +229,13 @@ LegIKResult LegIK::solve(const FootTarget& t) {
     // ── Flat-foot diagnostic ──────────────────────────────────────────────────
     // Ideal ankle = knee − hip (before any limit clamping).
     // After clamping, what was actually output may differ.
-    const float ideal_ankle = result.knee_pitch_deg - result.hip_pitch_deg;
-    result.flat_foot_error_deg = result.ankle_pitch_deg - ideal_ankle;
+    // Geometric-ideal ankle that produces a flat sole, matching the hardware
+// sign correction applied in solveSagittal(): ankle = -(knee - hip).
+// Without the negation, the reference disagrees with the output by
+// exactly 2*(knee - hip), making this diagnostic always non-zero even
+// when no joint was clamped.
+const float ideal_ankle = -(result.knee_pitch_deg - result.hip_pitch_deg);
+result.flat_foot_error_deg = result.ankle_pitch_deg - ideal_ankle;
     if (fabsf(result.flat_foot_error_deg) > 0.01f) result.any_joint_at_limit = true;
 
     // ── NaN guard (final safety net) ─────────────────────────────────────────

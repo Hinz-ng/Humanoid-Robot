@@ -189,11 +189,8 @@ void loop() {
             // WeightShift must run BEFORE balanceController so any state it
             // sets (ankle bias, roll setpoint) is visible to balance same tick.
             weightShift.update(dt);
-
-            // Scale the swing leg's ankle_roll bias proportional to lift
-            // fraction so the swing foot stays flat while airborne. Must run
-            // AFTER weightShift writes the bias and BEFORE balance reads it.
-            gaitController.applySwingLegBiasMask();
+            // Note: swing-leg bias masking is now internal to WeightShift,
+            // driven by GaitController::_publishSwingLegMaskToWS() each tick.
 
             // Stage 3: when task_space_output=true, balance runs FIRST so its
             // correction is available when gait builds FootTargets. Legacy order

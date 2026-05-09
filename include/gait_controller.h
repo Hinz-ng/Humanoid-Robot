@@ -231,20 +231,6 @@ public:
     // manually from WebComm test commands.
     void triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad);
 
-    // Scale the swing leg's ankle_roll_bias by (1 - liftFrac) so the swing
-    // foot returns to the IK-computed flat ankle while airborne. Stance leg's
-    // bias is preserved.
-    //
-    // Call EVERY TICK from main.cpp, AFTER weightShift.update() and BEFORE
-    // balanceController.update(). Uses the previous tick's substate to
-    // identify the swing leg — works in both legacy and task-space orderings.
-    //
-    // Why: WeightShift writes ankle_roll_bias_l/r each tick. BalanceController
-    // adds them to the SOURCE_BALANCE ankle_roll command, which beats the
-    // SOURCE_GAIT IK output on shared joints. Without this scaling, the
-    // swing foot stays tilted toward the lean side and catches on the ground.
-    void applySwingLegBiasMask();
-
     GaitConfig       getConfig() const          { return _cfg; }
     void             setConfig(const GaitConfig& cfg) { _cfg = cfg; }
     const GaitState& getState()  const          { return _state; }
@@ -297,6 +283,12 @@ private:
     void _enterRcvSub(RecoverySubState s);
     // imuState required by COMPLETE case to decide whether to chain a second step.
     void _runRecoveryStep(float dt_s, const IMUState& imuState);
+
+    // Publish current swing-leg state to WeightShift each tick so WS can
+    // scale the swing side's ankle_roll bias internally. The call site lives
+    // inside update() so the publication is always paired with state
+    // advancement.
+    void _publishSwingLegMaskToWS() const;
 
     // Trigger WeightShift direction matching the given half-cycle.
     void  _triggerShiftForHalf(uint8_t half);

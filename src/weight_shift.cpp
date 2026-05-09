@@ -31,6 +31,16 @@ void WeightShift::forceCenterImmediate() {
     _lastInjectedSetpointRad = 0.0f;
     _settledAtMs = 0;
     _smoothedForwardLean_mm  = 0.0f;
+    _swingMask     = SwingLeg::NONE;
+    _swingLiftFrac = 0.0f;
+}
+
+// ---------------------------------------------------------------------------
+//  setSwingLegMask  -  see header. Pure setter, no side effects.
+// ---------------------------------------------------------------------------
+void WeightShift::setSwingLegMask(SwingLeg swing, float liftFrac) {
+    _swingMask     = swing;
+    _swingLiftFrac = constrain(liftFrac, 0.0f, 1.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -129,11 +139,22 @@ void WeightShift::update(float dt_s) {
     //
     // The balance controller reads these from _cfg each tick and adds them
     // to the shaped correction AFTER the IIR, so correction is additive.
+    // Per-leg ankle roll bias. Sign convention preserved from the original
+    // task-2 design (see _applyRollCorrection):
+    //   bias_r = -rightProgress x amp
+    //   bias_l = +leftProgress  x amp
+    // SWING-LEG MASK: scale the swing side by (1 - liftFrac). At peak swing
+    // (liftFrac=1) the swing foot's bias is zero; the IK-computed flat ankle
+    // wins on SOURCE_BALANCE -> SOURCE_GAIT arbitration only because the
+    // additive bias term is now zero on that leg.
+    const float scaleL = (_swingMask == SwingLeg::LEFT)  ? (1.0f - _swingLiftFrac) : 1.0f;
+    const float scaleR = (_swingMask == SwingLeg::RIGHT) ? (1.0f - _swingLiftFrac) : 1.0f;
+
     const float biasRightDeg = (fabsf(_cfg.ankle_shift_deg) > 0.01f)
-                               ? (-_rightAnkleProgress * _cfg.ankle_shift_deg)
+                               ? (-_rightAnkleProgress * _cfg.ankle_shift_deg * scaleR)
                                : 0.0f;
     const float biasLeftDeg  = (fabsf(_cfg.ankle_shift_deg) > 0.01f)
-                               ? (+_leftAnkleProgress  * _cfg.ankle_shift_deg)
+                               ? (+_leftAnkleProgress  * _cfg.ankle_shift_deg * scaleL)
                                : 0.0f;
     _bal->setAnkleRollBias(biasLeftDeg, biasRightDeg);
 

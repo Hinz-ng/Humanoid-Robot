@@ -41,17 +41,28 @@ enum class ShiftDirection : int8_t {
     RIGHT = -1,   // wire-protocol name; physically shifts CoM LEFT
 };
 
+// Which leg is currently the swing leg, if any. Reported by GaitController via
+// setSwingLegMask(); WeightShift uses it to scale the swing-side ankle_roll
+// bias by (1 - liftFrac) so the airborne foot returns to the IK-computed flat
+// ankle. NONE = both legs grounded -> full bias on both sides.
+enum class SwingLeg : int8_t {
+    NONE  = 0,
+    LEFT  = 1,
+    RIGHT = 2,
+};
+
 // ---------------------------------------------------------------------------
 struct WeightShiftConfig {
     // Roll setpoint injected into BalanceConfig (rad, magnitude).
-    // Default 0 keeps manual shift buttons motionless until the operator
-    // explicitly dials in a lean target from the UI.
+    // 0.050 rad ~= 2.9 deg. Active immediately on first left/right trigger;
+    // suppressed when balance is in task_space_output mode.
     float setpoint_shift_rad = 0.050f;
 
     // Ankle roll amplitude (deg). Injected as bias into BalanceConfig, not via
     // SOURCE_GAIT. Set ankle_roll_ratio=0 in BalanceConfig to prevent the
-    // balance loop from fighting its own baseline.
-    float ankle_shift_deg = 15.0f;
+    // balance loop from fighting its own baseline. 15.5 deg is the post-tuning
+    // working default; override via WEIGHT_SHIFT_TUNE:ankle=...
+    float ankle_shift_deg = 15.50f;
     
     // TASK-2: Phase delay between swing and stance ankle ramps (ms).
     // Swing ankle starts immediately; stance starts after this delay.
@@ -141,6 +152,17 @@ public:
                         float& x_offset_mm,
                         float& y_offset_mm) const;
 
+    // Publish swing-leg state for next tick's bias masking. Sticky: last value
+    // persists if not called. Caller (GaitController) MUST republish each tick
+    // - call setSwingLegMask(SwingLeg::NONE, 0.0f) when grounded.
+    //
+    //   liftFrac: [0, 1]; 0 = grounded, 1 = peak swing. Clamped internally.
+    //
+    // The swing leg's bias is scaled by (1 - liftFrac); stance leg unchanged.
+    // Internal coupling only - does NOT change update()'s signature so existing
+    // call sites in main.cpp remain valid.
+    void setSwingLegMask(SwingLeg swing, float liftFrac);
+
 private:
     BalanceController* _bal = nullptr;
     MotionManager*     _mm  = nullptr;
@@ -161,6 +183,11 @@ private:
     // Stage 2: IIR-smoothed body forward offset in mm. Was _ankleTiltCmdSmoothed
     // in deg-space; the smoothing now lives at the FootTarget.x_mm boundary.
     float _smoothedForwardLean_mm = 0.0f;
+
+    // Swing-leg bias mask published by GaitController each tick. Defaults to
+    // NONE so a forgotten publish leaves bias unscaled (safe legacy behavior).
+    SwingLeg _swingMask     = SwingLeg::NONE;
+    float    _swingLiftFrac = 0.0f;
 };
 
 #endif // WEIGHT_SHIFT_H

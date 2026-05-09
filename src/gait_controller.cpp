@@ -312,6 +312,25 @@ LegIKResult GaitController::_submitFootTargetIK(bool isRight,
         return r;
     }
 
+    // Flat-foot guard: a clamped ankle pitch indicates the IK ran out of
+    // soft-limit headroom (typically when reach is too close to maxReach
+    // and the pose can't keep the sole flat). Treat |error| > 2 deg as a tuning
+    // red flag - log and skip submission so the previous tick's pose holds.
+    // Rationale: gait_development_integration.md section 6.5 - abort step on
+    // flat_foot_error > ~2 deg.
+    if (fabsf(r.flat_foot_error_deg) > 2.0f) {
+        static uint32_t _lastFFLogMs = 0;
+        const uint32_t now = millis();
+        if (now - _lastFFLogMs > 1000) {
+            _lastFFLogMs = now;
+            Serial.printf("[GaitCtrl] FLAT-FOOT GUARD  side=%s  err=%.2f deg  "
+                          "x=%.1f h=%.1f reach=%.1f%% - pose held.\n",
+                          isRight ? "R" : "L", r.flat_foot_error_deg,
+                          t.x_mm, t.h_sagittal_mm, r.sagittal_reach_pct);
+        }
+        return r;   // status fields populated; caller updates telemetry
+    }
+
     const uint8_t hipPitch   = isRight ? IDX_R_HIP_PITCH   : IDX_L_HIP_PITCH;
     const uint8_t kneePitch  = isRight ? IDX_R_KNEE_PITCH  : IDX_L_KNEE_PITCH;
     const uint8_t anklePitch = isRight ? IDX_R_ANKLE_PITCH : IDX_L_ANKLE_PITCH;
@@ -416,7 +435,13 @@ void GaitController::_advanceHalf() {
 void GaitController::update(float dt_s, const IMUState& imuState,
                             const BalanceCorrection* bc,
                             const BalanceState* balState) {
-    _lastImuState = imuState;   // available to _buildFootTarget this tick
+    _lastImuState = imuState;
+
+    // Publish swing-leg hint to WeightShift FIRST. Reflects last tick's
+    // substate; consumed on next tick's WS update (2.5 ms staleness).
+    // Placing this at the top guarantees it runs on every early-return path.
+    _publishSwingLegMaskToWS();
+
     if (_mm == nullptr)   return;
     if (oe_is_estopped()) return;
 
@@ -1073,50 +1098,53 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
 }
 
 // ---------------------------------------------------------------------------
-//  applySwingLegBiasMask  —  see header for rationale.
+//  _publishSwingLegMaskToWS  -  inform WeightShift which leg is airborne.
+//
+//  Called once at the start of update(). WeightShift consumes the published
+//  hint on its NEXT tick (1 tick / 2.5 ms staleness - same as the previous
+//  cross-module mask design). Always publishes - sticky semantics in WS would
+//  otherwise leave stale state on early-return paths.
 // ---------------------------------------------------------------------------
-void GaitController::applySwingLegBiasMask() {
-    if (_bal == nullptr)                         return;
-    if (oe_is_estopped())                        return;
-    if (_state.mode == GaitMode::IDLE)           return;
-    if (_state.mode == GaitMode::WSHIFT_ONLY)    return;  // no foot lift
+void GaitController::_publishSwingLegMaskToWS() const {
+    if (!_ws) return;
 
-    float scale       = 1.0f;
-    bool  leftIsSwing = false;
+    if (oe_is_estopped()) {
+        _ws->setSwingLegMask(SwingLeg::NONE, 0.0f);
+        return;
+    }
+
+    if (_state.mode == GaitMode::IDLE || _state.mode == GaitMode::WSHIFT_ONLY) {
+        _ws->setSwingLegMask(SwingLeg::NONE, 0.0f);
+        return;
+    }
 
     if (_state.mode == GaitMode::RECOVERY_STEP) {
-        // Recovery: hard-zero swing leg's bias once the foot leaves the ground.
-        // PRE_LIFT and SOFT_RETURN keep full bias (foot grounded).
+        // PRE_LIFT and SOFT_RETURN keep full bias (foot grounded). LIFTING /
+        // LANDING / DAMP_HOLD are airborne -> liftFrac = 1.
         const bool airborne = (_rcvSub == RecoverySubState::LIFTING)
                            || (_rcvSub == RecoverySubState::LANDING)
                            || (_rcvSub == RecoverySubState::DAMP_HOLD);
-        scale       = airborne ? 0.0f : 1.0f;
-        leftIsSwing = !_rcvSwingIsRight;
-    } else if (_subState == StepSubState::SWINGING) {
-        scale       = 1.0f - _swingFrac(_halfPhase);   // 1=grounded → 0=peak
-        leftIsSwing = (_currentHalf == 0);
-    } else if (_subState == StepSubState::STOPPING) {
+        const SwingLeg swing = _rcvSwingIsRight ? SwingLeg::RIGHT : SwingLeg::LEFT;
+        _ws->setSwingLegMask(swing, airborne ? 1.0f : 0.0f);
+        return;
+    }
+
+    if (_subState == StepSubState::SWINGING) {
+        const SwingLeg swing = (_currentHalf == 0) ? SwingLeg::LEFT : SwingLeg::RIGHT;
+        _ws->setSwingLegMask(swing, _swingFrac(_halfPhase));
+        return;
+    }
+
+    if (_subState == StepSubState::STOPPING) {
         const uint32_t elapsed  = millis() - _stopStartMs;
         const float    liftRamp = (elapsed >= GAIT_STOP_RAMP_MS)
                                   ? 0.0f
                                   : 1.0f - (float)elapsed / (float)GAIT_STOP_RAMP_MS;
-        const float    stopFrac = _stopSwingFrac * liftRamp;
-        scale       = 1.0f - stopFrac;
-        leftIsSwing = (_stopHalf == 0);
-    } else {
-        // WAIT_SHIFT / STABILIZING: foot grounded — leave bias intact.
+        const SwingLeg swing = (_stopHalf == 0) ? SwingLeg::LEFT : SwingLeg::RIGHT;
+        _ws->setSwingLegMask(swing, _stopSwingFrac * liftRamp);
         return;
     }
 
-    scale = constrain(scale, 0.0f, 1.0f);
-    if (scale >= 0.999f) return;   // negligible — avoid redundant setter call
-
-    const BalanceConfig& bcfg = _bal->getConfig();
-    if (leftIsSwing) {
-        _bal->setAnkleRollBias(bcfg.ankle_roll_bias_l_deg * scale,
-                                bcfg.ankle_roll_bias_r_deg);
-    } else {
-        _bal->setAnkleRollBias(bcfg.ankle_roll_bias_l_deg,
-                                bcfg.ankle_roll_bias_r_deg * scale);
-    }
+    // WAIT_SHIFT, STABILIZING: foot grounded - full bias both legs.
+    _ws->setSwingLegMask(SwingLeg::NONE, 0.0f);
 }

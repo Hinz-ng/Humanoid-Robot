@@ -228,7 +228,8 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         // Joint-space torso balance master enable (independent of ts).
         "tb=%d,"
         // Stage 0: catch-step recovery detection telemetry.
-        "rcv=%d,sat=%u,rdb=%u",
+        "rcv=%d,sat=%u,rdb=%u,"
+        "bias_l=%.2f,bias_r=%.2f",
         (int)cfg.pitch_enabled, (int)cfg.roll_enabled,
         state.effective_kp,
         state.effective_kp_roll,
@@ -253,7 +254,9 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         (int)cfg.torso_balance_enabled,
         (int)state.recovery_flag,
         (unsigned)state.saturation_count,
-        (unsigned)state.recovery_debounce
+        (unsigned)state.recovery_debounce,
+        cfg.ankle_roll_bias_l_deg,
+        cfg.ankle_roll_bias_r_deg
     );
     ws.textAll(buf);
 }

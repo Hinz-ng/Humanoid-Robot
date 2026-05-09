@@ -43,12 +43,13 @@
 #include <math.h>
 
 // ---------------------------------------------------------------------------
-void GaitController::init(MotionManager* mm, WeightShift* ws) {
+void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController* bal) {
     if (mm == nullptr) {
         Serial.println("[GaitCtrl] ERROR: MotionManager null — update() will no-op.");
     }
     _mm               = mm;
     _ws               = ws;
+    _bal              = bal;
     _state            = {};
     _currentHalf      = 0;
     _halfPhase        = 0.0f;
@@ -1068,5 +1069,54 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             }
             break;
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  applySwingLegBiasMask  —  see header for rationale.
+// ---------------------------------------------------------------------------
+void GaitController::applySwingLegBiasMask() {
+    if (_bal == nullptr)                         return;
+    if (oe_is_estopped())                        return;
+    if (_state.mode == GaitMode::IDLE)           return;
+    if (_state.mode == GaitMode::WSHIFT_ONLY)    return;  // no foot lift
+
+    float scale       = 1.0f;
+    bool  leftIsSwing = false;
+
+    if (_state.mode == GaitMode::RECOVERY_STEP) {
+        // Recovery: hard-zero swing leg's bias once the foot leaves the ground.
+        // PRE_LIFT and SOFT_RETURN keep full bias (foot grounded).
+        const bool airborne = (_rcvSub == RecoverySubState::LIFTING)
+                           || (_rcvSub == RecoverySubState::LANDING)
+                           || (_rcvSub == RecoverySubState::DAMP_HOLD);
+        scale       = airborne ? 0.0f : 1.0f;
+        leftIsSwing = !_rcvSwingIsRight;
+    } else if (_subState == StepSubState::SWINGING) {
+        scale       = 1.0f - _swingFrac(_halfPhase);   // 1=grounded → 0=peak
+        leftIsSwing = (_currentHalf == 0);
+    } else if (_subState == StepSubState::STOPPING) {
+        const uint32_t elapsed  = millis() - _stopStartMs;
+        const float    liftRamp = (elapsed >= GAIT_STOP_RAMP_MS)
+                                  ? 0.0f
+                                  : 1.0f - (float)elapsed / (float)GAIT_STOP_RAMP_MS;
+        const float    stopFrac = _stopSwingFrac * liftRamp;
+        scale       = 1.0f - stopFrac;
+        leftIsSwing = (_stopHalf == 0);
+    } else {
+        // WAIT_SHIFT / STABILIZING: foot grounded — leave bias intact.
+        return;
+    }
+
+    scale = constrain(scale, 0.0f, 1.0f);
+    if (scale >= 0.999f) return;   // negligible — avoid redundant setter call
+
+    const BalanceConfig& bcfg = _bal->getConfig();
+    if (leftIsSwing) {
+        _bal->setAnkleRollBias(bcfg.ankle_roll_bias_l_deg * scale,
+                                bcfg.ankle_roll_bias_r_deg);
+    } else {
+        _bal->setAnkleRollBias(bcfg.ankle_roll_bias_l_deg,
+                                bcfg.ankle_roll_bias_r_deg * scale);
     }
 }

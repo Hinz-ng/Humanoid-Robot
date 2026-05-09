@@ -27,6 +27,7 @@
 
 class WeightShift;   // forward declaration — full include in .cpp only
 struct BalanceState; // forward declaration — full include in gait_controller.cpp
+class BalanceController; // forward declaration
 
 // ---------------------------------------------------------------------------
 //  Step execution sub-state (within each half-cycle).
@@ -207,7 +208,7 @@ public:
 
     // Wire dependencies. Call in setup() AFTER weightShift.init().
     // ws may be nullptr — CoM shift disabled; foot lift still works.
-    void init(MotionManager* mm, WeightShift* ws = nullptr);
+    void init(MotionManager* mm, WeightShift* ws = nullptr, BalanceController* bal = nullptr);
 
     void start(GaitMode mode);  // start a mode; start(IDLE) is equivalent to stop()
     void stop();                 // return to IDLE; centers WeightShift
@@ -230,6 +231,20 @@ public:
     // manually from WebComm test commands.
     void triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad);
 
+    // Scale the swing leg's ankle_roll_bias by (1 - liftFrac) so the swing
+    // foot returns to the IK-computed flat ankle while airborne. Stance leg's
+    // bias is preserved.
+    //
+    // Call EVERY TICK from main.cpp, AFTER weightShift.update() and BEFORE
+    // balanceController.update(). Uses the previous tick's substate to
+    // identify the swing leg — works in both legacy and task-space orderings.
+    //
+    // Why: WeightShift writes ankle_roll_bias_l/r each tick. BalanceController
+    // adds them to the SOURCE_BALANCE ankle_roll command, which beats the
+    // SOURCE_GAIT IK output on shared joints. Without this scaling, the
+    // swing foot stays tilted toward the lean side and catches on the ground.
+    void applySwingLegBiasMask();
+
     GaitConfig       getConfig() const          { return _cfg; }
     void             setConfig(const GaitConfig& cfg) { _cfg = cfg; }
     const GaitState& getState()  const          { return _state; }
@@ -237,6 +252,7 @@ public:
 private:
     MotionManager* _mm = nullptr;
     WeightShift*   _ws = nullptr;
+    BalanceController* _bal = nullptr;
 
     GaitConfig   _cfg;
     GaitState    _state;

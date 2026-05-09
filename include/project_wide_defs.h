@@ -98,8 +98,8 @@ constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 // ============================================================
 // CAPTURE-POINT — Stage 2.2 (sagittal only)
 // ============================================================
-// LIP natural frequency at H_COM_MM = 250 mm:
-//   omega0 = sqrt(g / h) = sqrt(9.81 / 0.25) ≈ 6.26 rad/s
+// LIP natural frequency at H_COM_MM = 220 mm:
+//   omega0 = sqrt(g / h) = sqrt(9.81 / 0.22) ≈ 6.74 rad/s
 // Stored as 1/omega0 to avoid recomputing sqrt each tick.
 // Recompute if H_COM_MM changes:
 //   1.0f / sqrtf(9810.0f / H_COM_MM)   (using mm units consistently)

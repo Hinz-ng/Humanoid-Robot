@@ -141,7 +141,7 @@ void setup() {
     webComm.setMotionManager(&motionManager);
     weightShift.init(&balanceController, &motionManager);
     webComm.setWeightShift(&weightShift);
-    gaitController.init(&motionManager, &weightShift);
+    gaitController.init(&motionManager, &weightShift, &balanceController);
     webComm.setGaitController(&gaitController);
     webComm.init();
     Serial.println("System Ready.");
@@ -189,6 +189,11 @@ void loop() {
             // WeightShift must run BEFORE balanceController so any state it
             // sets (ankle bias, roll setpoint) is visible to balance same tick.
             weightShift.update(dt);
+
+            // Scale the swing leg's ankle_roll bias proportional to lift
+            // fraction so the swing foot stays flat while airborne. Must run
+            // AFTER weightShift writes the bias and BEFORE balance reads it.
+            gaitController.applySwingLegBiasMask();
 
             // Stage 3: when task_space_output=true, balance runs FIRST so its
             // correction is available when gait builds FootTargets. Legacy order

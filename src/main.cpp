@@ -11,6 +11,14 @@
 #include "gait_controller.h"
 #include <math.h>
 
+// ── Phase F0: foot IMU driver (read-only bench-up) ────────────────────────
+#define ENABLE_FOOT_IMU_F0   1   // 1=enabled, 0=disabled
+
+#if ENABLE_FOOT_IMU_F0
+#include <SPI.h>
+#include "lsm6dsv_driver.h"
+#endif
+
 // =============================================================================
 //  GLOBAL OBJECTS
 //
@@ -26,6 +34,13 @@ StateEstimator    stateEstimator;
 BalanceController balanceController(&servoController);
 MotionManager     motionManager;   // joint authority layer — wired in setup()
 WeightShift       weightShift;     // gait: CoM lateral shift — wired in setup()
+#if ENABLE_FOOT_IMU_F0
+// FSPI peripheral (= SPI2 on ESP32-S3). Dedicated to foot IMUs to avoid any
+// interaction with the existing I2C bus shared by PCA9685 + BMI160.
+SPIClass        footSpiBus(FSPI);
+LSM6DSVDriver   leftFootIMU (10, &footSpiBus, 1000000);   // CS GPIO 10
+LSM6DSVDriver   rightFootIMU(14, &footSpiBus, 1000000);   // CS GPIO 14
+#endif
 GaitController    gaitController;   // open-loop walking gait
 
 // =============================================================================
@@ -144,6 +159,16 @@ void setup() {
     gaitController.init(&motionManager, &weightShift, &balanceController);
     webComm.setGaitController(&gaitController);
     webComm.init();
+
+#if ENABLE_FOOT_IMU_F0
+    // SPI bus: FSPI peripheral. Pin order: SCK, MISO, MOSI, SS (-1 = manual CS).
+    footSpiBus.begin(/*SCK=*/12, /*MISO=*/13, /*MOSI=*/11, /*SS=*/-1);
+    Serial.println("[FootIMU/F0] SPI bus started on SCK=12 MISO=13 MOSI=11");
+
+    if (!leftFootIMU.begin("FootIMU/L"))  Serial.println("[FootIMU/F0] LEFT  init FAILED");
+    if (!rightFootIMU.begin("FootIMU/R")) Serial.println("[FootIMU/F0] RIGHT init FAILED");
+#endif
+
     Serial.println("System Ready.");
 }
 
@@ -236,4 +261,24 @@ void loop() {
             }
         }
     }
+
+#if ENABLE_FOOT_IMU_F0
+    // F0: bench-only telemetry. Read both IMUs at 5 Hz, print raw counts.
+    // Lives at the end of loop() so it cannot interfere with the 400 Hz
+    // estimator gate above. Reads are NOT consumed by any controller in F0.
+    {
+        static uint32_t _lastFootImuPrintMs = 0;
+        if (millis() - _lastFootImuPrintMs >= 200) {
+            _lastFootImuPrintMs = millis();
+            const RawIMUData lf = leftFootIMU.read();
+            const RawIMUData rf = rightFootIMU.read();
+            Serial.printf("[FootIMU] L: ax=%6d ay=%6d az=%6d gx=%6d gy=%6d gz=%6d %s | "
+                                    "R: ax=%6d ay=%6d az=%6d gx=%6d gy=%6d gz=%6d %s\n",
+                          lf.accel_x, lf.accel_y, lf.accel_z, lf.gyro_x, lf.gyro_y, lf.gyro_z,
+                          lf.valid ? "OK" : "BAD",
+                          rf.accel_x, rf.accel_y, rf.accel_z, rf.gyro_x, rf.gyro_y, rf.gyro_z,
+                          rf.valid ? "OK" : "BAD");
+        }
+    }
+#endif
 }

@@ -180,4 +180,42 @@ constexpr uint32_t RECOVERY_LOCKOUT_MS      = 800;
 // Default 0.07 rad ≈ 4°. Tune after T2.5 if second steps are spurious.
 constexpr float RECOVERY_CHAIN_TILT_THRESHOLD_RAD = 0.12f;
 
+// ============================================================
+// FOOT IMU — Phase F1 (on-robot passive read)
+// ============================================================
+// Sensor scales for LSM6DSV (configured in lsm6dsv_driver.cpp at ±2g, ±2000 dps).
+// Both differ from the BMI160 torso unit and MUST be set per StateEstimator
+// instance via FilterConfig — there is no global default.
+//
+//   Accel ±2g     : 0.061 mg/LSB → 16384 LSB/g  (numerically same as BMI160)
+//   Gyro  ±2000   : 70 mdps/LSB  → 14.286 LSB/(deg/s)  (BMI160 is 16.4)
+constexpr float FOOT_IMU_ACCEL_SCALE_LSB_PER_G  = 16384.0f;
+constexpr float FOOT_IMU_GYRO_SCALE_LSB_PER_DPS = 14.286f;
+
+// Foot IMU sees larger short-duration accel transients than torso (footstrike,
+// ankle servo vibration). A torso-tight ±0.20g sanity band would zero out the
+// accel correction during normal swing motion. Start at ±0.40g; F1 telemetry
+// will show whether this needs tightening or further loosening.
+constexpr float FOOT_IMU_ACCEL_SANITY_MARGIN = 0.40f;
+
+// Complementary filter alpha. Higher = trust gyro more, accel less (slower
+// drift correction, more vibration immunity). Foot frame is rigid to the
+// chip, so accel reference is in principle as trustworthy as torso — but
+// foot accel is noisier. 0.985 splits the difference; tune from telemetry.
+constexpr float FOOT_IMU_COMP_FILTER_ALPHA = 0.985f;
+
+// Same accel IIR beta as torso default. Foot has more vibration so this is
+// a candidate for tightening (toward 0.85+) after F1 telemetry shows the
+// noise envelope. Keeping torso's value initially eliminates one variable.
+constexpr float FOOT_IMU_ACCEL_LPF_BETA = 0.70f;
+
+// Compile-time enable — leave enabled for F1 bring-up. After F2 ships, this
+// macro can be retired (foot IMUs become structural). Set to 0 to revert to
+// pre-F1 behavior in one line if you need to bisect a regression.
+#define FOOT_IMU_ENABLED  1
+
+// Phase F0 raw-count print loop — disabled in F1 because telemetry replaces it.
+// Kept as a separate flag in case bench-style debugging is needed later.
+#define FOOT_IMU_BENCH_PRINT  0
+
 #endif // PROJECT_WIDE_DEFS_H

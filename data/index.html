@@ -473,6 +473,78 @@
         </div>
         <div class="imu-status" id="imu-status">Waiting for data...</div>
     </div>
+    <!-- Foot IMU Panel (Phase F1) -->
+    <div class="imu-panel" id="footImuPanel">
+        <h3>&#9650; Foot IMUs &mdash; LSM6DSV (passive — Phase F1)</h3>
+
+        <div class="flex-row-wrap-gap">
+            <span class="text-muted-gray" id="footImuStatusL">L: waiting...</span>
+            <span class="text-muted-gray" id="footImuStatusR">R: waiting...</span>
+        </div>
+
+        <!-- LEFT FOOT: raw + estimate side-by-side -->
+        <div class="imu-group-label top-gap">Left foot</div>
+        <div class="imu-grid top-gap-sm">
+            <div class="imu-group">
+                <div class="imu-group-label">Accel (LSB)</div>
+                <div class="imu-row"><span class="imu-axis">X</span><span class="imu-value" id="lf-ax">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Y</span><span class="imu-value" id="lf-ay">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Z</span><span class="imu-value" id="lf-az">—</span></div>
+            </div>
+            <div class="imu-group">
+                <div class="imu-group-label">Gyro (LSB)</div>
+                <div class="imu-row"><span class="imu-axis">X</span><span class="imu-value" id="lf-gx">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Y</span><span class="imu-value" id="lf-gy">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Z</span><span class="imu-value" id="lf-gz">—</span></div>
+            </div>
+        </div>
+        <div class="imu-grid top-gap-sm">
+            <div class="imu-group">
+                <div class="imu-group-label">Angle (deg)</div>
+                <div class="imu-row"><span class="imu-axis">P</span><span class="imu-value" id="lf-est-pitch">—</span></div>
+                <div class="imu-row"><span class="imu-axis">R</span><span class="imu-value" id="lf-est-roll">—</span></div>
+            </div>
+            <div class="imu-group">
+                <div class="imu-group-label">Rate (rad/s)</div>
+                <div class="imu-row"><span class="imu-axis">P</span><span class="imu-value" id="lf-est-pr">—</span></div>
+                <div class="imu-row"><span class="imu-axis">R</span><span class="imu-value" id="lf-est-rr">—</span></div>
+            </div>
+        </div>
+
+        <!-- RIGHT FOOT -->
+        <div class="imu-group-label top-gap">Right foot</div>
+        <div class="imu-grid top-gap-sm">
+            <div class="imu-group">
+                <div class="imu-group-label">Accel (LSB)</div>
+                <div class="imu-row"><span class="imu-axis">X</span><span class="imu-value" id="rf-ax">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Y</span><span class="imu-value" id="rf-ay">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Z</span><span class="imu-value" id="rf-az">—</span></div>
+            </div>
+            <div class="imu-group">
+                <div class="imu-group-label">Gyro (LSB)</div>
+                <div class="imu-row"><span class="imu-axis">X</span><span class="imu-value" id="rf-gx">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Y</span><span class="imu-value" id="rf-gy">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Z</span><span class="imu-value" id="rf-gz">—</span></div>
+            </div>
+        </div>
+        <div class="imu-grid top-gap-sm">
+            <div class="imu-group">
+                <div class="imu-group-label">Angle (deg)</div>
+                <div class="imu-row"><span class="imu-axis">P</span><span class="imu-value" id="rf-est-pitch">—</span></div>
+                <div class="imu-row"><span class="imu-axis">R</span><span class="imu-value" id="rf-est-roll">—</span></div>
+            </div>
+            <div class="imu-group">
+                <div class="imu-group-label">Rate (rad/s)</div>
+                <div class="imu-row"><span class="imu-axis">P</span><span class="imu-value" id="rf-est-pr">—</span></div>
+                <div class="imu-row"><span class="imu-axis">R</span><span class="imu-value" id="rf-est-rr">—</span></div>
+            </div>
+        </div>
+
+        <!-- Loop budget diagnostic — surfaces if F1 is starving the 400 Hz tick. -->
+        <div class="imu-status" id="footImuLoopBudget">
+            Loop budget (last 5s peak): &mdash;
+        </div>
+    </div>
     <!-- ── Balance Controller Panel ──────────────────────────────────────── -->
 <div class="bal-panel">
 
@@ -1709,6 +1781,71 @@ function initWebSocket() {
                 isNaN(vx) ? "—" : vx.toFixed(0) + " mm/s";
             document.getElementById("est-vyCoM").textContent =
                 isNaN(vy) ? "—" : vy.toFixed(0) + " mm/s";
+        }
+        else if (msg.startsWith("FOOT_IMU:")) {
+            // Format: "FOOT_IMU:l_ax=...,...;r_ax=...,..."
+            const halves = msg.substring(9).split(";");
+            if (halves.length === 2) {
+                const parsePart = (s) => {
+                    const v = {};
+                    s.split(",").forEach(p => {
+                        const [k, val] = p.split("=");
+                        v[k] = val;
+                    });
+                    return v;
+                };
+                const L = parsePart(halves[0]);
+                const R = parsePart(halves[1]);
+                const setText = (id, val) => {
+                    const el = document.getElementById(id);
+                    if (el) el.textContent = val ?? "—";
+                };
+                setText("lf-ax", L.l_ax); setText("lf-ay", L.l_ay); setText("lf-az", L.l_az);
+                setText("lf-gx", L.l_gx); setText("lf-gy", L.l_gy); setText("lf-gz", L.l_gz);
+                setText("rf-ax", R.r_ax); setText("rf-ay", R.r_ay); setText("rf-az", R.r_az);
+                setText("rf-gx", R.r_gx); setText("rf-gy", R.r_gy); setText("rf-gz", R.r_gz);
+                const lEl = document.getElementById("footImuStatusL");
+                const rEl = document.getElementById("footImuStatusR");
+                if (lEl) lEl.textContent = "L: " + (L.l_v === "1" ? "✓ valid" : "✗ INVALID");
+                if (rEl) rEl.textContent = "R: " + (R.r_v === "1" ? "✓ valid" : "✗ INVALID");
+                if (lEl) lEl.className = (L.l_v === "1") ? "text-muted-gray" : "calib-warning visible";
+                if (rEl) rEl.className = (R.r_v === "1") ? "text-muted-gray" : "calib-warning visible";
+            }
+        }
+        else if (msg.startsWith("FOOT_ESTIMATE:")) {
+            const halves = msg.substring(14).split(";");
+            if (halves.length === 2) {
+                const parsePart = (s) => {
+                    const v = {};
+                    s.split(",").forEach(p => {
+                        const [k, val] = p.split("=");
+                        v[k] = val;
+                    });
+                    return v;
+                };
+                const L = parsePart(halves[0]);
+                const R = parsePart(halves[1]);
+                const toDeg = r => (parseFloat(r) * 180 / Math.PI).toFixed(2) + "°";
+                const set4  = v => parseFloat(v).toFixed(4);
+                document.getElementById("lf-est-pitch").textContent = toDeg(L.l_pitch);
+                document.getElementById("lf-est-roll").textContent  = toDeg(L.l_roll);
+                document.getElementById("lf-est-pr").textContent    = set4(L.l_pr);
+                document.getElementById("lf-est-rr").textContent    = set4(L.l_rr);
+                document.getElementById("rf-est-pitch").textContent = toDeg(R.r_pitch);
+                document.getElementById("rf-est-roll").textContent  = toDeg(R.r_roll);
+                document.getElementById("rf-est-pr").textContent    = set4(R.r_pr);
+                document.getElementById("rf-est-rr").textContent    = set4(R.r_rr);
+            }
+        }
+        else if (msg.startsWith("FOOT_BUDGET:")) {
+            // Format: "FOOT_BUDGET:peak_us=...,avg_us=...,window_s=..."
+            const v = {};
+            msg.substring(12).split(",").forEach(p => {
+                const [k, val] = p.split("=");
+                v[k] = val;
+            });
+            const el = document.getElementById("footImuLoopBudget");
+            if (el) el.textContent = `Foot IMU section: peak ${v.peak_us}µs, avg ${v.avg_us}µs (5s window)`;
         }
         // AFTER:
         else if (msg.startsWith("CALIB:")) {

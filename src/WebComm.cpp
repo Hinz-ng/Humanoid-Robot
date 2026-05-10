@@ -158,6 +158,58 @@ void WebComm::broadcastEstimate(IMUState state) {
 }
 
 // =============================================================================
+//  FOOT IMU BROADCAST  (Phase F1)
+//  Protocol: "FOOT_IMU:l_ax=...,l_ay=...,...,l_gz=...;r_ax=...,...,r_gz=..."
+//  Rate-limited to 20 Hz.
+// =============================================================================
+void WebComm::broadcastFootIMU(const RawIMUData& left, const RawIMUData& right) {
+    if (ws.count() == 0) return;
+
+    const uint32_t INTERVAL_US = 50000;  // 20 Hz
+    uint32_t now = micros();
+    if ((now - _lastFootIMUBroadcast_us) < INTERVAL_US) return;
+    _lastFootIMUBroadcast_us = now;
+
+    // Single packet for both feet so the UI sees them together with one parse.
+    // Invalid samples broadcast 0 — UI should display the validity flag instead
+    // of trying to interpret 0 as "near vertical".
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+        "FOOT_IMU:l_ax=%d,l_ay=%d,l_az=%d,l_gx=%d,l_gy=%d,l_gz=%d,l_v=%d;"
+        "r_ax=%d,r_ay=%d,r_az=%d,r_gx=%d,r_gy=%d,r_gz=%d,r_v=%d",
+        left.accel_x, left.accel_y, left.accel_z,
+        left.gyro_x,  left.gyro_y,  left.gyro_z,  (int)left.valid,
+        right.accel_x, right.accel_y, right.accel_z,
+        right.gyro_x,  right.gyro_y,  right.gyro_z, (int)right.valid
+    );
+    ws.textAll(buf);
+}
+
+// =============================================================================
+//  FOOT ESTIMATE BROADCAST  (Phase F1)
+//  Protocol: "FOOT_ESTIMATE:l_pitch=X,l_roll=X,l_pr=X,l_rr=X,l_v=N;
+//             r_pitch=X,r_roll=X,r_pr=X,r_rr=X,r_v=N"
+//  Rate-limited to 20 Hz. Pitch/roll in radians; rates in rad/s.
+// =============================================================================
+void WebComm::broadcastFootEstimate(const IMUState& left, const IMUState& right) {
+    if (ws.count() == 0) return;
+
+    const uint32_t INTERVAL_US = 50000;  // 20 Hz
+    uint32_t now = micros();
+    if ((now - _lastFootEstimateBroadcast_us) < INTERVAL_US) return;
+    _lastFootEstimateBroadcast_us = now;
+
+    char buf[200];
+    snprintf(buf, sizeof(buf),
+        "FOOT_ESTIMATE:l_pitch=%.4f,l_roll=%.4f,l_pr=%.4f,l_rr=%.4f,l_v=%d;"
+        "r_pitch=%.4f,r_roll=%.4f,r_pr=%.4f,r_rr=%.4f,r_v=%d",
+        left.pitch,  left.roll,  left.pitchRate,  left.rollRate,  (int)left.valid,
+        right.pitch, right.roll, right.pitchRate, right.rollRate, (int)right.valid
+    );
+    ws.textAll(buf);
+}
+
+// =============================================================================
 //  CALIBRATION STATUS BROADCAST
 // =============================================================================
 

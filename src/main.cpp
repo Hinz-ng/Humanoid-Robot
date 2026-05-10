@@ -11,12 +11,29 @@
 #include "gait_controller.h"
 #include <math.h>
 
-// ── Phase F0: foot IMU driver (read-only bench-up) ────────────────────────
-#define ENABLE_FOOT_IMU_F0   1   // 1=enabled, 0=disabled
-
-#if ENABLE_FOOT_IMU_F0
+// ── Phase F1: foot IMUs (read + filter + telemetry, no closed-loop) ───────
+#if FOOT_IMU_ENABLED
 #include <SPI.h>
 #include "lsm6dsv_driver.h"
+
+// Build a FilterConfig tuned for the foot LSM6DSV. Mirrors torso defaults
+// where defensible; deviates where the chip differs from BMI160 or where
+// the foot's mechanical environment justifies it. See project_wide_defs.h
+// for rationale on each value.
+static FilterConfig _makeFootFilterConfig() {
+    FilterConfig c;
+    c.alpha               = FOOT_IMU_COMP_FILTER_ALPHA;
+    c.accel_scale         = FOOT_IMU_ACCEL_SCALE_LSB_PER_G;
+    c.gyro_scale          = FOOT_IMU_GYRO_SCALE_LSB_PER_DPS;
+    c.accel_lpf_beta      = FOOT_IMU_ACCEL_LPF_BETA;
+    c.accel_sanity_margin = FOOT_IMU_ACCEL_SANITY_MARGIN;
+    // Axis signs default +1 (same as torso). If F1 verification shows pitch
+    // or roll inverted on a foot, flip the matching sign here AND put a
+    // dated comment in this function explaining which foot and why.
+    c.pitch_gyro_sign     = 1.0f;
+    c.roll_gyro_sign      = 1.0f;
+    return c;
+}
 #endif
 
 // =============================================================================
@@ -34,12 +51,19 @@ StateEstimator    stateEstimator;
 BalanceController balanceController(&servoController);
 MotionManager     motionManager;   // joint authority layer — wired in setup()
 WeightShift       weightShift;     // gait: CoM lateral shift — wired in setup()
-#if ENABLE_FOOT_IMU_F0
-// FSPI peripheral (= SPI2 on ESP32-S3). Dedicated to foot IMUs to avoid any
-// interaction with the existing I2C bus shared by PCA9685 + BMI160.
+#if FOOT_IMU_ENABLED
+// FSPI peripheral (= SPI2 on ESP32-S3). Dedicated to foot IMUs to avoid
+// any interaction with the I2C bus shared by PCA9685 + BMI160.
 SPIClass        footSpiBus(FSPI);
 LSM6DSVDriver   leftFootIMU (10, &footSpiBus, 1000000);   // CS GPIO 10
 LSM6DSVDriver   rightFootIMU(14, &footSpiBus, 1000000);   // CS GPIO 14
+
+// One estimator per foot. FilterConfig differs per-instance — must be passed
+// at construction time. Each estimator runs its OWN calibration cycle
+// (CALIB_WAITING → CALIB_COLLECTING → CALIB_DONE), independently from the
+// torso's calibration. All three calibrations run in parallel during boot.
+StateEstimator leftFootEstimator (_makeFootFilterConfig());
+StateEstimator rightFootEstimator(_makeFootFilterConfig());
 #endif
 GaitController    gaitController;   // open-loop walking gait
 
@@ -160,13 +184,20 @@ void setup() {
     webComm.setGaitController(&gaitController);
     webComm.init();
 
-#if ENABLE_FOOT_IMU_F0
-    // SPI bus: FSPI peripheral. Pin order: SCK, MISO, MOSI, SS (-1 = manual CS).
+#if FOOT_IMU_ENABLED
+    // SPI bus shared by both foot IMUs. Begin once before either driver runs.
+    // Pin order: SCK, MISO, MOSI, SS (-1 = manual CS via driver).
     footSpiBus.begin(/*SCK=*/12, /*MISO=*/13, /*MOSI=*/11, /*SS=*/-1);
-    Serial.println("[FootIMU/F0] SPI bus started on SCK=12 MISO=13 MOSI=11");
+    Serial.println("[FootIMU/F1] SPI bus started on SCK=12 MISO=13 MOSI=11");
 
-    if (!leftFootIMU.begin("FootIMU/L"))  Serial.println("[FootIMU/F0] LEFT  init FAILED");
-    if (!rightFootIMU.begin("FootIMU/R")) Serial.println("[FootIMU/F0] RIGHT init FAILED");
+    const bool lOk = leftFootIMU.begin("FootIMU/L");
+    const bool rOk = rightFootIMU.begin("FootIMU/R");
+    if (!lOk) Serial.println("[FootIMU/F1] LEFT  init FAILED — estimator will hold invalid");
+    if (!rOk) Serial.println("[FootIMU/F1] RIGHT init FAILED — estimator will hold invalid");
+
+    leftFootEstimator.reset();
+    rightFootEstimator.reset();
+    Serial.println("[FootIMU/F1] Foot estimators armed; running boot calibration in parallel.");
 #endif
 
     Serial.println("System Ready.");
@@ -211,6 +242,41 @@ void loop() {
             RawIMUData raw   = IMU_update();
             IMUState   state = stateEstimator.update(raw, dt);
 
+#if FOOT_IMU_ENABLED
+            // Foot IMU read + filter. Per the F1 contract, NO consumer in
+            // the control stack reads these values yet. They flow to the
+            // UI only. F2 will add foot_contact predicates that consume
+            // these states; F3 will wire them into liftGateOK.
+            const uint32_t _footStartUs = micros();
+            const RawIMUData lf_raw   = leftFootIMU.read();
+            const IMUState   lf_state = leftFootEstimator.update(lf_raw, dt);
+            const RawIMUData rf_raw   = rightFootIMU.read();
+            const IMUState   rf_state = rightFootEstimator.update(rf_raw, dt);
+            const uint32_t _footDurUs = micros() - _footStartUs;
+
+            // Loop budget — accumulates inside the 400 Hz gate so timing is
+            // sample-aligned with the actual reads.
+            static uint32_t _budgetMaxUs    = 0;
+            static uint64_t _budgetSumUs    = 0;
+            static uint32_t _budgetCount    = 0;
+            static uint32_t _budgetReportMs = 0;
+            if (_footDurUs > _budgetMaxUs) _budgetMaxUs = _footDurUs;
+            _budgetSumUs += _footDurUs;
+            _budgetCount++;
+            if (millis() - _budgetReportMs >= 5000) {
+                _budgetReportMs = millis();
+                const uint32_t avg = (_budgetCount > 0)
+                    ? (uint32_t)(_budgetSumUs / _budgetCount) : 0;
+                Serial.printf("[FootIMU/Budget] peak=%u us  avg=%u us  "
+                              "(window=5s, n=%u)\n",
+                              (unsigned)_budgetMaxUs, (unsigned)avg,
+                              (unsigned)_budgetCount);
+                _budgetMaxUs = 0;
+                _budgetSumUs = 0;
+                _budgetCount = 0;
+            }
+#endif
+
             // WeightShift must run BEFORE balanceController so any state it
             // sets (ankle bias, roll setpoint) is visible to balance same tick.
             weightShift.update(dt);
@@ -246,6 +312,10 @@ void loop() {
 
             webComm.broadcastIMU(raw);
             webComm.broadcastEstimate(state);
+#if FOOT_IMU_ENABLED
+            webComm.broadcastFootIMU(lf_raw, rf_raw);
+            webComm.broadcastFootEstimate(lf_state, rf_state);
+#endif
             webComm.broadcastBalanceState(balState);
             webComm.broadcastGaitState();
 
@@ -262,22 +332,21 @@ void loop() {
         }
     }
 
-#if ENABLE_FOOT_IMU_F0
-    // F0: bench-only telemetry. Read both IMUs at 5 Hz, print raw counts.
-    // Lives at the end of loop() so it cannot interfere with the 400 Hz
-    // estimator gate above. Reads are NOT consumed by any controller in F0.
+#if FOOT_IMU_ENABLED && FOOT_IMU_BENCH_PRINT
+    // Bench-mode raw count print. Disabled by default in F1 (telemetry
+    // replaces it). Re-enable temporarily by setting FOOT_IMU_BENCH_PRINT=1
+    // in project_wide_defs.h if you need to debug a specific axis without
+    // a browser open.
     {
         static uint32_t _lastFootImuPrintMs = 0;
         if (millis() - _lastFootImuPrintMs >= 200) {
             _lastFootImuPrintMs = millis();
             const RawIMUData lf = leftFootIMU.read();
             const RawIMUData rf = rightFootIMU.read();
-            Serial.printf("[FootIMU] L: ax=%6d ay=%6d az=%6d gx=%6d gy=%6d gz=%6d %s | "
-                                    "R: ax=%6d ay=%6d az=%6d gx=%6d gy=%6d gz=%6d %s\n",
-                          lf.accel_x, lf.accel_y, lf.accel_z, lf.gyro_x, lf.gyro_y, lf.gyro_z,
-                          lf.valid ? "OK" : "BAD",
-                          rf.accel_x, rf.accel_y, rf.accel_z, rf.gyro_x, rf.gyro_y, rf.gyro_z,
-                          rf.valid ? "OK" : "BAD");
+            Serial.printf("[FootIMU/Bench] L ax=%6d az=%6d gx=%6d %s | "
+                          "R ax=%6d az=%6d gx=%6d %s\n",
+                          lf.accel_x, lf.accel_z, lf.gyro_x, lf.valid ? "OK" : "BAD",
+                          rf.accel_x, rf.accel_z, rf.gyro_x, rf.valid ? "OK" : "BAD");
         }
     }
 #endif

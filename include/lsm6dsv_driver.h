@@ -33,11 +33,9 @@
 //  Source: ST AN5763 (LSM6DSV16X application note), §6 register description.
 // ---------------------------------------------------------------------------
 static constexpr uint8_t LSM6DSV_REG_WHO_AM_I = 0x0F;
-static constexpr uint8_t LSM6DSV_REG_CTRL1    = 0x10;  // accel ODR + power mode
-static constexpr uint8_t LSM6DSV_REG_CTRL2    = 0x11;  // gyro ODR + power mode
+static constexpr uint8_t LSM6DSV_REG_CTRL1    = 0x10;  // accel ODR + FS + power mode
+static constexpr uint8_t LSM6DSV_REG_CTRL2    = 0x11;  // gyro ODR + FS + power mode
 static constexpr uint8_t LSM6DSV_REG_CTRL3    = 0x12;  // BDU, IF_INC, sw_reset
-static constexpr uint8_t LSM6DSV_REG_CTRL6    = 0x15;  // gyro full-scale
-static constexpr uint8_t LSM6DSV_REG_CTRL8    = 0x17;  // accel full-scale
 static constexpr uint8_t LSM6DSV_REG_OUTX_L_G = 0x22;  // gyro X low byte (start of 6-byte burst)
 static constexpr uint8_t LSM6DSV_REG_OUTX_L_A = 0x28;  // accel X low byte (start of 6-byte burst)
 
@@ -49,17 +47,11 @@ static constexpr uint8_t LSM6DSV_REG_OUTX_L_A = 0x28;  // accel X low byte (star
 static constexpr uint8_t LSM6DSV_WHOAMI_DSV   = 0x70;  // LSM6DSV / LSM6DSV16X
 static constexpr uint8_t LSM6DSV_WHOAMI_DSVBX = 0x71;  // LSM6DSV16BX
 
-// CTRL1 / CTRL2 ODR field — bits[7:4]. We use 416 Hz to comfortably exceed
-// the main control loop's 400 Hz tick, so each tick reads fresh data.
-// Lower bits select power mode; 0x0 = high-performance (default).
-static constexpr uint8_t LSM6DSV_ODR_416HZ_HP = 0x60;
-
-// CTRL6 (gyro FS) — full-scale 2000 dps = 0x4 in bits[3:0].
-//   Sensitivity: 70 mdps/LSB → 14.286 LSB / (deg/s)
-// CTRL8 (accel FS) — full-scale ±2g = 0x0 in bits[1:0].
-//   Sensitivity: 0.061 mg/LSB → 16384 LSB/g (matches BMI160 numerically)
-static constexpr uint8_t LSM6DSV_GYRO_FS_2000DPS = 0x04;
-static constexpr uint8_t LSM6DSV_ACCEL_FS_2G     = 0x00;
+// CTRL1 / CTRL2 — combined ODR + FS in a single write.
+// Bits[7:4] = ODR, bits[3:2] = FS, bits[1:0] = power mode (00 = HP).
+static constexpr uint8_t LSM6DSV_ODR_416HZ      = 0x60;  // bits[7:4] = 0110
+static constexpr uint8_t LSM6DSV_ACCEL_FS_2G    = 0x00;  // bits[3:2] = 00
+static constexpr uint8_t LSM6DSV_GYRO_FS_2000   = 0x0C;  // bits[3:2] = 11
 
 // SPI read/write address bit. LSM6DSV uses MSB=1 for read, 0 for write.
 static constexpr uint8_t LSM6DSV_SPI_READ_BIT = 0x80;

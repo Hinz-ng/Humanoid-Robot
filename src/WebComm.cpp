@@ -118,6 +118,9 @@ void WebComm::broadcastJointInfo() {
 
 void WebComm::broadcastIMU(RawIMUData data) {
     if (!data.valid || ws.count() == 0) return;
+    for (auto& c : ws.getClients()) {
+        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
+    }
 
     const uint32_t IMU_BROADCAST_INTERVAL_US = 50000; // 20 Hz
     uint32_t now = micros();
@@ -141,6 +144,9 @@ void WebComm::broadcastIMU(RawIMUData data) {
 
 void WebComm::broadcastEstimate(IMUState state) {
     if (!state.valid || ws.count() == 0) return;
+    for (auto& c : ws.getClients()) {
+        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
+    }
 
     const uint32_t INTERVAL_US = 50000; // 20 Hz
     uint32_t now = micros();
@@ -164,8 +170,11 @@ void WebComm::broadcastEstimate(IMUState state) {
 // =============================================================================
 void WebComm::broadcastFootIMU(const RawIMUData& left, const RawIMUData& right) {
     if (ws.count() == 0) return;
+    for (auto& c : ws.getClients()) {
+        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
+    }
 
-    const uint32_t INTERVAL_US = 50000;  // 20 Hz
+    const uint32_t INTERVAL_US = 100000;  // 10 Hz
     uint32_t now = micros();
     if ((now - _lastFootIMUBroadcast_us) < INTERVAL_US) return;
     _lastFootIMUBroadcast_us = now;
@@ -193,8 +202,11 @@ void WebComm::broadcastFootIMU(const RawIMUData& left, const RawIMUData& right) 
 // =============================================================================
 void WebComm::broadcastFootEstimate(const IMUState& left, const IMUState& right) {
     if (ws.count() == 0) return;
+    for (auto& c : ws.getClients()) {
+        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
+    }
 
-    const uint32_t INTERVAL_US = 50000;  // 20 Hz
+    const uint32_t INTERVAL_US = 100000;  // 10 Hz
     uint32_t now = micros();
     if ((now - _lastFootEstimateBroadcast_us) < INTERVAL_US) return;
     _lastFootEstimateBroadcast_us = now;
@@ -215,6 +227,9 @@ void WebComm::broadcastFootEstimate(const IMUState& left, const IMUState& right)
 
 void WebComm::broadcastCalibStatus(CalibState state, float progress) {
     if (ws.count() == 0) return;
+    for (auto& c : ws.getClients()) {
+        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
+    }
 
     // Rate-limit to 10 Hz. Always let CALIB_DONE through immediately (final packet).
     const uint32_t INTERVAL_US = 100000; // 10 Hz
@@ -250,6 +265,9 @@ void WebComm::broadcastCalibStatus(CalibState state, float progress) {
 
 void WebComm::broadcastBalanceState(const BalanceState& state) {
     if (ws.count() == 0 || _balCtrl == nullptr) return;
+    for (auto& c : ws.getClients()) {
+        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
+    }
 
     const uint32_t INTERVAL_US = 50000;  // 20 Hz
     uint32_t now = micros();
@@ -350,6 +368,9 @@ void WebComm::broadcastWeightShiftConfig(AsyncWebSocketClient* client) {
 
 void WebComm::broadcastGaitState() {
     if (!_gaitCtrl || ws.count() == 0) return;
+    for (auto& c : ws.getClients()) {
+        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
+    }
 
     const uint32_t INTERVAL_US = 50000;  // 20 Hz
     uint32_t now = micros();

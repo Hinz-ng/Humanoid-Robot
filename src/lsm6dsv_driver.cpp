@@ -36,38 +36,59 @@ bool LSM6DSVDriver::begin(const char* label) {
     }
     Serial.printf("[%s] WHO_AM_I=0x%02X — chip detected.\n", label, whoami);
 
-    // Software reset (CTRL3, bit 0). Self-clears when complete.
-    _writeReg(LSM6DSV_REG_CTRL3, 0x01);
-    delay(10);
-    // Enable BDU (bit 6) + IF_INC (bit 2). BDU prevents a register update
-    // mid-read causing torn 16-bit values; IF_INC enables register
-    // auto-increment for burst reads.
-    _writeReg(LSM6DSV_REG_CTRL3, 0x44);
+    _writeReg(LSM6DSV_REG_CTRL3, 0x01);   // SW_RESET
+    delay(50);                            // matches BB-8 — 50 ms is datasheet max
+                                          // (previous 10 ms is on the edge)
 
-    // Accel: ±2g. Bits[1:0] of CTRL8.
-    _writeReg(LSM6DSV_REG_CTRL8, LSM6DSV_ACCEL_FS_2G);
-    // Gyro: ±2000 dps. Bits[3:0] of CTRL6.
-    _writeReg(LSM6DSV_REG_CTRL6, LSM6DSV_GYRO_FS_2000DPS);
+    // Verify reset cleared. If not, fail loudly — this is a strong signal of
+    // SPI write failure (wrong mode, broken MOSI, wrong CS).
+    const uint8_t ctrl3_post = _readReg(LSM6DSV_REG_CTRL3);
+    if (ctrl3_post & 0x01) {
+        Serial.printf("[%s] ERROR: SW_RESET did not clear (CTRL3=0x%02X). "
+                      "SPI write path is broken — check MODE/CS/MOSI.\n",
+                      label, ctrl3_post);
+        return false;
+    }
 
-    // ODR: 416 Hz high-performance for both. Slightly above the 400 Hz control
-    // loop so each tick has fresh data without us needing data-ready handshaking.
-    _writeReg(LSM6DSV_REG_CTRL1, LSM6DSV_ODR_416HZ_HP);
-    _writeReg(LSM6DSV_REG_CTRL2, LSM6DSV_ODR_416HZ_HP);
+    _writeReg(LSM6DSV_REG_CTRL3, 0x44);   // IF_INC + BDU
+    _writeReg(LSM6DSV_REG_CTRL1, LSM6DSV_ODR_416HZ | LSM6DSV_ACCEL_FS_2G);
+    _writeReg(LSM6DSV_REG_CTRL2, LSM6DSV_ODR_416HZ | LSM6DSV_GYRO_FS_2000);
+    delay(20);
 
-    delay(5);   // first sample ready window
-
-    // Sanity: read a sample and confirm it's not all-zero / all-FF.
-    RawIMUData sample = read();
-    if (!sample.valid ||
-        (sample.accel_x == 0 && sample.accel_y == 0 && sample.accel_z == 0)) {
-        Serial.printf("[%s] WARNING: first sample looks dead "
-                      "(ax=%d ay=%d az=%d). Continuing — verify on bench.\n",
-                      label, sample.accel_x, sample.accel_y, sample.accel_z);
+    // Readback verification — exactly the BB-8 pattern. Refuse to proceed if
+    // CTRL1/CTRL2 don't match what we wrote: it means writes are silently
+    // failing, and read() will just return zeros.
+    const uint8_t ctrl1v = _readReg(LSM6DSV_REG_CTRL1);
+    const uint8_t ctrl2v = _readReg(LSM6DSV_REG_CTRL2);
+    const uint8_t want1  = LSM6DSV_ODR_416HZ | LSM6DSV_ACCEL_FS_2G;
+    const uint8_t want2  = LSM6DSV_ODR_416HZ | LSM6DSV_GYRO_FS_2000;
+    Serial.printf("[%s] CTRL1=0x%02X (want 0x%02X)  CTRL2=0x%02X (want 0x%02X)\n",
+                  label, ctrl1v, want1, ctrl2v, want2);
+    if (ctrl1v != want1 || ctrl2v != want2) {
+        Serial.printf("[%s] ERROR: control register writes did not stick. "
+                      "SPI mode or wiring is wrong.\n", label);
+        return false;
     }
 
     _initialized = true;
     Serial.printf("[%s] Configured: ±2g, ±2000 dps, 416 Hz HP, SPI %lu Hz.\n",
                   label, (unsigned long)_clk_hz);
+
+    // Sanity: read a sample and confirm it's not all-zero. This is a hard
+    // failure — if the first sample reads as all-zero or invalid, it means
+    // the SPI read path is broken (or the part has no power). Do not proceed.
+    // Future-you with no serial monitor will appreciate this diagnostic.
+    RawIMUData sample = read();
+    if (!sample.valid ||
+        (sample.accel_x == 0 && sample.accel_y == 0 && sample.accel_z == 0 &&
+         sample.gyro_x  == 0 && sample.gyro_y  == 0 && sample.gyro_z  == 0)) {
+        Serial.printf("[%s] ERROR: first sample is all-zero. "
+                      "Accel should read ~16384 LSB on the gravity axis at rest.\n",
+                      label);
+        _initialized = false;
+        return false;
+    }
+
     return true;
 }
 
@@ -117,7 +138,7 @@ uint8_t LSM6DSVDriver::readWhoAmI() {
 //  SPI helpers
 // ---------------------------------------------------------------------------
 void LSM6DSVDriver::_select() {
-    _spi->beginTransaction(SPISettings(_clk_hz, MSBFIRST, SPI_MODE0));
+    _spi->beginTransaction(SPISettings(_clk_hz, MSBFIRST, SPI_MODE3));
     digitalWrite(_cs, LOW);
 }
 

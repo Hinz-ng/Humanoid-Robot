@@ -7,6 +7,7 @@
 #include "weight_shift.h"      // WeightShift, ShiftDirection, WeightShiftConfig
 #include "leg_ik.h"            // LegIK, FootTarget, LegIKResult — IK test commands
 #include "gait_controller.h"
+#include "lsm6dsv_driver.h"    // LSM6DSVDriver for foot IMU diagnostic
 
 // Constructor ---------------------------------------------------------------
 WebComm::WebComm(ServoControl* servo)
@@ -31,6 +32,11 @@ void WebComm::setWeightShift(WeightShift* ws) {
 
 void WebComm::setGaitController(GaitController* gc) {
     _gaitCtrl = gc;
+}
+
+void WebComm::setFootIMUs(LSM6DSVDriver* left, LSM6DSVDriver* right) {
+    _leftFootIMU  = left;
+    _rightFootIMU = right;
 }
 
 // ---------------------------------------------------------------------------
@@ -700,6 +706,25 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         // ---------------------------------------------------------------------
         //  Balance tuning — parses key=value pairs, normalises ratios
         // ---------------------------------------------------------------------
+        // ---------------------------------------------------------------------
+        //  Foot IMU diagnostic probe on demand
+        // ---------------------------------------------------------------------
+        else if (cmd == "FOOT_IMU_PROBE") {
+            if (!_leftFootIMU || !_rightFootIMU) {
+                ws.textAll("FOOT_PROBE:error=drivers not wired");
+                return;
+            }
+            auto L = _leftFootIMU->probe();
+            auto R = _rightFootIMU->probe();
+            char buf[160];
+            snprintf(buf, sizeof(buf),
+                "FOOT_PROBE:L_who=0x%02X,L_c1=0x%02X,L_c2=0x%02X,L_c3=0x%02X,L_init=%d,"
+                "R_who=0x%02X,R_c1=0x%02X,R_c2=0x%02X,R_c3=0x%02X,R_init=%d",
+                L.whoami, L.ctrl1, L.ctrl2, L.ctrl3, (int)L.initialized,
+                R.whoami, R.ctrl1, R.ctrl2, R.ctrl3, (int)R.initialized);
+            ws.textAll(buf);
+            Serial.printf("[WebComm] %s\n", buf);
+        }
         else if (cmd.startsWith("BALANCE_TUNE:")) {
             if (_balCtrl) {
                 BalanceConfig cfg = _balCtrl->getConfig();

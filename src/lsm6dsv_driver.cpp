@@ -168,3 +168,16 @@ void LSM6DSVDriver::_readBurst(uint8_t reg, uint8_t* buf, size_t len) {
     for (size_t i = 0; i < len; i++) buf[i] = _spi->transfer(0x00);
     _deselect();
 }
+
+// ---------------------------------------------------------------------------
+//  probe() — diagnostic snapshot (WHO_AM_I + CTRL registers)
+// ---------------------------------------------------------------------------
+LSM6DSVDriver::ProbeResult LSM6DSVDriver::probe() {
+    ProbeResult r{};
+    r.whoami      = readWhoAmI();
+    r.ctrl1       = _readReg(LSM6DSV_REG_CTRL1);
+    r.ctrl2       = _readReg(LSM6DSV_REG_CTRL2);
+    r.ctrl3       = _readReg(LSM6DSV_REG_CTRL3);
+    r.initialized = _initialized;
+    return r;
+}

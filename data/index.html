@@ -482,6 +482,13 @@
             <span class="text-muted-gray" id="footImuStatusR">R: waiting...</span>
         </div>
 
+        <div class="flex-row-wrap-gap">
+            <button class="btn-ik-validate" onclick="sendCmd('FOOT_IMU_PROBE')">
+                Probe IMUs (diagnostic)
+            </button>
+            <span class="text-muted-gray" id="footProbeResult">—</span>
+        </div>
+
         <!-- LEFT FOOT: raw + estimate side-by-side -->
         <div class="imu-group-label top-gap">Left foot</div>
         <div class="imu-grid top-gap-sm">
@@ -1846,6 +1853,10 @@ function initWebSocket() {
             });
             const el = document.getElementById("footImuLoopBudget");
             if (el) el.textContent = `Foot IMU section: peak ${v.peak_us}µs, avg ${v.avg_us}µs (5s window)`;
+        }
+        else if (msg.startsWith("FOOT_PROBE:")) {
+            const el = document.getElementById("footProbeResult");
+            if (el) el.textContent = msg.substring(11);
         }
         // AFTER:
         else if (msg.startsWith("CALIB:")) {

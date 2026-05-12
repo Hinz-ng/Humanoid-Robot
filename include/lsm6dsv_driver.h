@@ -77,6 +77,17 @@ public:
     // Returns 0xFF if SPI is not responding (typical for wrong CS / no CLK).
     uint8_t readWhoAmI();
 
+    // Diagnostic snapshot for UI probing. Reads WHO_AM_I + CTRL register state
+    // without modifying anything. Safe to call any time, even if begin() failed.
+    struct ProbeResult {
+        uint8_t whoami;
+        uint8_t ctrl1;
+        uint8_t ctrl2;
+        uint8_t ctrl3;
+        bool    initialized;
+    };
+    ProbeResult probe();
+
 private:
     uint8_t   _cs;
     SPIClass* _spi;

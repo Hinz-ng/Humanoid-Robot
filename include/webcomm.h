@@ -13,6 +13,7 @@
 class MotionManager;
 class WeightShift;
 class GaitController;   // forward declare — only pointer stored
+class LSM6DSVDriver;    // forward declare — foot IMU diagnostic
 
 class WebComm {
 public:    // ctor can be invoked at global scope; it simply stores the servo pointer.
@@ -44,6 +45,8 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     void setMotionManager(MotionManager* mm);
     // Wire weight shift module. Call once in setup() after weightShift.init().
     void setWeightShift(WeightShift* ws);
+    // Wire foot IMUs for diagnostic probing via WebSocket.
+    void setFootIMUs(LSM6DSVDriver* left, LSM6DSVDriver* right);
 private:
     AsyncWebServer server;
     AsyncWebSocket ws;
@@ -60,6 +63,8 @@ private:
     WeightShift*       _weightShift     = nullptr;  // gait: CoM lateral shift
     GaitController*    _gaitCtrl            = nullptr;
     uint32_t           _lastGaitBroadcast_us = 0;
+    LSM6DSVDriver*     _leftFootIMU         = nullptr;
+    LSM6DSVDriver*     _rightFootIMU        = nullptr;
     
     void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
     void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);

@@ -14,6 +14,7 @@
 // ── Phase F1: foot IMUs (read + filter + telemetry, no closed-loop) ───────
 #if FOOT_IMU_ENABLED
 #include <Wire.h>
+#include "foot_contact.h"
 #include "lsm6dsv_driver.h"
 
 // Build a FilterConfig tuned for the foot LSM6DSV. Mirrors torso defaults
@@ -76,19 +77,29 @@ StateEstimator    stateEstimator;
 BalanceController balanceController(&servoController);
 MotionManager     motionManager;   // joint authority layer — wired in setup()
 WeightShift       weightShift;     // gait: CoM lateral shift — wired in setup()
+
 #if FOOT_IMU_ENABLED
 // Wire1 — separate I2C bus from Wire0 (PCA9685 + BMI160 on SDA=8, SCL=9).
-// Keeping them on different buses means foot reads don't compete with
-// servo writes or torso IMU reads for bus time, and the foot IMUs can
-// run at a different clock speed if needed.
+// Bus split rationale:
+//   1. Foot reads do not compete with servo writes or torso IMU reads for
+//      bus time on Wire0 (which the PCA9685 already saturates near 200 Hz).
+//   2. Each chip's hardwired SA0 puts it at a unique 7-bit address via
+//      Wire1 (0x6A / 0x6B), distinct from BMI160's 0x68/0x69. No collision
+//      risk remains even if a future revision merges buses.
+//   3. Wire1 clock (200 kHz) is set below the LSM6DSV's I2C maximum to
+//      survive the ~40 cm flex-cable run to the feet. Do NOT raise without
+//      re-running the F1 loop-budget telemetry; long unshielded cables on a
+//      faster bus produce silent corruption, not error returns.
 //
-// SA0 pin assignment:
-//   Left  IMU: GPIO 10 driven LOW  → I2C address 0x6A
-//   Right IMU: GPIO 14 driven HIGH → I2C address 0x6B
-// Each IMU's SA0/SDO line is wired to its own GPIO (rewired from the
-// shared SPI MISO on pin 13). Pin 13 is now unused.
-LSM6DSVDriver   leftFootIMU (&Wire1, /*sa0_pin=*/10, /*sa0_high=*/true);
-LSM6DSVDriver   rightFootIMU(&Wire1, /*sa0_pin=*/14, /*sa0_high=*/false);
+// SA0 is hardwired on the breakout. Pass -1 for sa0_pin so the driver only
+// uses sa0_high to compute the address and never writes to a GPIO.
+//   Left  breakout: SA0 to GND -> 0x6A
+//   Right breakout: SA0 to 3V3 -> 0x6B
+// VERIFY the physical wiring on the bench before flashing — mis-mapping
+// left/right addresses causes the left-foot estimator to consume right-foot
+// data with no error indication.
+LSM6DSVDriver   leftFootIMU (&Wire1, /*sa0_pin=*/-1, /*sa0_high=*/false);
+LSM6DSVDriver   rightFootIMU(&Wire1, /*sa0_pin=*/-1, /*sa0_high=*/true);
 
 // One estimator per foot. FilterConfig differs per-instance — must be passed
 // at construction time. Each estimator runs its OWN calibration cycle
@@ -96,6 +107,8 @@ LSM6DSVDriver   rightFootIMU(&Wire1, /*sa0_pin=*/14, /*sa0_high=*/false);
 // torso's calibration. All three calibrations run in parallel during boot.
 StateEstimator leftFootEstimator (_makeFootFilterConfig());
 StateEstimator rightFootEstimator(_makeFootFilterConfig());
+FootContactConfig footContactCfg;
+
 #endif
 GaitController    gaitController;   // open-loop walking gait
 
@@ -217,15 +230,15 @@ void setup() {
     webComm.init();
 
 #if FOOT_IMU_ENABLED
-    // Wire1 — foot IMU bus. SDA=11, SCL=12, 400 kHz. Both drivers share
-    // this bus; each uses its own SA0 GPIO to set a distinct address.
+    // Wire1 — foot IMU bus. SDA=11, SCL=12 @ 200 kHz. Both drivers share
+    // this bus; addresses come from the breakouts' hardwired SA0 wiring.
     //
-    // Pull-ups: ESP32 internal pull-ups are weak (~45 kΩ). At 400 kHz with
-    // any cable length the SDA/SCL rise time becomes the bottleneck. Add
-    // 4.7 kΩ external pull-ups to 3.3V on both lines if your breakouts
-    // don't already provide them.
+    // Pull-ups: ESP32 internal pull-ups are weak (~45 kΩ). On long foot-cable
+    // runs, add 4.7 kΩ external pull-ups to 3.3V on both lines if your
+    // breakouts don't already provide them. That margin matters even more if
+    // you later try to raise Wire1 above the verified 200 kHz baseline.
     Wire1.begin(/*SDA=*/11, /*SCL=*/12, /*clock_hz=*/200000);
-    Serial.println("[FootIMU/F1] Wire1 started on SDA=11 SCL=12 @ 100 kHz");
+    Serial.println("[FootIMU/F1] Wire1 started on SDA=11 SCL=12 @ 200 kHz");
 
     const bool lOk = leftFootIMU.begin("FootIMU/L");
     const bool rOk = rightFootIMU.begin("FootIMU/R");
@@ -236,6 +249,8 @@ void setup() {
     rightFootEstimator.reset();
     Serial.println("[FootIMU/F1] Foot estimators armed; running boot calibration in parallel.");
     webComm.setFootIMUs(&leftFootIMU, &rightFootIMU);
+    webComm.setFootContactConfig(&footContactCfg);
+    webComm.setFootNeutralPitch(0.0f, 0.0f);   // F4 will source session neutrals
 #endif
 
     Serial.println("System Ready.");
@@ -355,6 +370,7 @@ void loop() {
 #if FOOT_IMU_ENABLED
             webComm.broadcastFootIMU(lf_raw, rf_raw);
             webComm.broadcastFootEstimate(lf_state, rf_state);
+            webComm.broadcastFootContact(lf_state, rf_state);
 #endif
             webComm.broadcastBalanceState(balState);
             webComm.broadcastGaitState();

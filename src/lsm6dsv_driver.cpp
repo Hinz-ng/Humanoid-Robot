@@ -19,17 +19,15 @@ LSM6DSVDriver::LSM6DSVDriver(TwoWire* wire, int sa0_pin, bool sa0_high)
       _addr(sa0_high ? LSM6DSV_I2C_ADDR_SA0_HIGH : LSM6DSV_I2C_ADDR_SA0_LOW) {}
 
 // ---------------------------------------------------------------------------
-//  begin() — drive SA0, verify WHO_AM_I, software reset, configure registers.
+//  begin() — verify WHO_AM_I, software reset, configure registers.
 //
 //  ORDER MATTERS:
-//    1. Drive SA0 BEFORE any I2C transaction — the chip latches its address
-//       on every START condition based on the current SA0 level.
-//    2. Wait for boot (datasheet §3.3 — 35 ms max).
-//    3. WHO_AM_I check — early fail-fast if wiring/address is wrong.
-//    4. Software reset, then verify reset cleared.
-//    5. Configure CTRL3 (BDU + auto-increment), then CTRL1/CTRL2 (ODR + FS).
-//    6. Readback-verify CTRL1/CTRL2 — proves I2C writes are sticking.
-//    7. Sanity-read one sample — all-zero means SPI/I2C mode mismatch
+//    1. Wait for boot (datasheet §3.3 — 35 ms max).
+//    2. WHO_AM_I check — early fail-fast if wiring/address is wrong.
+//    3. Software reset, then verify reset cleared.
+//    4. Configure CTRL3 (BDU + auto-increment), then CTRL1/CTRL2 (ODR + FS).
+//    5. Readback-verify CTRL1/CTRL2 — proves I2C writes are sticking.
+//    6. Sanity-read one sample — all-zero means SPI/I2C mode mismatch
 //       (CS pin not tied HIGH on the breakout) or chip is dead.
 // ---------------------------------------------------------------------------
 bool LSM6DSVDriver::begin(const char* label) {
@@ -38,18 +36,9 @@ bool LSM6DSVDriver::begin(const char* label) {
         return false;
     }
 
-    // --- Step 1: SA0 setup ------------------------------------------------
-    // If the caller is driving SA0 from a GPIO, configure it BEFORE the first
-    // I2C transaction. Even one START with SA0 in the wrong state will NACK
-    // (or worse, ACK the wrong chip on a shared bus).
-    if (_sa0Pin >= 0) {
-        pinMode(_sa0Pin, OUTPUT);
-        digitalWrite(_sa0Pin, _sa0High ? HIGH : LOW);
-        // Brief settle. The datasheet does not specify a minimum SA0 setup
-        // time but the chip needs SA0 stable before the next address compare;
-        // 2 ms is generous and harmless at boot.
-        delay(2);
-    }
+    // SA0 is hardwired on the breakout (GND -> 0x6A, 3V3 -> 0x6B). The
+    // constructor parameter `_sa0High` only controls which address this
+    // driver speaks to; no GPIO is driven.
 
     // --- Step 2: chip power-up delay --------------------------------------
     delay(40);   // ≥ 35 ms boot per datasheet §3.3
@@ -119,9 +108,9 @@ bool LSM6DSVDriver::begin(const char* label) {
 
     // --- Step 7: sanity sample --------------------------------------------
     // All-zero on the first read means I2C succeeded but the chip never
-    // produced a sample. Most common cause: breakout's CS pin is not tied
-    // HIGH, so the chip is sitting in SPI mode and ignoring I2C writes
-    // EXCEPT for WHO_AM_I (which is a quirk on some parts).
+    // produced a sample. Most common cause: breakout CS is not tied HIGH,
+    // leaving the chip in SPI mode where it ignores I2C writes except for
+    // WHO_AM_I on some parts.
     RawIMUData sample = read();
     if (!sample.valid ||
         (sample.accel_x == 0 && sample.accel_y == 0 && sample.accel_z == 0 &&

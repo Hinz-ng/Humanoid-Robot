@@ -473,9 +473,9 @@
         </div>
         <div class="imu-status" id="imu-status">Waiting for data...</div>
     </div>
-    <!-- Foot IMU Panel (Phase F1) -->
+    <!-- Foot IMU Panel (Phase F2) -->
     <div class="imu-panel" id="footImuPanel">
-        <h3>&#9650; Foot IMUs &mdash; LSM6DSV (passive — Phase F1)</h3>
+        <h3>&#9650; Foot IMUs &mdash; LSM6DSV (telemetry only — Phase F2)</h3>
 
         <div class="flex-row-wrap-gap">
             <span class="text-muted-gray" id="footImuStatusL">L: waiting...</span>
@@ -544,6 +544,48 @@
                 <div class="imu-group-label">Rate (rad/s)</div>
                 <div class="imu-row"><span class="imu-axis">P</span><span class="imu-value" id="rf-est-pr">—</span></div>
                 <div class="imu-row"><span class="imu-axis">R</span><span class="imu-value" id="rf-est-rr">—</span></div>
+            </div>
+        </div>
+
+        <div class="imu-group-label top-gap">Contact predicates</div>
+        <div class="imu-grid top-gap-sm">
+            <div class="imu-group">
+                <div class="imu-group-label">Left foot</div>
+                <div class="imu-row"><span class="imu-axis">FLAT</span><span class="imu-value" id="lf-flat">—</span></div>
+                <div class="imu-row"><span class="imu-axis">LOADED</span><span class="imu-value" id="lf-loaded">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Δp</span><span class="imu-value" id="lf-pdev">—</span></div>
+            </div>
+            <div class="imu-group">
+                <div class="imu-group-label">Right foot</div>
+                <div class="imu-row"><span class="imu-axis">FLAT</span><span class="imu-value" id="rf-flat">—</span></div>
+                <div class="imu-row"><span class="imu-axis">LOADED</span><span class="imu-value" id="rf-loaded">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Δp</span><span class="imu-value" id="rf-pdev">—</span></div>
+            </div>
+        </div>
+
+        <div class="imu-group-label top-gap">Predicate thresholds</div>
+        <div class="bal-tune-grid">
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Flat pitch threshold (°)</span><span class="tune-val" id="tvFcFlatP">2.0</span></div>
+                <input type="range" id="slFcFlatP" min="0.3" max="11.5" step="0.1" value="2.0"
+                       oninput="updateFcLabel('flatP', this.value); sendFcTune()">
+            </div>
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Flat roll threshold (°)</span><span class="tune-val" id="tvFcFlatR">2.0</span></div>
+                <input type="range" id="slFcFlatR" min="0.3" max="11.5" step="0.1" value="2.0"
+                       oninput="updateFcLabel('flatR', this.value); sendFcTune()">
+            </div>
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Loaded deviation (°)</span><span class="tune-val" id="tvFcLoadDev">1.4</span></div>
+                <input type="range" id="slFcLoadDev" min="0.3" max="5.7" step="0.1" value="1.4"
+                       oninput="updateFcLabel('loadDev', this.value); sendFcTune()">
+            </div>
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Loaded sign</span><span class="tune-val" id="tvFcLoadSign">+1</span></div>
+                <div class="flex-row-gap-sm">
+                    <button class="btn-sign btn-sign-active" id="btnFcSignPos" onclick="setFcSign(+1)">+1 (forward droop)</button>
+                    <button class="btn-sign" id="btnFcSignNeg" onclick="setFcSign(-1)">-1 (backward droop)</button>
+                </div>
             </div>
         </div>
 
@@ -1857,6 +1899,44 @@ function initWebSocket() {
                 setEst("rf-est-pitch","rf-est-roll","rf-est-pr","rf-est-rr", R, "r");
             }
         }
+        else if (msg.startsWith("FOOT_CONTACT:")) {
+            const v = {};
+            msg.substring(13).split(",").forEach(p => {
+                const [k, val] = p.split("=");
+                v[k] = val;
+            });
+            const setBool = (id, val) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.textContent = val === "1" ? "✓" : "—";
+                el.style.color = val === "1" ? "#4caf50" : "#888";
+            };
+            setBool("lf-flat",   v.l_flat);
+            setBool("lf-loaded", v.l_loaded);
+            setBool("rf-flat",   v.r_flat);
+            setBool("rf-loaded", v.r_loaded);
+            const toDeg = r => (parseFloat(r) * 180 / Math.PI).toFixed(2) + "°";
+            document.getElementById("lf-pdev").textContent = v.l_pdev != null ? toDeg(v.l_pdev) : "—";
+            document.getElementById("rf-pdev").textContent = v.r_pdev != null ? toDeg(v.r_pdev) : "—";
+
+            if (!_tuneActive) {
+                if (v.flatP != null) {
+                    _syncSlider("slFcFlatP", "tvFcFlatP",
+                        parseFloat(v.flatP) * 180 / Math.PI, 1);
+                }
+                if (v.flatR != null) {
+                    _syncSlider("slFcFlatR", "tvFcFlatR",
+                        parseFloat(v.flatR) * 180 / Math.PI, 1);
+                }
+                if (v.loadDev != null) {
+                    _syncSlider("slFcLoadDev", "tvFcLoadDev",
+                        parseFloat(v.loadDev) * 180 / Math.PI, 1);
+                }
+            }
+            if (v.loadSign != null) {
+                setFcSignUI(parseFloat(v.loadSign));
+            }
+        }
         else if (msg.startsWith("FOOT_BUDGET:")) {
             // Format: "FOOT_BUDGET:peak_us=...,avg_us=...,window_s=..."
             const v = {};
@@ -2540,6 +2620,51 @@ function updateWSTuneLabel(id, rawVal) {
     const m = _wsTuneMap[id];
     if (m) document.getElementById(m.el).textContent =
         parseFloat(rawVal).toFixed(m.decimals);
+}
+
+function updateFcLabel(id, val) {
+    _setTuneActive();
+    const map = {
+        flatP:   "tvFcFlatP",
+        flatR:   "tvFcFlatR",
+        loadDev: "tvFcLoadDev",
+    };
+    const el = document.getElementById(map[id]);
+    if (el) el.textContent = parseFloat(val).toFixed(1);
+}
+
+function setFcSignUI(sign) {
+    const pos = sign >= 0;
+    document.getElementById("tvFcLoadSign").textContent = pos ? "+1" : "-1";
+    document.getElementById("btnFcSignPos").className = "btn-sign" + (pos ? " btn-sign-active" : "");
+    document.getElementById("btnFcSignNeg").className = "btn-sign" + (!pos ? " btn-sign-active" : "");
+}
+
+function sendFcTune() {
+    clearTimeout(sendFcTune._t);
+    sendFcTune._t = setTimeout(() => {
+        const flatPdeg   = parseFloat(document.getElementById("slFcFlatP").value);
+        const flatRdeg   = parseFloat(document.getElementById("slFcFlatR").value);
+        const loadDevDeg = parseFloat(document.getElementById("slFcLoadDev").value);
+        const flatPrad   = (flatPdeg   * Math.PI / 180).toFixed(5);
+        const flatRrad   = (flatRdeg   * Math.PI / 180).toFixed(5);
+        const loadDevRad = (loadDevDeg * Math.PI / 180).toFixed(5);
+        const msg = `CMD:FOOT_CONTACT_TUNE:flatP=${flatPrad},flatR=${flatRrad},loadDev=${loadDevRad}`;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(msg);
+            console.log("[WS TX]", msg);
+        }
+    }, 80);
+}
+
+function setFcSign(sign) {
+    _setTuneActive();
+    setFcSignUI(sign);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const msg = `CMD:FOOT_CONTACT_TUNE:loadSign=${sign > 0 ? "+1.0" : "-1.0"}`;
+        ws.send(msg);
+        console.log("[WS TX]", msg);
+    }
 }
 
 // Debounced send — converts setpoint from degrees to radians before sending.

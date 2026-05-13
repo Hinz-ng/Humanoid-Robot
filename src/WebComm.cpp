@@ -8,6 +8,7 @@
 #include "leg_ik.h"            // LegIK, FootTarget, LegIKResult — IK test commands
 #include "gait_controller.h"
 #include "lsm6dsv_driver.h"    // LSM6DSVDriver for foot IMU diagnostic
+#include "foot_contact.h"
 
 // Constructor ---------------------------------------------------------------
 WebComm::WebComm(ServoControl* servo)
@@ -37,6 +38,15 @@ void WebComm::setGaitController(GaitController* gc) {
 void WebComm::setFootIMUs(LSM6DSVDriver* left, LSM6DSVDriver* right) {
     _leftFootIMU  = left;
     _rightFootIMU = right;
+}
+
+void WebComm::setFootContactConfig(FootContactConfig* cfg) {
+    _footContactCfg = cfg;
+}
+
+void WebComm::setFootNeutralPitch(float leftRad, float rightRad) {
+    _leftFootNeutralPitchRad  = leftRad;
+    _rightFootNeutralPitchRad = rightRad;
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +233,52 @@ void WebComm::broadcastFootEstimate(const IMUState& left, const IMUState& right)
         "r_pitch=%.4f,r_roll=%.4f,r_pr=%.4f,r_rr=%.4f,r_v=%d",
         left.pitch,  left.roll,  left.pitchRate,  left.rollRate,  (int)left.valid,
         right.pitch, right.roll, right.pitchRate, right.rollRate, (int)right.valid
+    );
+    ws.textAll(buf);
+}
+
+// =============================================================================
+//  FOOT CONTACT BROADCAST  (Phase F2)
+//  Protocol: "FOOT_CONTACT:l_flat=0|1,l_loaded=0|1,l_pdev=X,
+//             r_flat=0|1,r_loaded=0|1,r_pdev=X,
+//             flatP=X,flatR=X,loadDev=X,loadSign=+1|-1"
+//  Rate-limited to 10 Hz. Pitch deviation fields are signed radians after the
+//  loaded-sign transform, so the UI can show margin-to-threshold directly.
+// =============================================================================
+void WebComm::broadcastFootContact(const IMUState& left, const IMUState& right) {
+    if (_footContactCfg == nullptr || ws.count() == 0) return;
+    for (auto& c : ws.getClients()) {
+        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
+    }
+
+    const uint32_t INTERVAL_US = 100000;  // 10 Hz
+    uint32_t now = micros();
+    if ((now - _lastFootContactBroadcast_us) < INTERVAL_US) return;
+    _lastFootContactBroadcast_us = now;
+
+    const FootContactConfig& cfg = *_footContactCfg;
+    const bool lFlat   = isFootFlat(left, cfg);
+    const bool rFlat   = isFootFlat(right, cfg);
+    const bool lLoaded = isFootLoaded(left,  _leftFootNeutralPitchRad,  cfg);
+    const bool rLoaded = isFootLoaded(right, _rightFootNeutralPitchRad, cfg);
+    const float lPdev  = left.valid
+        ? (left.pitch - _leftFootNeutralPitchRad) * cfg.loaded_pitch_sign
+        : 0.0f;
+    const float rPdev  = right.valid
+        ? (right.pitch - _rightFootNeutralPitchRad) * cfg.loaded_pitch_sign
+        : 0.0f;
+
+    char buf[240];
+    snprintf(buf, sizeof(buf),
+        "FOOT_CONTACT:l_flat=%d,l_loaded=%d,l_pdev=%.4f,"
+        "r_flat=%d,r_loaded=%d,r_pdev=%.4f,"
+        "flatP=%.4f,flatR=%.4f,loadDev=%.4f,loadSign=%.1f",
+        (int)lFlat, (int)lLoaded, lPdev,
+        (int)rFlat, (int)rLoaded, rPdev,
+        cfg.flat_pitch_threshold_rad,
+        cfg.flat_roll_threshold_rad,
+        cfg.loaded_pitch_deviation_rad,
+        cfg.loaded_pitch_sign
     );
     ws.textAll(buf);
 }
@@ -700,6 +756,53 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                               "lat=%.1fmm  fwd=%.1fmm  torso=%.1f°  ramp=%.0f ms\n",
                               cfg.setpoint_shift_rad, cfg.lateral_shift_mm,
                               cfg.forward_lean_mm, cfg.torso_shift_deg, cfg.ramp_ms);
+            }
+        }
+        // ---------------------------------------------------------------------
+        //  Foot-contact tuning (Phase F2)
+        //  Protocol: CMD:FOOT_CONTACT_TUNE:flatP=0.035,flatR=0.035,
+        //                                  loadDev=0.025,loadSign=+1.0
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("FOOT_CONTACT_TUNE:")) {
+            if (_footContactCfg) {
+                FootContactConfig& cfg = *_footContactCfg;
+                String params = cmd.substring(18);
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    String pair = (comma == -1) ? params.substring(start)
+                                                : params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq != -1) {
+                        String key = pair.substring(0, eq);
+                        float  val = pair.substring(eq + 1).toFloat();
+                        if (key == "flatP") {
+                            cfg.flat_pitch_threshold_rad = constrain(val, 0.005f, 0.20f);
+                        }
+                        else if (key == "flatR") {
+                            cfg.flat_roll_threshold_rad = constrain(val, 0.005f, 0.20f);
+                        }
+                        else if (key == "loadDev") {
+                            cfg.loaded_pitch_deviation_rad = constrain(val, 0.005f, 0.10f);
+                        }
+                        else if (key == "loadSign") {
+                            if (fabsf(fabsf(val) - 1.0f) < 0.001f) {
+                                cfg.loaded_pitch_sign = (val >= 0.0f) ? 1.0f : -1.0f;
+                            } else {
+                                Serial.printf("[WebComm] FOOT_CONTACT_TUNE: rejecting "
+                                              "loadSign=%.3f (must be ±1.0)\n", val);
+                            }
+                        }
+                    }
+                    start = (comma == -1) ? params.length() : comma + 1;
+                }
+                _lastFootContactBroadcast_us = 0;  // allow immediate round-trip on next tick
+                Serial.printf("[WebComm] FOOT_CONTACT_TUNE: flatP=%.4f flatR=%.4f "
+                              "loadDev=%.4f loadSign=%.1f\n",
+                              cfg.flat_pitch_threshold_rad,
+                              cfg.flat_roll_threshold_rad,
+                              cfg.loaded_pitch_deviation_rad,
+                              cfg.loaded_pitch_sign);
             }
         }
         

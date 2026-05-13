@@ -10,18 +10,19 @@
 //   live in StateEstimator (Layer 2).
 //
 // PROTOCOL CHOICE (history):
-//   F0 used SPI to avoid I2C address collision with BMI160. That concern only
-//   applies on a SHARED bus. By putting the foot IMUs on Wire1 (separate from
-//   BMI160/PCA9685 on Wire0), each chip gets a unique 7-bit address via SA0
-//   and there is no collision with anything on Wire0.
+//   Historical F0 used SPI to avoid I2C address collision with BMI160.
+//   Current firmware uses I2C on Wire1. By putting the foot IMUs on a
+//   separate bus from BMI160/PCA9685, each chip gets a unique 7-bit address
+//   via hardwired SA0 and there is no collision with anything on Wire0.
 //
 // USAGE (per-instance):
 //   1. Caller calls Wire1.begin(SDA, SCL, clock_hz) ONCE before any driver.
-//   2. Construct with (Wire1 pointer, SA0 GPIO, desired SA0 level).
-//      - If sa0_pin >= 0, the driver drives that GPIO to the requested level
-//        in begin(), giving full code control over the I2C address.
-//      - If sa0_pin < 0, the caller has hardwired SA0 on the breakout
-//        (to VDD or GND); the driver only uses the level to compute the addr.
+//   2. Construct with (Wire1 pointer, sa0_pin, desired SA0 level).
+//      - Current F2 cleanup path: pass sa0_pin = -1 and hardwire SA0 on the
+//        breakout (to VDD or GND). The driver only uses sa0_high to compute
+//        the I2C address; it no longer drives any GPIO.
+//      - The sa0_pin field remains only as a deprecated compatibility slot
+//        while call sites migrate. Remove it in a later cleanup commit.
 //   3. Call begin() once per instance — verifies WHO_AM_I, configures
 //      ODR + range. Returns false on any I2C/identity failure.
 //   4. Call read() each tick — returns RawIMUData with valid=false on failure.
@@ -98,13 +99,12 @@ class LSM6DSVDriver {
 public:
     // wire        : pre-initialized TwoWire instance. Caller MUST have already
     //               called wire->begin(SDA, SCL, clock_hz) before begin().
-    // sa0_pin     : GPIO to drive the IMU's SA0/SDO line. Pass -1 if the
-    //               breakout has SA0 hardwired to GND or VDD.
-    // sa0_high    : Desired SA0 logic level. The driver:
-    //                 - drives sa0_pin to this level (if sa0_pin >= 0)
-    //                 - infers the I2C address from this level
-    //                       false → 0x6A,  true → 0x6B
-    //               If sa0_pin < 0, only the address is derived; no GPIO write.
+    // sa0_pin     : Deprecated. Pass -1. The driver no longer drives SA0.
+    //               Field retained so legacy call sites compile during the
+    //               F1 → F2 cleanup; remove this parameter entirely in a
+    //               later commit after main.cpp is updated.
+    // sa0_high    : Hardwired SA0 level on the breakout.
+    //                 false -> 0x6A, true -> 0x6B
     LSM6DSVDriver(TwoWire* wire, int sa0_pin, bool sa0_high);
 
     // Reset, verify WHO_AM_I, configure ODR + range. Returns true on success.

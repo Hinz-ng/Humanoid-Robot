@@ -14,6 +14,7 @@ class MotionManager;
 class WeightShift;
 class GaitController;   // forward declare — only pointer stored
 class LSM6DSVDriver;    // forward declare — foot IMU diagnostic
+struct FootContactConfig;
 
 class WebComm {
 public:    // ctor can be invoked at global scope; it simply stores the servo pointer.
@@ -31,6 +32,7 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // Phase F1 — foot IMU telemetry. Both methods rate-limit to 20 Hz internally.
     void broadcastFootIMU(const RawIMUData& left, const RawIMUData& right);
     void broadcastFootEstimate(const IMUState& left, const IMUState& right);
+    void broadcastFootContact(const IMUState& left, const IMUState& right);
     void broadcastCalibStatus(CalibState state, float progress); // --- ADD
     void broadcastBalanceState(const BalanceState& state);
     void broadcastSpeeds();
@@ -47,6 +49,8 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     void setWeightShift(WeightShift* ws);
     // Wire foot IMUs for diagnostic probing via WebSocket.
     void setFootIMUs(LSM6DSVDriver* left, LSM6DSVDriver* right);
+    void setFootContactConfig(FootContactConfig* cfg);
+    void setFootNeutralPitch(float leftRad, float rightRad);
 private:
     AsyncWebServer server;
     AsyncWebSocket ws;
@@ -56,6 +60,7 @@ private:
     uint32_t _lastEstimateBroadcast_us  = 0;
     uint32_t _lastFootIMUBroadcast_us       = 0;
     uint32_t _lastFootEstimateBroadcast_us  = 0;
+    uint32_t _lastFootContactBroadcast_us   = 0;
     uint32_t _lastCalibBroadcast_us     = 0;   // rate-limits calib status to 10 Hz
     BalanceController* _balCtrl         = nullptr;
     uint32_t           _lastBalanceBroadcast_us = 0;
@@ -65,6 +70,9 @@ private:
     uint32_t           _lastGaitBroadcast_us = 0;
     LSM6DSVDriver*     _leftFootIMU         = nullptr;
     LSM6DSVDriver*     _rightFootIMU        = nullptr;
+    FootContactConfig* _footContactCfg      = nullptr;
+    float              _leftFootNeutralPitchRad  = 0.0f;
+    float              _rightFootNeutralPitchRad = 0.0f;
     
     void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
     void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);

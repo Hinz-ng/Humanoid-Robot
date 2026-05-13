@@ -1834,14 +1834,27 @@ function initWebSocket() {
                 const R = parsePart(halves[1]);
                 const toDeg = r => (parseFloat(r) * 180 / Math.PI).toFixed(2) + "°";
                 const set4  = v => parseFloat(v).toFixed(4);
-                document.getElementById("lf-est-pitch").textContent = toDeg(L.l_pitch);
-                document.getElementById("lf-est-roll").textContent  = toDeg(L.l_roll);
-                document.getElementById("lf-est-pr").textContent    = set4(L.l_pr);
-                document.getElementById("lf-est-rr").textContent    = set4(L.l_rr);
-                document.getElementById("rf-est-pitch").textContent = toDeg(R.r_pitch);
-                document.getElementById("rf-est-roll").textContent  = toDeg(R.r_roll);
-                document.getElementById("rf-est-pr").textContent    = set4(R.r_pr);
-                document.getElementById("rf-est-rr").textContent    = set4(R.r_rr);
+
+                // Gate displayed estimate values on the validity flag — during
+                // boot calibration the firmware sends pitch=roll=0 with l_v=0,
+                // which would otherwise look indistinguishable from a working
+                // estimate stuck at 0°.
+                const setEst = (idPitch, idRoll, idPR, idRR, part, prefix) => {
+                    const validKey = prefix + "_v";
+                    if (part[validKey] === "1") {
+                        document.getElementById(idPitch).textContent = toDeg(part[prefix+"_pitch"]);
+                        document.getElementById(idRoll).textContent  = toDeg(part[prefix+"_roll"]);
+                        document.getElementById(idPR).textContent    = set4(part[prefix+"_pr"]);
+                        document.getElementById(idRR).textContent    = set4(part[prefix+"_rr"]);
+                    } else {
+                        document.getElementById(idPitch).textContent = "calibrating…";
+                        document.getElementById(idRoll).textContent  = "calibrating…";
+                        document.getElementById(idPR).textContent    = "—";
+                        document.getElementById(idRR).textContent    = "—";
+                    }
+                };
+                setEst("lf-est-pitch","lf-est-roll","lf-est-pr","lf-est-rr", L, "l");
+                setEst("rf-est-pitch","rf-est-roll","rf-est-pr","rf-est-rr", R, "r");
             }
         }
         else if (msg.startsWith("FOOT_BUDGET:")) {

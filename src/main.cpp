@@ -13,7 +13,7 @@
 
 // ── Phase F1: foot IMUs (read + filter + telemetry, no closed-loop) ───────
 #if FOOT_IMU_ENABLED
-#include <SPI.h>
+#include <Wire.h>
 #include "lsm6dsv_driver.h"
 
 // Build a FilterConfig tuned for the foot LSM6DSV. Mirrors torso defaults
@@ -36,6 +36,31 @@ static FilterConfig _makeFootFilterConfig() {
 }
 #endif
 
+// Foot IMU axis remap — applied per tick to RawIMUData before estimator.
+//
+// CHIP MOUNTING (verified 2026-05-13 with foot flat on the floor):
+//   chip X axis points robot-right        → robot Y = -chip X
+//   chip Y axis points robot-backward     → robot X = -chip Y
+//   chip Z axis points DOWN through sole  → robot Z = -chip Z
+//
+// Result: (robot_x, robot_y, robot_z) = (-chip_y, -chip_x, -chip_z).
+// Same matrix applied to gyro rates (they transform identically).
+//
+// If you re-mount the IMU, EDIT THIS FUNCTION — don't add per-axis sign
+// fields to FilterConfig. The remap is a property of the physical mounting,
+// not the filter. Keeping it here keeps the source of truth in one place.
+static void _remapFootRawToRobotFrame(RawIMUData& r) {
+    if (!r.valid) return;
+    const int16_t ax = r.accel_x, ay = r.accel_y, az = r.accel_z;
+    const int16_t gx = r.gyro_x,  gy = r.gyro_y,  gz = r.gyro_z;
+    r.accel_x = -ay;   // robot X (forward)
+    r.accel_y =  ax;   // robot Y (left)
+    r.accel_z =  az;   // robot Z (up)
+    r.gyro_x  = -gy;
+    r.gyro_y  =  gx;
+    r.gyro_z  =  gz;
+}
+
 // =============================================================================
 //  GLOBAL OBJECTS
 //
@@ -52,11 +77,18 @@ BalanceController balanceController(&servoController);
 MotionManager     motionManager;   // joint authority layer — wired in setup()
 WeightShift       weightShift;     // gait: CoM lateral shift — wired in setup()
 #if FOOT_IMU_ENABLED
-// FSPI peripheral (= SPI2 on ESP32-S3). Dedicated to foot IMUs to avoid
-// any interaction with the I2C bus shared by PCA9685 + BMI160.
-SPIClass        footSpiBus(FSPI);
-LSM6DSVDriver   leftFootIMU (10, &footSpiBus, 1000000);   // CS GPIO 10
-LSM6DSVDriver   rightFootIMU(14, &footSpiBus, 1000000);   // CS GPIO 14
+// Wire1 — separate I2C bus from Wire0 (PCA9685 + BMI160 on SDA=8, SCL=9).
+// Keeping them on different buses means foot reads don't compete with
+// servo writes or torso IMU reads for bus time, and the foot IMUs can
+// run at a different clock speed if needed.
+//
+// SA0 pin assignment:
+//   Left  IMU: GPIO 10 driven LOW  → I2C address 0x6A
+//   Right IMU: GPIO 14 driven HIGH → I2C address 0x6B
+// Each IMU's SA0/SDO line is wired to its own GPIO (rewired from the
+// shared SPI MISO on pin 13). Pin 13 is now unused.
+LSM6DSVDriver   leftFootIMU (&Wire1, /*sa0_pin=*/10, /*sa0_high=*/true);
+LSM6DSVDriver   rightFootIMU(&Wire1, /*sa0_pin=*/14, /*sa0_high=*/false);
 
 // One estimator per foot. FilterConfig differs per-instance — must be passed
 // at construction time. Each estimator runs its OWN calibration cycle
@@ -185,10 +217,15 @@ void setup() {
     webComm.init();
 
 #if FOOT_IMU_ENABLED
-    // SPI bus shared by both foot IMUs. Begin once before either driver runs.
-    // Pin order: SCK, MISO, MOSI, SS (-1 = manual CS via driver).
-    footSpiBus.begin(/*SCK=*/12, /*MISO=*/13, /*MOSI=*/11, /*SS=*/-1);
-    Serial.println("[FootIMU/F1] SPI bus started on SCK=12 MISO=13 MOSI=11");
+    // Wire1 — foot IMU bus. SDA=11, SCL=12, 400 kHz. Both drivers share
+    // this bus; each uses its own SA0 GPIO to set a distinct address.
+    //
+    // Pull-ups: ESP32 internal pull-ups are weak (~45 kΩ). At 400 kHz with
+    // any cable length the SDA/SCL rise time becomes the bottleneck. Add
+    // 4.7 kΩ external pull-ups to 3.3V on both lines if your breakouts
+    // don't already provide them.
+    Wire1.begin(/*SDA=*/11, /*SCL=*/12, /*clock_hz=*/200000);
+    Serial.println("[FootIMU/F1] Wire1 started on SDA=11 SCL=12 @ 100 kHz");
 
     const bool lOk = leftFootIMU.begin("FootIMU/L");
     const bool rOk = rightFootIMU.begin("FootIMU/R");
@@ -198,6 +235,7 @@ void setup() {
     leftFootEstimator.reset();
     rightFootEstimator.reset();
     Serial.println("[FootIMU/F1] Foot estimators armed; running boot calibration in parallel.");
+    webComm.setFootIMUs(&leftFootIMU, &rightFootIMU);
 #endif
 
     Serial.println("System Ready.");
@@ -248,9 +286,11 @@ void loop() {
             // UI only. F2 will add foot_contact predicates that consume
             // these states; F3 will wire them into liftGateOK.
             const uint32_t _footStartUs = micros();
-            const RawIMUData lf_raw   = leftFootIMU.read();
+            RawIMUData lf_raw   = leftFootIMU.read();
+            _remapFootRawToRobotFrame(lf_raw);
             const IMUState   lf_state = leftFootEstimator.update(lf_raw, dt);
-            const RawIMUData rf_raw   = rightFootIMU.read();
+            RawIMUData rf_raw   = rightFootIMU.read();
+            _remapFootRawToRobotFrame(rf_raw);
             const IMUState   rf_state = rightFootEstimator.update(rf_raw, dt);
             const uint32_t _footDurUs = micros() - _footStartUs;
 

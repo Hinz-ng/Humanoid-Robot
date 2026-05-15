@@ -12,9 +12,8 @@
 //  No I2C transactions here; chip may not even be powered yet at construction
 //  time (this is a global-scope object in main.cpp).
 // ---------------------------------------------------------------------------
-LSM6DSVDriver::LSM6DSVDriver(TwoWire* wire, int sa0_pin, bool sa0_high)
+LSM6DSVDriver::LSM6DSVDriver(TwoWire* wire, bool sa0_high)
     : _wire(wire),
-      _sa0Pin(sa0_pin),
       _sa0High(sa0_high),
       _addr(sa0_high ? LSM6DSV_I2C_ADDR_SA0_HIGH : LSM6DSV_I2C_ADDR_SA0_LOW) {}
 

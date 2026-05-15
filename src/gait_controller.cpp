@@ -434,7 +434,8 @@ void GaitController::_advanceHalf() {
 // ---------------------------------------------------------------------------
 void GaitController::update(float dt_s, const IMUState& imuState,
                             const BalanceCorrection* bc,
-                            const BalanceState* balState) {
+                            const BalanceState* balState,
+                            const FootContactSnapshot* footSnap) {
     _lastImuState = imuState;
 
     // Publish swing-leg hint to WeightShift FIRST. Reflects last tick's
@@ -449,6 +450,10 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     _state.liftL_deg  = 0.0f;
     _state.liftR_deg  = 0.0f;
     _state.liftGateOK = false;
+    _state.gateImuRollOK    = false;
+    _state.gateStanceFlat   = false;
+    _state.gateStanceLoaded = false;
+    _state.gateStanceIsLeft = false;
 
     // Stage 1: observe recovery flag from BalanceController.
     // Suppressed when already in RECOVERY_STEP (no re-trigger mid-step) and
@@ -490,24 +495,66 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     const float wsProgress = _ws ? wsState.progress : 1.0f;
     _state.wsProgress = wsProgress;
 
-    // Gate direction check.
-    // RUNNING/SINGLE_STEP: both WS progress AND IMU tilt required (safety).
-    // POSE_STEP: progress only — operator is supervising and can stop manually.
-    //   This restores POSE_STEP usability after the IMU gate (Change 2) made
-    //   gate-open contingent on physical lean the ankles cannot reliably produce
-    //   under load. The Next Pose button advances through holds 1/2/3 manually.
-    const bool poseMode = (_state.mode == GaitMode::POSE_STEP);
-    if (_currentHalf == 0) {
-        const bool progressOK = (wsProgress    >=  _cfg.liftGateThreshold);
-        const bool imuOK      = poseMode || !_cfg.useImuGate
-                                || (imuState.roll >=  _cfg.wsThresholdRad);
-        _state.liftGateOK = progressOK && imuOK;
-    } else {
-        const bool progressOK = (wsProgress    <= -_cfg.liftGateThreshold);
-        const bool imuOK      = poseMode || !_cfg.useImuGate
-                                || (imuState.roll <= -_cfg.wsThresholdRad);
-        _state.liftGateOK = progressOK && imuOK;
+    // -- Phase F3: composable lift gate ------------------------------------
+    //
+    // Layer 1 (always required, except when explicitly bypassed):
+    //   progressOK - kinematic check: WeightShift has ramped into the
+    //                correct signed direction with sufficient magnitude.
+    //
+    // Layer 2 (extra verification, mode-dependent):
+    //   imuRollOK    - torso IMU roll past wsThresholdRad in correct direction
+    //   stanceFlat   - stance foot's pitch and roll within the flat-threshold
+    //   stanceLoaded - stance foot's pitch shows the loaded-deviation signature
+    //
+    // POSE_STEP unconditionally bypasses Layer 2 - the operator is in the loop.
+    //
+    // half=0 -> LEFT foot swings -> RIGHT foot is stance (rollSign = +1)
+    // half=1 -> RIGHT foot swings -> LEFT  foot is stance (rollSign = -1)
+    const bool poseMode     = (_state.mode == GaitMode::POSE_STEP);
+    const bool isLeftStance = (_currentHalf == 1);
+    const float rollSign    = (_currentHalf == 0) ? +1.0f : -1.0f;
+
+    const bool progressOK = (wsProgress * rollSign >= _cfg.liftGateThreshold);
+
+    // Always evaluate every sub-gate for telemetry consistency. The mode
+    // dispatch below picks which ones actually compose into liftGateOK.
+    const bool imuRollOK = (imuState.roll * rollSign >= _cfg.wsThresholdRad);
+
+    bool stanceFlat   = false;
+    bool stanceLoaded = false;
+    if (footSnap != nullptr) {
+        if (isLeftStance) {
+            stanceFlat   = footSnap->leftValid && footSnap->leftFlat;
+            stanceLoaded = footSnap->leftValid && footSnap->leftLoaded;
+        } else {
+            stanceFlat   = footSnap->rightValid && footSnap->rightFlat;
+            stanceLoaded = footSnap->rightValid && footSnap->rightLoaded;
+        }
     }
+
+    bool extraGate = true;
+    if (!poseMode) {
+        switch (_cfg.liftGateMode) {
+            case LiftGateMode::OFF:
+                extraGate = true;
+                break;
+            case LiftGateMode::IMU_ROLL:
+                extraGate = imuRollOK;
+                break;
+            case LiftGateMode::IMU_ROLL_PLUS_FLAT:
+                extraGate = imuRollOK && stanceFlat;
+                break;
+            case LiftGateMode::IMU_ROLL_PLUS_FLAT_PLUS_LOADED:
+                extraGate = imuRollOK && stanceFlat && stanceLoaded;
+                break;
+        }
+    }
+
+    _state.liftGateOK       = progressOK && extraGate;
+    _state.gateImuRollOK    = imuRollOK;
+    _state.gateStanceFlat   = stanceFlat;
+    _state.gateStanceLoaded = stanceLoaded;
+    _state.gateStanceIsLeft = isLeftStance;
 
     _state.subState = _subState;
     _state.phase    = _currentHalf * 0.5f + _halfPhase * 0.5f;

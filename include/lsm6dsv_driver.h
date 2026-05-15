@@ -99,13 +99,9 @@ class LSM6DSVDriver {
 public:
     // wire        : pre-initialized TwoWire instance. Caller MUST have already
     //               called wire->begin(SDA, SCL, clock_hz) before begin().
-    // sa0_pin     : Deprecated. Pass -1. The driver no longer drives SA0.
-    //               Field retained so legacy call sites compile during the
-    //               F1 → F2 cleanup; remove this parameter entirely in a
-    //               later commit after main.cpp is updated.
-    // sa0_high    : Hardwired SA0 level on the breakout.
+    // sa0_high    : Hardwired SA0 level on the breakout. Determines I2C address:
     //                 false -> 0x6A, true -> 0x6B
-    LSM6DSVDriver(TwoWire* wire, int sa0_pin, bool sa0_high);
+    LSM6DSVDriver(TwoWire* wire, bool sa0_high);
 
     // Reset, verify WHO_AM_I, configure ODR + range. Returns true on success.
     // On failure, prints the reason and leaves _initialized = false.
@@ -123,9 +119,10 @@ public:
     // Diagnostic snapshot for the UI probe button. Reads WHO_AM_I + CTRL state
     // without modifying anything. Safe to call even if begin() failed.
     //
-    // NOTE: addr field is new in the I2C version. webcomm.cpp's probe broadcast
-    // does not currently include it — extend the FOOT_PROBE format string to
-    // expose it to the UI if you want address visibility during diagnostics.
+    // `addr` exposes the resolved 7-bit I2C address used by this instance —
+    // useful for confirming SA0 wiring during bench bring-up. The current
+    // FOOT_PROBE WebSocket format omits it; extend webcomm.cpp's broadcast
+    // string if you want it surfaced in the UI.
     struct ProbeResult {
         uint8_t addr;          // resolved 7-bit I2C address used by this instance
         uint8_t whoami;        // 0xFF if NACK
@@ -138,8 +135,7 @@ public:
 
 private:
     TwoWire* _wire;
-    int      _sa0Pin;          // -1 → SA0 hardwired on breakout, no GPIO drive
-    bool     _sa0High;         // requested level → resolved address
+    bool     _sa0High;         // hardwired level → resolved address
     uint8_t  _addr;             // computed from _sa0High in constructor
     bool     _initialized = false;
 

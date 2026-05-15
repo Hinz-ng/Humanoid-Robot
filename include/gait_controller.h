@@ -24,6 +24,7 @@
 #include "project_wide_defs.h"
 #include "gait_types.h"
 #include "leg_ik.h"
+#include "foot_contact.h"
 
 class WeightShift;   // forward declaration — full include in .cpp only
 struct BalanceState; // forward declaration — full include in gait_controller.cpp
@@ -80,6 +81,25 @@ enum class GaitMode : uint8_t {
 };
 
 // ---------------------------------------------------------------------------
+//  LiftGateMode - selectable stack of predicates the swing foot must satisfy
+//  before the lift gate opens (BEYOND the kinematic wsProgress threshold).
+//
+//  Composition is monotonic: each level adds one predicate to the previous
+//  level. Mode dispatch lives in gait_controller.cpp::update(); each predicate
+//  is evaluated once per tick regardless of mode so telemetry stays consistent
+//  with what would happen if the mode were promoted.
+//
+//  Default at boot is IMU_ROLL - identical to pre-F3 behaviour. Promote via
+//  the UI; the firmware does not change mode automatically.
+// ---------------------------------------------------------------------------
+enum class LiftGateMode : uint8_t {
+    OFF                            = 0,  // kinematic only - diagnostic
+    IMU_ROLL                       = 1,  // current default
+    IMU_ROLL_PLUS_FLAT             = 2,  // F3 headline upgrade
+    IMU_ROLL_PLUS_FLAT_PLUS_LOADED = 3,  // opt-in; isFootLoaded() is not yet tuned
+};
+
+// ---------------------------------------------------------------------------
 //  GaitConfig — all runtime-tunable parameters.
 //  Defaults sourced from project_wide_defs.h; override via setConfig() or
 //  CMD:GAIT_TUNE over WebSocket.
@@ -100,10 +120,12 @@ struct GaitConfig {
     // used as a gate. Will gate foot lift in Phase 2 after single-leg stance
     // validation confirms the threshold value is reliable.
     float wsThresholdRad    = GAIT_WEIGHT_SHIFT_THRESHOLD_RAD;  // WS: "wsThresh"
-    
-    // IMU roll gate. Default OFF after Stage 2 task-space WeightShift refactor.
-    // Re-enable only if shift is driven by ankle tilt instead of lateral translation.
-    bool useImuGate       = false;  // WS: "useImuGate"
+
+    // Phase F3: which predicate stack the swing foot must satisfy before the
+    // lift gate opens. See enum above. Defaults to IMU_ROLL so existing tuning
+    // sessions and gait scripts retain identical behaviour after upgrade.
+    // WS key: "liftGateMode" (integer 0..3).
+    LiftGateMode liftGateMode = LiftGateMode::IMU_ROLL;
 
     // Stance hip→ankle drop in mm passed to LegIK as h_sagittal_mm.
     // Sourced from GAIT_STANCE_HEIGHT_MM. Override via WS:"stanceH_mm".
@@ -159,6 +181,19 @@ struct GaitState {
     bool         running    = false;  // true when mode != IDLE
     // POSE_STEP hold point: 0=running, 1=gate-open, 2=peak swing, 3=foot landed.
     uint8_t      poseHold   = 0;
+
+    // Phase F3: per-sub-gate booleans, evaluated every tick. Surface in the
+    // GAIT: WS packet so the UI can show why a higher-mode gate is closed
+    // even when the operator believes it should be open.
+    //   gateImuRollOK     - imuRoll past threshold in correct signed direction
+    //   gateStanceFlat    - isFootFlat() for the stance foot
+    //   gateStanceLoaded  - isFootLoaded() for the stance foot
+    // gateStanceIsLeft mirrors _currentHalf == 1 so the UI can label the
+    // sub-gates with the foot they refer to without re-deriving the mapping.
+    bool gateImuRollOK    = false;
+    bool gateStanceFlat   = false;
+    bool gateStanceLoaded = false;
+    bool gateStanceIsLeft = false;
 
     // Stage 1 IK telemetry. Updated each tick by _submitFootTargetIK().
     uint8_t      lastIKStatusL = 0;   // IKStatus enum value
@@ -222,8 +257,9 @@ public:
     // balState: current or previous tick's BalanceState. Pass nullptr to disable
     //           catch-step detection. The recovery_flag field drives triggerRecovery().
     void update(float dt_s, const IMUState& imuState,
-                const BalanceCorrection* bc       = nullptr,
-                const BalanceState*      balState = nullptr);
+                const BalanceCorrection*   bc       = nullptr,
+                const BalanceState*        balState = nullptr,
+                const FootContactSnapshot* footSnap = nullptr);
 
     // Trigger a single catch-step recovery in the direction implied by the tilt.
     // No-op if mode == RECOVERY_STEP (no re-trigger mid-step) or estopped.

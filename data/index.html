@@ -1211,6 +1211,19 @@
             <span class="text-muted-gray" id="gaitSubLabel">—</span>
         </div>
 
+        <!-- Phase F3: Lift gate mode selector -->
+        <div class="section-label">Lift gate mode</div>
+        <div class="flex-row-wrap-sm mb-10">
+            <button class="btn-sign" id="btnGateOff" onclick="setGateMode(0)">OFF (kinematic)</button>
+            <button class="btn-sign btn-sign-active" id="btnGateImu" onclick="setGateMode(1)">IMU roll</button>
+            <button class="btn-sign" id="btnGateFlat" onclick="setGateMode(2)">IMU + Stance flat</button>
+            <button class="btn-sign" id="btnGateAll" onclick="setGateMode(3)">IMU + Flat + Loaded ⚠</button>
+        </div>
+        <div class="small-note">
+            Default is "IMU roll" — matches pre-F3 behaviour. "Loaded" requires
+            isFootLoaded tuning to be reliable; only enable for tuning sessions.
+        </div>
+
         <!-- Phase progress bar -->
         <div class="gait-phase-wrap">
             <div class="gait-phase-bg">
@@ -1270,6 +1283,18 @@
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">Hold Pt</div>
                 <div class="bal-out-val" id="gaitTelemHold">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Gate: IMU roll</div>
+                <div class="bal-out-val" id="gaitGateImu">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Gate: Stance flat</div>
+                <div class="bal-out-val" id="gaitGateFlat">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Gate: Stance loaded</div>
+                <div class="bal-out-val" id="gaitGateLoad">—</div>
             </div>
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">IK L</div>
@@ -2767,6 +2792,25 @@ function toggleCapture() {
     // Button text syncs from broadcast — see parseGaitState extension below.
 }
 
+function setGateMode(mode) {
+    _setTuneActive();
+    // Update button visual state immediately for responsiveness; firmware
+    // confirms via next GAIT: packet through syncGateModeButtons().
+    syncGateModeButtons(mode);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(`CMD:GAIT_TUNE:liftGateMode=${mode}`);
+    }
+}
+
+function syncGateModeButtons(mode) {
+    const ids = ["btnGateOff", "btnGateImu", "btnGateFlat", "btnGateAll"];
+    ids.forEach((id, idx) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.className = "btn-sign" + (idx === mode ? " btn-sign-active" : "");
+    });
+}
+
 // Parses GAIT: telemetry broadcast from firmware and updates the Phase 1 panel.
 // Format: "phase=X.XXX,mode=N,sub=N,liftL=X.X,liftR=X.X,ws=X.XXX,gate=0|1,hold=N"
 function parseGaitState(payload) {
@@ -2786,6 +2830,32 @@ function parseGaitState(payload) {
     const hold    = parseInt(v["hold"] || "0");
     const stepH   = parseFloat(v["stepH"] || "20");
     const stanceH = parseFloat(v["stanceH"] || "185");
+    const gateMode  = parseInt(v["gateMode"] || "1");
+    const gImu      = (v["gImu"] === "1");
+    const gFlat     = (v["gFlat"] === "1");
+    const gLoad     = (v["gLoad"] === "1");
+    const stanceIsL = (v["gStanceL"] === "1");
+
+    if (!_tuneActive) syncGateModeButtons(gateMode);
+
+    const setGateCell = (id, val) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = val ? "✓" : "—";
+        el.style.color = val ? "#4caf50" : "#888";
+    };
+    setGateCell("gaitGateImu",  gImu);
+    setGateCell("gaitGateFlat", gFlat);
+    setGateCell("gaitGateLoad", gLoad);
+
+    // Label the stance side on the sub-gate cells so the operator knows
+    // which foot the booleans refer to.
+    const stanceLabel = stanceIsL ? "(L stance)" : "(R stance)";
+    document.querySelectorAll("#gaitGateFlat, #gaitGateLoad").forEach(el => {
+        const lbl = el.previousElementSibling;
+        if (lbl) lbl.textContent = lbl.textContent.replace(/\s*\([LR]\sstance\)$/, "")
+                                                  + " " + stanceLabel;
+    });
 
     // Mode badge
     const modeNames  = ["IDLE", "RUNNING", "SINGLE STEP", "W-SHIFT ONLY", "POSE STEP", "RECOVERY"];

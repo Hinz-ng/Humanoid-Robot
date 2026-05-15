@@ -85,4 +85,31 @@ bool isFootLoaded(const IMUState& state,
                   float neutralPitchRad,
                   const FootContactConfig& cfg);
 
+// ---------------------------------------------------------------------------
+// FootContactSnapshot - precomputed per-foot predicate output.
+//
+// Populated once per tick in main.cpp from the latest IMU states + neutral
+// pitch values + FootContactConfig, then passed by const-pointer to consumers
+// (GaitController for the lift gate; WebComm for telemetry). This guarantees:
+//   1. UI display and gate evaluation see IDENTICAL booleans - what you see
+//      on screen is the actual gate input.
+//   2. GaitController has no direct dependency on FootContactConfig, IMUState
+//      sign conventions, or per-foot neutral storage.
+//   3. Unit testing the gate logic is trivial - construct a snapshot literal.
+//
+// `valid` distinguishes "we have meaningful data for both feet" from "one or
+// both estimators are still calibrating / NACKing". A snapshot with valid=false
+// is allowed downstream, but predicate consumers must treat the per-foot bools
+// as untrusted.
+// ---------------------------------------------------------------------------
+struct FootContactSnapshot {
+    bool leftFlat    = false;
+    bool leftLoaded  = false;
+    bool rightFlat   = false;
+    bool rightLoaded = false;
+    bool leftValid   = false;
+    bool rightValid  = false;
+    bool valid       = false;   // leftValid && rightValid
+};
+
 #endif // FOOT_CONTACT_H

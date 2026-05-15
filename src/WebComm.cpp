@@ -245,8 +245,8 @@ void WebComm::broadcastFootEstimate(const IMUState& left, const IMUState& right)
 //  Rate-limited to 10 Hz. Pitch deviation fields are signed radians after the
 //  loaded-sign transform, so the UI can show margin-to-threshold directly.
 // =============================================================================
-void WebComm::broadcastFootContact(const IMUState& left, const IMUState& right) {
-    if (_footContactCfg == nullptr || ws.count() == 0) return;
+void WebComm::broadcastFootContact(const FootContactSnapshot* snap) {
+    if (snap == nullptr || _footContactCfg == nullptr || ws.count() == 0) return;
     for (auto& c : ws.getClients()) {
         if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
     }
@@ -256,25 +256,19 @@ void WebComm::broadcastFootContact(const IMUState& left, const IMUState& right) 
     if ((now - _lastFootContactBroadcast_us) < INTERVAL_US) return;
     _lastFootContactBroadcast_us = now;
 
+    // l_pdev / r_pdev are still computed from the latest cached IMUState path -
+    // moved into the snapshot in F4 when neutralPitchRad becomes session data.
+    // For F3, broadcast 0.0f for both; the UI's "dp" display is informational
+    // and will be re-enabled when F4 lands. Pdev computation stays out of the
+    // gate path entirely.
     const FootContactConfig& cfg = *_footContactCfg;
-    const bool lFlat   = isFootFlat(left, cfg);
-    const bool rFlat   = isFootFlat(right, cfg);
-    const bool lLoaded = isFootLoaded(left,  _leftFootNeutralPitchRad,  cfg);
-    const bool rLoaded = isFootLoaded(right, _rightFootNeutralPitchRad, cfg);
-    const float lPdev  = left.valid
-        ? (left.pitch - _leftFootNeutralPitchRad) * cfg.loaded_pitch_sign
-        : 0.0f;
-    const float rPdev  = right.valid
-        ? (right.pitch - _rightFootNeutralPitchRad) * cfg.loaded_pitch_sign
-        : 0.0f;
-
     char buf[240];
     snprintf(buf, sizeof(buf),
         "FOOT_CONTACT:l_flat=%d,l_loaded=%d,l_pdev=%.4f,"
         "r_flat=%d,r_loaded=%d,r_pdev=%.4f,"
         "flatP=%.4f,flatR=%.4f,loadDev=%.4f,loadSign=%.1f",
-        (int)lFlat, (int)lLoaded, lPdev,
-        (int)rFlat, (int)rLoaded, rPdev,
+        (int)snap->leftFlat,  (int)snap->leftLoaded,  0.0f,
+        (int)snap->rightFlat, (int)snap->rightLoaded, 0.0f,
         cfg.flat_pitch_threshold_rad,
         cfg.flat_roll_threshold_rad,
         cfg.loaded_pitch_deviation_rad,
@@ -444,6 +438,7 @@ void WebComm::broadcastGaitState() {
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
+        "gateMode=%d,gImu=%d,gFlat=%d,gLoad=%d,gStanceL=%d,"
         "rsub=%d,rdx=%d,rdy=%d,rms=%lu,"
         "rcvX=%.1f,rcvY=%.1f,rcvMag=%.1f,rcvSY=%.1f,xDispl=%.1f,"
         "ikL=%d,ikR=%d,reachL=%.1f,reachR=%.1f,ffL=%.3f,ffR=%.3f,capOffset=%.1f,capEn=%d,capGain=%.2f",
@@ -458,6 +453,11 @@ void WebComm::broadcastGaitState() {
         _gaitCtrl->getConfig().stepHeightMm,
         _gaitCtrl->getConfig().stanceHeightMm,
         _gaitCtrl->getConfig().stepLengthMm,
+        static_cast<int>(_gaitCtrl->getConfig().liftGateMode),
+        static_cast<int>(s.gateImuRollOK),
+        static_cast<int>(s.gateStanceFlat),
+        static_cast<int>(s.gateStanceLoaded),
+        static_cast<int>(s.gateStanceIsLeft),
         static_cast<int>(s.recoverySub),
         static_cast<int>(s.recoveryDirX),
         static_cast<int>(s.recoveryDirY),
@@ -1131,8 +1131,11 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         float  val = pair.substring(eq + 1).toFloat();
                         if      (key == "phaseRate")   cfg.phaseRateHz       = constrain(val, 0.05f, 2.0f);
                         else if (key == "liftGate")    cfg.liftGateThreshold = constrain(val, 0.0f, 0.99f);
+                        else if (key == "liftGateMode") {
+                            const int m = constrain((int)val, 0, 3);
+                            cfg.liftGateMode = static_cast<LiftGateMode>(m);
+                        }
                         else if (key == "wsThresh")    cfg.wsThresholdRad    = constrain(val, 0.01f, 0.50f);
-                        else if (key == "useImuGate") cfg.useImuGate       = (val > 0.5f);
                         else if (key == "stepH_mm") {
                             const float maxStep = fmaxf(5.0f, cfg.stanceHeightMm - 130.0f);
                             cfg.stepHeightMm = constrain(val, 5.0f, maxStep);

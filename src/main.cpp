@@ -98,8 +98,8 @@ WeightShift       weightShift;     // gait: CoM lateral shift — wired in setup
 // VERIFY the physical wiring on the bench before flashing — mis-mapping
 // left/right addresses causes the left-foot estimator to consume right-foot
 // data with no error indication.
-LSM6DSVDriver   leftFootIMU (&Wire1, /*sa0_pin=*/-1, /*sa0_high=*/false);
-LSM6DSVDriver   rightFootIMU(&Wire1, /*sa0_pin=*/-1, /*sa0_high=*/true);
+LSM6DSVDriver   leftFootIMU (&Wire1, /*sa0_high=*/false);   // SA0 → GND → 0x6A
+LSM6DSVDriver   rightFootIMU(&Wire1, /*sa0_high=*/true );   // SA0 → 3V3 → 0x6B
 
 // One estimator per foot. FilterConfig differs per-instance — must be passed
 // at construction time. Each estimator runs its OWN calibration cycle
@@ -332,6 +332,23 @@ void loop() {
             }
 #endif
 
+#if FOOT_IMU_ENABLED
+            // Phase F3: precompute per-foot contact predicates once per tick.
+            // Same snapshot drives the lift gate and the UI telemetry - there
+            // is no path by which they can disagree.
+            FootContactSnapshot footSnap;
+            footSnap.leftFlat    = isFootFlat(lf_state, footContactCfg);
+            footSnap.leftLoaded  = isFootLoaded(lf_state, /*neutral=*/0.0f, footContactCfg);
+            footSnap.rightFlat   = isFootFlat(rf_state, footContactCfg);
+            footSnap.rightLoaded = isFootLoaded(rf_state, /*neutral=*/0.0f, footContactCfg);
+            footSnap.leftValid   = lf_state.valid;
+            footSnap.rightValid  = rf_state.valid;
+            footSnap.valid       = footSnap.leftValid && footSnap.rightValid;
+            const FootContactSnapshot* footSnapPtr = &footSnap;
+#else
+            const FootContactSnapshot* footSnapPtr = nullptr;
+#endif
+
             // WeightShift must run BEFORE balanceController so any state it
             // sets (ankle bias, roll setpoint) is visible to balance same tick.
             weightShift.update(dt);
@@ -352,10 +369,10 @@ void loop() {
             if (taskSpace) {
                 balState = balanceController.update(state);
                 const BalanceCorrection bc = balanceController.getLastCorrection();
-                gaitController.update(dt, state, &bc, &balState);
+                gaitController.update(dt, state, &bc, &balState, footSnapPtr);
             } else {
                 const BalanceState lastBal = balanceController.getLastState();
-                gaitController.update(dt, state, nullptr, &lastBal);
+                gaitController.update(dt, state, nullptr, &lastBal, footSnapPtr);
                 balState = balanceController.update(state);
             }
 
@@ -370,7 +387,7 @@ void loop() {
 #if FOOT_IMU_ENABLED
             webComm.broadcastFootIMU(lf_raw, rf_raw);
             webComm.broadcastFootEstimate(lf_state, rf_state);
-            webComm.broadcastFootContact(lf_state, rf_state);
+            webComm.broadcastFootContact(footSnapPtr);
 #endif
             webComm.broadcastBalanceState(balState);
             webComm.broadcastGaitState();

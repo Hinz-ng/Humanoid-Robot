@@ -8,13 +8,13 @@
 #include "imu.h" 
 #include "state_estimator.h"
 #include "balance_controller.h"
+#include "foot_contact.h"
 
 // Forward declarations — only pointers are stored; full types in respective headers.
 class MotionManager;
 class WeightShift;
 class GaitController;   // forward declare — only pointer stored
 class LSM6DSVDriver;    // forward declare — foot IMU diagnostic
-struct FootContactConfig;
 
 class WebComm {
 public:    // ctor can be invoked at global scope; it simply stores the servo pointer.
@@ -32,7 +32,10 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // Phase F1 — foot IMU telemetry. Both methods rate-limit to 20 Hz internally.
     void broadcastFootIMU(const RawIMUData& left, const RawIMUData& right);
     void broadcastFootEstimate(const IMUState& left, const IMUState& right);
-    void broadcastFootContact(const IMUState& left, const IMUState& right);
+    // Accepts a pre-computed snapshot so the UI displays the same booleans
+    // the gait controller saw this tick. Pass nullptr to no-op (used when
+    // FOOT_IMU is compiled out).
+    void broadcastFootContact(const FootContactSnapshot* snap);
     void broadcastCalibStatus(CalibState state, float progress); // --- ADD
     void broadcastBalanceState(const BalanceState& state);
     void broadcastSpeeds();

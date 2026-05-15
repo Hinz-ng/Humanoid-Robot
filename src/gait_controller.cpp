@@ -541,16 +541,22 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             case LiftGateMode::IMU_ROLL:
                 extraGate = imuRollOK;
                 break;
-            case LiftGateMode::IMU_ROLL_PLUS_FLAT:
-                extraGate = imuRollOK && stanceFlat;
+            case LiftGateMode::STANCE_FLAT:
+                extraGate = stanceFlat;
                 break;
-            case LiftGateMode::IMU_ROLL_PLUS_FLAT_PLUS_LOADED:
-                extraGate = imuRollOK && stanceFlat && stanceLoaded;
+            case LiftGateMode::STANCE_LOADED:
+                // STANCE_LOADED implicitly requires the foot to be flat — an
+                // unloaded foot that happens to be flat is not "loaded", and
+                // a loaded-but-tilted foot indicates the stance leg is on the
+                // edge. Compose flat AND loaded so the mode means what its name
+                // suggests. This is the one place we DO compose, because the
+                // two predicates describe the same physical event.
+                extraGate = stanceFlat && stanceLoaded;
                 break;
         }
     }
 
-    _state.liftGateOK       = progressOK && extraGate;
+    _state.liftGateOK = progressOK && extraGate;
     _state.gateImuRollOK    = imuRollOK;
     _state.gateStanceFlat   = stanceFlat;
     _state.gateStanceLoaded = stanceLoaded;

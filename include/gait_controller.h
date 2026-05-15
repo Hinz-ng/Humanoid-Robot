@@ -81,22 +81,36 @@ enum class GaitMode : uint8_t {
 };
 
 // ---------------------------------------------------------------------------
-//  LiftGateMode - selectable stack of predicates the swing foot must satisfy
-//  before the lift gate opens (BEYOND the kinematic wsProgress threshold).
+//  LiftGateMode - independent gate options on top of the always-required
+//  kinematic check (progressOK). These are NOT monotonic refinements; each
+//  mode picks ONE extra predicate the swing foot must satisfy.
 //
-//  Composition is monotonic: each level adds one predicate to the previous
-//  level. Mode dispatch lives in gait_controller.cpp::update(); each predicate
-//  is evaluated once per tick regardless of mode so telemetry stays consistent
-//  with what would happen if the mode were promoted.
+//  progressOK is always required (except in OFF). The extra predicate is
+//  selected per mode:
 //
-//  Default at boot is IMU_ROLL - identical to pre-F3 behaviour. Promote via
-//  the UI; the firmware does not change mode automatically.
+//    OFF        - kinematic only. Diagnostic. Foot lifts as soon as
+//                 |wsProgress| >= liftGateThreshold.
+//    IMU_ROLL   - torso roll past wsThresholdRad in correct direction.
+//                 Only reliable in joint-space balance mode with WeightShift
+//                 injecting roll setpoint. Useless in task-space mode where
+//                 lateral CoM transfer is by foot placement, not torso tilt.
+//    STANCE_FLAT - stance foot's pitch and roll within flat threshold.
+//                  F3 headline. Works in both joint-space and task-space modes.
+//                  Currently the most reliable gate (per hardware tests).
+//    STANCE_LOADED - stance foot's pitch shows the loaded-deviation signature.
+//                    Requires isFootLoaded() to be tuned via F4 voltage-drift
+//                    calibration. Opt-in for tuning sessions only.
+//
+//  Default at boot is STANCE_FLAT - empirically the only sub-gate that
+//  reliably passes on this platform. Promote / demote at runtime via UI.
+//  IMU_ROLL is kept as a selectable option for joint-space sessions and as a
+//  diagnostic measurement (always evaluated, always broadcast for telemetry).
 // ---------------------------------------------------------------------------
 enum class LiftGateMode : uint8_t {
-    OFF                            = 0,  // kinematic only - diagnostic
-    IMU_ROLL                       = 1,  // current default
-    IMU_ROLL_PLUS_FLAT             = 2,  // F3 headline upgrade
-    IMU_ROLL_PLUS_FLAT_PLUS_LOADED = 3,  // opt-in; isFootLoaded() is not yet tuned
+    OFF           = 0,  // kinematic only
+    IMU_ROLL      = 1,  // torso roll past threshold (legacy joint-space)
+    STANCE_FLAT   = 2,  // stance foot's pitch + roll inside flat threshold
+    STANCE_LOADED = 3,  // stance foot pitch shows load signature (needs F4)
 };
 
 // ---------------------------------------------------------------------------
@@ -121,11 +135,11 @@ struct GaitConfig {
     // validation confirms the threshold value is reliable.
     float wsThresholdRad    = GAIT_WEIGHT_SHIFT_THRESHOLD_RAD;  // WS: "wsThresh"
 
-    // Phase F3: which predicate stack the swing foot must satisfy before the
-    // lift gate opens. See enum above. Defaults to IMU_ROLL so existing tuning
-    // sessions and gait scripts retain identical behaviour after upgrade.
-    // WS key: "liftGateMode" (integer 0..3).
-    LiftGateMode liftGateMode = LiftGateMode::IMU_ROLL;
+    // Phase F3: which single extra predicate the lift gate requires beyond
+    // progressOK. See LiftGateMode block above.
+    // Default STANCE_FLAT — verified working on hardware; IMU_ROLL and LOADED
+    // each have known prerequisites and are not safe boot defaults.
+    LiftGateMode liftGateMode = LiftGateMode::STANCE_FLAT;
 
     // Stance hip→ankle drop in mm passed to LegIK as h_sagittal_mm.
     // Sourced from GAIT_STANCE_HEIGHT_MM. Override via WS:"stanceH_mm".
@@ -190,6 +204,9 @@ struct GaitState {
     //   gateStanceLoaded  - isFootLoaded() for the stance foot
     // gateStanceIsLeft mirrors _currentHalf == 1 so the UI can label the
     // sub-gates with the foot they refer to without re-deriving the mapping.
+    // Default at boot is OFF (kinematic only) — matches pre-F3 effective behaviour
+    // where useImuGate was false in task-space mode. IMU_ROLL is opt-in and is only
+    // reliable when joint-space balance is armed; do not promote in task-space mode.
     bool gateImuRollOK    = false;
     bool gateStanceFlat   = false;
     bool gateStanceLoaded = false;

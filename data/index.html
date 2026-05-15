@@ -1211,17 +1211,18 @@
             <span class="text-muted-gray" id="gaitSubLabel">—</span>
         </div>
 
-        <!-- Phase F3: Lift gate mode selector -->
+        <!-- Phase F3: Lift gate mode selector (independent options, not stacked) -->
         <div class="section-label">Lift gate mode</div>
         <div class="flex-row-wrap-sm mb-10">
             <button class="btn-sign" id="btnGateOff" onclick="setGateMode(0)">OFF (kinematic)</button>
-            <button class="btn-sign btn-sign-active" id="btnGateImu" onclick="setGateMode(1)">IMU roll</button>
-            <button class="btn-sign" id="btnGateFlat" onclick="setGateMode(2)">IMU + Stance flat</button>
-            <button class="btn-sign" id="btnGateAll" onclick="setGateMode(3)">IMU + Flat + Loaded ⚠</button>
+            <button class="btn-sign" id="btnGateImu" onclick="setGateMode(1)">IMU roll (legacy)</button>
+            <button class="btn-sign btn-sign-active" id="btnGateFlat" onclick="setGateMode(2)">Stance flat</button>
+            <button class="btn-sign" id="btnGateLoad" onclick="setGateMode(3)">Stance flat + loaded ⚠</button>
         </div>
         <div class="small-note">
-            Default is "IMU roll" — matches pre-F3 behaviour. "Loaded" requires
-            isFootLoaded tuning to be reliable; only enable for tuning sessions.
+            Independent options — each picks ONE extra predicate beyond the kinematic
+            progress check. "Stance flat" is the verified default. "IMU roll" only
+            works with joint-space balance armed; "loaded" needs F4 calibration.
         </div>
 
         <!-- Phase progress bar -->
@@ -2803,7 +2804,7 @@ function setGateMode(mode) {
 }
 
 function syncGateModeButtons(mode) {
-    const ids = ["btnGateOff", "btnGateImu", "btnGateFlat", "btnGateAll"];
+    const ids = ["btnGateOff", "btnGateImu", "btnGateFlat", "btnGateLoad"];
     ids.forEach((id, idx) => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -2830,7 +2831,7 @@ function parseGaitState(payload) {
     const hold    = parseInt(v["hold"] || "0");
     const stepH   = parseFloat(v["stepH"] || "20");
     const stanceH = parseFloat(v["stanceH"] || "185");
-    const gateMode  = parseInt(v["gateMode"] || "1");
+    const gateMode  = parseInt(v["gateMode"] || "2");
     const gImu      = (v["gImu"] === "1");
     const gFlat     = (v["gFlat"] === "1");
     const gLoad     = (v["gLoad"] === "1");

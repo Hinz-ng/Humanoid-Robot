@@ -60,7 +60,7 @@ constexpr float GAIT_PHASE_RATE_HZ          = 0.45f;  // cycles/sec
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
 // If drag returns at 15 mm, the root cause is the gate, not step height.
-constexpr float GAIT_STEP_HEIGHT_MM         = 16.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 14.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 35.0f;  // Phase 3+; forward stride
 
@@ -108,7 +108,7 @@ constexpr float GAIT_CAPTURE_INV_OMEGA0_S = 0.1498f;
 // Capture-point default gain. 1.0 = full LIP correction.
 // Reduce toward 0.5 if hardware capture-point is hot. Increase only after
 // confirming the LIP model is conservative on this platform.
-constexpr float GAIT_CAPTURE_GAIN_DEFAULT = 0.6f;
+constexpr float GAIT_CAPTURE_GAIN_DEFAULT = 0.25f;
 
 // Hard cap on the capture offset's contribution to a single step (mm).
 // Must remain inside the IK reach budget after combining with stepLengthMm.

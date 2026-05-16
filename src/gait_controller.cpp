@@ -37,6 +37,7 @@
 #include "gait_controller.h"
 #include "balance_controller.h"  // BalanceState — needed for recovery flag observation
 #include "weight_shift.h"
+#include "swing_foot_leveler.h"  // SwingFootLeveler — ankle bias during swing
 #include "oe_control.h"
 #include "leg_ik.h"
 #include "joint_config.h"
@@ -341,11 +342,18 @@ LegIKResult GaitController::_submitFootTargetIK(Side side,
     // SOURCE_GAIT (priority 1). SOURCE_BALANCE (priority 2) on shared joints
     // will still override these. Phase 4 refactor: channels resolved through
     // channelFor(side, LegJoint::*) instead of the legacy isRight ternaries.
+    //
+    // Swing-foot leveler: additive ankle bias for the airborne leg.
+    // anklePitchBiasFor() / ankleRollBiasFor() return 0 for the stance leg
+    // (activeSide check inside the leveler) and 0 in L0 (enabled=false),
+    // so this is safe to apply unconditionally on both legs.
+    const float pitch_bias = _swingLeveler ? _swingLeveler->anklePitchBiasFor(side) : 0.0f;
+    const float roll_bias  = _swingLeveler ? _swingLeveler->ankleRollBiasFor(side)  : 0.0f;
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_PITCH),   r.hip_pitch_deg);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::KNEE_PITCH),  r.knee_pitch_deg);
-    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_PITCH), r.ankle_pitch_deg);
+    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_PITCH), r.ankle_pitch_deg + pitch_bias);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_ROLL),    r.hip_roll_deg);
-    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_ROLL),  r.ankle_roll_deg);
+    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_ROLL),  r.ankle_roll_deg + roll_bias);
 
     return r;
 }
@@ -475,6 +483,15 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         return;
     }
 
+    // Swing-foot leveler: update once per non-recovery tick.
+    // liftFrac=0 outside SWINGING causes the envelope to return 0, so the
+    // IIR decays smoothly without any bias reaching the ankle joints.
+    if (_swingLeveler) {
+        const float lf = (_subState == StepSubState::SWINGING)
+                         ? _swingFrac(_halfPhase) : 0.0f;
+        _swingLeveler->update(_swingSide, lf);
+    }
+
     const WeightShiftState wsState = _ws ? _ws->getState() : WeightShiftState{};
     const bool wsActive = (_ws != nullptr) &&
                           (fabsf(wsState.progress) > 0.005f || wsState.ramping);
@@ -571,20 +588,19 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     _state.phase    = static_cast<uint8_t>(_swingSide) * 0.5f + _halfPhase * 0.5f;
     _state.poseHold = _poseHoldPt;
 
-    // Keep the cycle baseline alive on every active tick. Later branches may
-    // overwrite one leg with a swing target. Stage 3: legs reflect their gait-
-    // cycle role even when not actively lifting, so accumulated body displacement
-    // is preserved through WAIT_SHIFT and STABILIZING.
-    _submitCycleStanceBoth(_halfPhase, bc);
-
-    // BUG FIX (weight-shift runaway): when gait mode is IDLE but WeightShift is
-    // active (manual WEIGHT_SHIFT:left/right from UI), only the stance IK should
-    // run. The swing FSM below MUST NOT execute — otherwise the gate-open path
-    // lifts the foot and _advanceHalf() flips _swingSide, retriggering an
-    // opposite-direction WeightShift. Result is endless L↔R oscillation that
-    // only the Center button stops. Pinning substate to WAIT_SHIFT and zeroing
-    // poseHold keeps state coherent for the next GAIT_START.
+    // BUG FIX (weight-shift step artefact): when gait mode is IDLE but
+    // WeightShift is active (manual WEIGHT_SHIFT:left/right from UI), submit
+    // ONLY the neutral stance pose (no stride). _submitCycleStanceBoth applies
+    // the Stage 3 cycle stride formula based on _swingSide and _halfPhase,
+    // which produces a ±stepLengthMm/2 x offset per leg even at _halfPhase=0
+    // — visible as a fore/aft "step" alongside the requested lateral shift.
+    // _submitStanceBothLegs passes strideScale=0 and is the correct call here.
+    //
+    // Must come BEFORE _submitCycleStanceBoth, not after. The previous fix
+    // pinned FSM state to prevent oscillation but did not undo the bad stance
+    // submission that had already gone into the MotionManager slot table.
     if (!gaitActive) {
+        _submitStanceBothLegs(bc);
         _subState         = StepSubState::WAIT_SHIFT;
         _state.subState   = _subState;
         _halfPhase        = 0.0f;
@@ -593,6 +609,12 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         _state.liftR_deg  = 0.0f;
         return;
     }
+
+    // Active gait modes only: cycle-role aware stance (Stage 3). Both legs
+    // receive the stride formula so accumulated body displacement is preserved
+    // through WAIT_SHIFT and STABILIZING. Later branches (SWINGING) overwrite
+    // one leg with a swing-arc target.
+    _submitCycleStanceBoth(_halfPhase, bc);
 
     if (_subState == StepSubState::STOPPING) {
         const uint32_t elapsed = millis() - _stopStartMs;
@@ -859,6 +881,10 @@ void GaitController::triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad) 
     _swingSide       = Side::LEFT;
     _poseHoldPt      = 0;
     _state.poseHold  = 0;
+
+    // Reset leveler IIR state on recovery entry (Risk #9): recovery uses fast
+    // smoothstep trajectories; the leveler would fight them if left armed.
+    if (_swingLeveler) _swingLeveler->reset();
 
     _state.mode    = GaitMode::RECOVERY_STEP;
     _state.running = true;

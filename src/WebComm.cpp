@@ -7,6 +7,7 @@
 #include "weight_shift.h"      // WeightShift, ShiftDirection, WeightShiftConfig
 #include "leg_ik.h"            // LegIK, FootTarget, LegIKResult — IK test commands
 #include "gait_controller.h"
+#include "swing_foot_leveler.h" // SwingFootLeveler — SWING_LEVELER_TUNE + GAIT: telemetry
 #include "lsm6dsv_driver.h"    // LSM6DSVDriver for foot IMU diagnostic
 #include "foot_contact.h"
 
@@ -42,6 +43,10 @@ void WebComm::setFootIMUs(LSM6DSVDriver* left, LSM6DSVDriver* right) {
 
 void WebComm::setFootContactConfig(FootContactConfig* cfg) {
     _footContactCfg = cfg;
+}
+
+void WebComm::setSwingFootLeveler(SwingFootLeveler* l) {
+    _swingLeveler = l;
 }
 
 void WebComm::setFootNeutralPitch(float leftRad, float rightRad) {
@@ -440,14 +445,21 @@ void WebComm::broadcastGaitState() {
     _lastGaitBroadcast_us = now;
 
     const GaitState& s = _gaitCtrl->getState();
-    char buf[480];
+
+    // Pull leveler state (all zeros when leveler not wired or disabled).
+    const SwingFootLevelerState lvl = _swingLeveler
+                                      ? _swingLeveler->getState()
+                                      : SwingFootLevelerState{};
+
+    char buf[600];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
         "gateMode=%d,gImu=%d,gFlat=%d,gLoad=%d,gStanceL=%d,"
         "rsub=%d,rdx=%d,rdy=%d,rms=%lu,"
         "rcvX=%.1f,rcvY=%.1f,rcvMag=%.1f,rcvSY=%.1f,xDispl=%.1f,"
-        "ikL=%d,ikR=%d,reachL=%.1f,reachR=%.1f,ffL=%.3f,ffR=%.3f,capOffset=%.1f,capEn=%d,capGain=%.2f",
+        "ikL=%d,ikR=%d,reachL=%.1f,reachR=%.1f,ffL=%.3f,ffR=%.3f,capOffset=%.1f,capEn=%d,capGain=%.2f,"
+        "lvl_act=%d,lvl_pbias=%.3f,lvl_rbias=%.3f,lvl_pfoot=%.4f,lvl_rfoot=%.4f,lvl_env=%.3f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -476,7 +488,20 @@ void WebComm::broadcastGaitState() {
         s.lastFlatFootErrL_deg, s.lastFlatFootErrR_deg,
         s.captureOffsetMm,
         static_cast<int>(_gaitCtrl->getConfig().captureEnabled),
-        _gaitCtrl->getConfig().captureGain
+        _gaitCtrl->getConfig().captureGain,
+        // Swing-foot leveler fields (L0+):
+        //   lvl_act  — armed this tick (enabled + in envelope + IMU valid)
+        //   lvl_pbias — would-be pitch bias (P × envelope, pre-IIR); non-zero in L0
+        //   lvl_rbias — would-be roll bias
+        //   lvl_pfoot — filtered swing-foot pitch (rad)
+        //   lvl_rfoot — filtered swing-foot roll (rad)
+        //   lvl_env   — envelope scale [0..1]
+        static_cast<int>(lvl.armed),
+        lvl.ankle_pitch_bias_deg,
+        lvl.ankle_roll_bias_deg,
+        lvl.foot_pitch_rad,
+        lvl.foot_roll_rad,
+        lvl.envelope_scale
     );
     ws.textAll(buf);
 }
@@ -812,6 +837,55 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             }
         }
         
+        // ---------------------------------------------------------------------
+        //  Swing-foot leveler tuning (L0+)
+        //  Protocol: CMD:SWING_LEVELER_TUNE:enabled=0,kp_pitch=25,kp_roll=25,
+        //                                   max_p=8,max_r=6,dead=0.0175,
+        //                                   in_lpf=0.6,out_iir=0.5,
+        //                                   eng=0.20,peak=0.55,dis=0.80
+        //  All fields optional; unrecognised keys are silently skipped.
+        //  Operator must keep eng < peak < dis; firmware does not cross-check.
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("SWING_LEVELER_TUNE:")) {
+            if (_swingLeveler) {
+                SwingFootLevelerConfig cfg = _swingLeveler->getConfig();
+                String params = cmd.substring(19);
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    String pair = (comma == -1) ? params.substring(start)
+                                                : params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq != -1) {
+                        String key = pair.substring(0, eq);
+                        float  val = pair.substring(eq + 1).toFloat();
+                        if      (key == "enabled")  cfg.enabled             = (val > 0.5f);
+                        else if (key == "kp_pitch") cfg.kp_pitch_deg_per_rad = constrain(val, 0.0f, 90.0f);
+                        else if (key == "kp_roll")  cfg.kp_roll_deg_per_rad  = constrain(val, 0.0f, 90.0f);
+                        else if (key == "max_p")    cfg.max_pitch_bias_deg   = constrain(val, 0.0f, 15.0f);
+                        else if (key == "max_r")    cfg.max_roll_bias_deg    = constrain(val, 0.0f, 15.0f);
+                        else if (key == "dead")     cfg.deadband_rad         = constrain(val, 0.0f, 0.20f);
+                        else if (key == "in_lpf")   cfg.input_lpf_alpha      = constrain(val, 0.0f, 0.99f);
+                        else if (key == "out_iir")  cfg.output_iir_alpha     = constrain(val, 0.0f, 0.99f);
+                        else if (key == "eng")      cfg.engage_lift_frac     = constrain(val, 0.0f, 1.0f);
+                        else if (key == "peak")     cfg.peak_lift_frac       = constrain(val, 0.0f, 1.0f);
+                        else if (key == "dis")      cfg.disengage_lift_frac  = constrain(val, 0.0f, 1.0f);
+                    }
+                    start = (comma == -1) ? params.length() : comma + 1;
+                }
+                _swingLeveler->setConfig(cfg);
+                Serial.printf("[WebComm] SWING_LEVELER_TUNE: en=%d kpP=%.1f kpR=%.1f "
+                              "maxP=%.1f maxR=%.1f dead=%.4f in_lpf=%.2f out_iir=%.2f "
+                              "eng=%.2f peak=%.2f dis=%.2f\n",
+                              (int)cfg.enabled,
+                              cfg.kp_pitch_deg_per_rad, cfg.kp_roll_deg_per_rad,
+                              cfg.max_pitch_bias_deg,   cfg.max_roll_bias_deg,
+                              cfg.deadband_rad,
+                              cfg.input_lpf_alpha,      cfg.output_iir_alpha,
+                              cfg.engage_lift_frac,     cfg.peak_lift_frac,
+                              cfg.disengage_lift_frac);
+            }
+        }
         // ---------------------------------------------------------------------
         //  Balance tuning — parses key=value pairs, normalises ratios
         // ---------------------------------------------------------------------

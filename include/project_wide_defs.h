@@ -218,4 +218,35 @@ constexpr float FOOT_IMU_ACCEL_LPF_BETA = 0.70f;
 // Kept as a separate flag in case bench-style debugging is needed later.
 #define FOOT_IMU_BENCH_PRINT  0
 
+// ============================================================
+// SWING-FOOT LEVELER (Section 14)
+// Closed-loop ankle pitch/roll correction during swing phase.
+// Reads swing-leg foot IMU; emits additive bias on top of IK angles.
+// Enabled=false by default; opt-in via CMD:SWING_LEVELER_TUNE:enabled=1.
+// ============================================================
+
+// P gain: deg of ankle correction per rad of foot tilt error.
+// 1 rad ~= 57 deg, so kp=25 -> ~0.44 deg per deg of foot tilt. Conservative
+// start; tune toward 0.7 on hardware during L1.
+constexpr float SWING_LEVELER_KP_PITCH_DEG_PER_RAD = 25.0f;
+constexpr float SWING_LEVELER_KP_ROLL_DEG_PER_RAD  = 25.0f;
+
+// Bias clamps. Must remain inside IK ankle soft-limits with margin for the
+// IK-computed flat-foot value (which already consumes most of the range
+// during deep swing arcs).
+constexpr float SWING_LEVELER_MAX_PITCH_BIAS_DEG = 8.0f;
+constexpr float SWING_LEVELER_MAX_ROLL_BIAS_DEG  = 6.0f;
+
+// Input deadband. ~1 deg below the noise floor of the foot LPF at rest.
+constexpr float SWING_LEVELER_DEADBAND_RAD = 0.0175f;
+
+// IIR alphas. 0 = no smoothing; 0.9 = heavy.
+constexpr float SWING_LEVELER_INPUT_LPF_ALPHA  = 0.6f;
+constexpr float SWING_LEVELER_OUTPUT_IIR_ALPHA = 0.5f;
+
+// Lift-frac envelope corners.
+constexpr float SWING_LEVELER_ENGAGE_LIFT_FRAC    = 0.20f;
+constexpr float SWING_LEVELER_PEAK_LIFT_FRAC      = 0.55f;
+constexpr float SWING_LEVELER_DISENGAGE_LIFT_FRAC = 0.80f;
+
 #endif // PROJECT_WIDE_DEFS_H

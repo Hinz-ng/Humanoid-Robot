@@ -31,6 +31,7 @@
 // WeightShift class still forward-declared below for the pointer member.
 struct BalanceState; // forward declaration — full include in gait_controller.cpp
 class BalanceController; // forward declaration
+class SwingFootLeveler;  // forward declaration — full include in gait_controller.cpp
 
 // ---------------------------------------------------------------------------
 //  Step execution sub-state (within each half-cycle).
@@ -290,10 +291,15 @@ public:
     void             setConfig(const GaitConfig& cfg) { _cfg = cfg; }
     const GaitState& getState()  const          { return _state; }
 
+    // Wire swing-foot leveler. Call once in setup() after leveler.init().
+    // When wired, _submitFootTargetIK applies leveler bias on the swing leg.
+    void setSwingFootLeveler(SwingFootLeveler* l) { _swingLeveler = l; }
+
 private:
-    MotionManager* _mm = nullptr;
-    WeightShift*   _ws = nullptr;
-    BalanceController* _bal = nullptr;
+    MotionManager*     _mm           = nullptr;
+    WeightShift*       _ws           = nullptr;
+    BalanceController* _bal          = nullptr;
+    SwingFootLeveler*  _swingLeveler = nullptr;
 
     GaitConfig   _cfg;
     GaitState    _state;

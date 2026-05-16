@@ -36,6 +36,9 @@ enum class Side : uint8_t {
     RIGHT = 1,
 };
 
+static_assert(static_cast<uint8_t>(Side::LEFT)  == 0, "Side::LEFT  must be 0");
+static_assert(static_cast<uint8_t>(Side::RIGHT) == 1, "Side::RIGHT must be 1");
+
 constexpr uint8_t SIDE_COUNT = 2;
 
 // Container index. Use for `T arr[SIDE_COUNT]` patterns.

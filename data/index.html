@@ -1422,6 +1422,78 @@
             ⚠ SOURCE_GAIT (priority 1) loses to SOURCE_BALANCE (priority 2) on shared joints — expected.
         </div>
 
+        <!-- ── Swing-Foot Leveler sub-panel (L0 — passive telemetry only) ── -->
+        <div class="panel-subtitle-divider">
+            Swing-Foot Leveler — L0 (passive: enabled=false by default)
+        </div>
+        <div class="flex-row-wrap-sm mb-10">
+            <span class="gait-mode-badge gait-mode-idle" id="lvlEnabledBadge">DISABLED</span>
+            <span class="gait-gate-badge gait-gate-closed" id="lvlArmedBadge">DISARMED</span>
+            <span class="text-muted-gray" style="margin-left:8px" id="lvlImuValidLabel">IMU: —</span>
+            <button class="btn-sign" style="margin-left:auto" onclick="toggleLevelerEnable()">Toggle Enable</button>
+        </div>
+
+        <!-- Envelope progress bar -->
+        <div style="margin-bottom:10px">
+            <div style="font-size:11px;color:#aaa;margin-bottom:3px">Envelope scale (0–1)</div>
+            <div style="background:#1a1a1a;border-radius:4px;height:10px;width:100%;overflow:hidden">
+                <div id="lvlEnvFill" style="background:#7c4dff;height:100%;width:0%;transition:width 0.1s"></div>
+            </div>
+            <div id="lvlEnvLabel" style="font-size:11px;color:#aaa;margin-top:2px">0.000</div>
+        </div>
+
+        <!-- Leveler live telemetry -->
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Would-be pitch bias (°)</div>
+                <div class="bal-out-val" id="lvlTelemPbias">0.000</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Would-be roll bias (°)</div>
+                <div class="bal-out-val" id="lvlTelemRbias">0.000</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Foot pitch (rad)</div>
+                <div class="bal-out-val" id="lvlTelemPfoot">0.0000</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Foot roll (rad)</div>
+                <div class="bal-out-val" id="lvlTelemRfoot">0.0000</div>
+            </div>
+        </div>
+
+        <!-- Leveler kp tuning sliders -->
+        <div class="gait-tune-grid">
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>kp pitch (°/rad)</span>
+                    <span class="tune-val" id="tvLvlKpPitch">25</span>
+                </div>
+                <input type="range" id="slLvlKpPitch" min="0" max="60" step="1" value="25"
+                       oninput="updateLevelerLabel('kp_pitch', this.value); sendLevelerTune()">
+                <div class="small-note">
+                    Pitch correction gain. Verify sign in L0 before enabling.
+                </div>
+            </div>
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>kp roll (°/rad)</span>
+                    <span class="tune-val" id="tvLvlKpRoll">25</span>
+                </div>
+                <input type="range" id="slLvlKpRoll" min="0" max="60" step="1" value="25"
+                       oninput="updateLevelerLabel('kp_roll', this.value); sendLevelerTune()">
+                <div class="small-note">
+                    Roll correction gain. Keep 0 until pitch sign is confirmed.
+                </div>
+            </div>
+        </div>
+
+        <div class="note-secondary">
+            L0: lvl_pbias shows P×envelope (would-be, pre-IIR). Non-zero even when disabled.<br>
+            Confirm sign: foot tilts +pitch → bias should be negative (dorsiflexion).<br>
+            ⚠ Enable (L1) only after clean sign confirmation on hardware.
+        </div>
+
     </div><!-- /.gait-body -->
 </div><!-- /.gait-panel -->
 
@@ -2983,6 +3055,83 @@ function parseGaitState(payload) {
         _syncSlider("slGaitCapGain", "tvGaitCapGain", capGain, 2);
         const capMax = parseFloat(v["capMax"] || "15");
         _syncSlider("slGaitCapMax", "tvGaitCapMax", capMax, 0);
+    }
+
+    // Swing-foot leveler L0 telemetry
+    {
+        const lvlAct   = (v["lvl_act"] === "1");
+        const lvlPbias = parseFloat(v["lvl_pbias"] || "0");
+        const lvlRbias = parseFloat(v["lvl_rbias"] || "0");
+        const lvlPfoot = parseFloat(v["lvl_pfoot"] || "0");
+        const lvlRfoot = parseFloat(v["lvl_rfoot"] || "0");
+        const lvlEnv   = parseFloat(v["lvl_env"]   || "0");
+
+        set("lvlTelemPbias", lvlPbias.toFixed(3));
+        set("lvlTelemRbias", lvlRbias.toFixed(3));
+        set("lvlTelemPfoot", lvlPfoot.toFixed(4));
+        set("lvlTelemRfoot", lvlRfoot.toFixed(4));
+
+        const envFill = document.getElementById("lvlEnvFill");
+        const envLbl  = document.getElementById("lvlEnvLabel");
+        if (envFill) envFill.style.width = (Math.min(lvlEnv, 1.0) * 100).toFixed(1) + "%";
+        if (envLbl)  envLbl.textContent  = lvlEnv.toFixed(3);
+
+        const armedBadge = document.getElementById("lvlArmedBadge");
+        if (armedBadge) {
+            armedBadge.textContent = lvlAct ? "ARMED" : "DISARMED";
+            armedBadge.className   = "gait-gate-badge " + (lvlAct ? "gait-gate-open" : "gait-gate-closed");
+        }
+
+        // IMU valid: inferred from whether foot pitch/roll are non-zero or from armed
+        const imuLbl = document.getElementById("lvlImuValidLabel");
+        if (imuLbl) {
+            // lvl_act implies imu valid; if not armed but pbias is non-zero the imu was valid
+            const imuValid = lvlAct || (lvlEnv > 0.0 && (Math.abs(lvlPfoot) > 0.001 || Math.abs(lvlRfoot) > 0.001));
+            imuLbl.textContent = "IMU: " + (imuValid ? "valid" : "—");
+            imuLbl.style.color = imuValid ? "#66bb6a" : "#888";
+        }
+    }
+}
+
+// =============================================================================
+//  SWING-FOOT LEVELER TUNING
+// =============================================================================
+
+const _lvlTuneMap = {
+    kp_pitch: { el: "tvLvlKpPitch", decimals: 0 },
+    kp_roll:  { el: "tvLvlKpRoll",  decimals: 0 },
+};
+
+function updateLevelerLabel(id, rawVal) {
+    _setTuneActive();
+    const m = _lvlTuneMap[id];
+    if (m) document.getElementById(m.el).textContent =
+        parseFloat(rawVal).toFixed(m.decimals);
+}
+
+function sendLevelerTune() {
+    clearTimeout(sendLevelerTune._t);
+    sendLevelerTune._t = setTimeout(() => {
+        const kpP = parseFloat(document.getElementById("slLvlKpPitch").value).toFixed(1);
+        const kpR = parseFloat(document.getElementById("slLvlKpRoll").value).toFixed(1);
+        const msg = `CMD:SWING_LEVELER_TUNE:kp_pitch=${kpP},kp_roll=${kpR}`;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(msg);
+            console.log("[WS TX]", msg);
+        }
+    }, 80);
+}
+
+function toggleLevelerEnable() {
+    const badge  = document.getElementById("lvlEnabledBadge");
+    const enable = badge && badge.textContent === "DISABLED";
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(`CMD:SWING_LEVELER_TUNE:enabled=${enable ? 1 : 0}`);
+        console.log("[WS TX] SWING_LEVELER_TUNE:enabled=" + (enable ? 1 : 0));
+    }
+    if (badge) {
+        badge.textContent = enable ? "ENABLED" : "DISABLED";
+        badge.className   = "gait-mode-badge " + (enable ? "gait-mode-run" : "gait-mode-idle");
     }
 }
 

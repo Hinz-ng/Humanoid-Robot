@@ -16,6 +16,7 @@
 #include <Wire.h>
 #include "foot_contact.h"
 #include "lsm6dsv_driver.h"
+#include "swing_foot_leveler.h"
 
 // Build a FilterConfig tuned for the foot LSM6DSV. Mirrors torso defaults
 // where defensible; deviates where the chip differs from BMI160 or where
@@ -108,6 +109,7 @@ LSM6DSVDriver   rightFootIMU(&Wire1, /*sa0_high=*/true );   // SA0 → 3V3 → 0
 StateEstimator leftFootEstimator (_makeFootFilterConfig());
 StateEstimator rightFootEstimator(_makeFootFilterConfig());
 FootContactConfig footContactCfg;
+SwingFootLeveler  swingFootLeveler;
 
 #endif
 GaitController    gaitController;   // open-loop walking gait
@@ -175,6 +177,9 @@ void oe_clear() {
     // terminated immediately. start(IDLE) clears recovery private state and
     // re-centers WeightShift (harmless after forceCenterImmediate above).
     gaitController.start(GaitMode::IDLE);
+#if FOOT_IMU_ENABLED
+    swingFootLeveler.reset();
+#endif
     _oe_estopped = false;
     _oe_released = true;
     digitalWrite(OE_PIN, LOW);
@@ -251,6 +256,9 @@ void setup() {
     webComm.setFootIMUs(&leftFootIMU, &rightFootIMU);
     webComm.setFootContactConfig(&footContactCfg);
     webComm.setFootNeutralPitch(0.0f, 0.0f);   // F4 will source session neutrals
+    swingFootLeveler.init(&leftFootEstimator, &rightFootEstimator);
+    gaitController.setSwingFootLeveler(&swingFootLeveler);
+    webComm.setSwingFootLeveler(&swingFootLeveler);
 #endif
 
     Serial.println("System Ready.");

@@ -13,8 +13,9 @@
 // Forward declarations — only pointers are stored; full types in respective headers.
 class MotionManager;
 class WeightShift;
-class GaitController;   // forward declare — only pointer stored
-class LSM6DSVDriver;    // forward declare — foot IMU diagnostic
+class GaitController;    // forward declare — only pointer stored
+class LSM6DSVDriver;     // forward declare — foot IMU diagnostic
+class SwingFootLeveler;  // forward declare — swing-foot leveler (L0+)
 
 class WebComm {
 public:    // ctor can be invoked at global scope; it simply stores the servo pointer.
@@ -53,6 +54,8 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // Wire foot IMUs for diagnostic probing via WebSocket.
     void setFootIMUs(LSM6DSVDriver* left, LSM6DSVDriver* right);
     void setFootContactConfig(FootContactConfig* cfg);
+    // Wire swing-foot leveler for CMD:SWING_LEVELER_TUNE and GAIT: telemetry.
+    void setSwingFootLeveler(SwingFootLeveler* l);
     // Phase 3: dual-parameter form preserved for callers that set both
     // neutrals atomically (setup() in main.cpp). Prefer the Side-keyed overload
     // for new code — positional parameter order is the silent-swap hazard this
@@ -81,6 +84,7 @@ private:
     FootContactConfig* _footContactCfg      = nullptr;
     float              _leftFootNeutralPitchRad  = 0.0f;
     float              _rightFootNeutralPitchRad = 0.0f;
+    SwingFootLeveler*  _swingLeveler        = nullptr;
     
     void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
     void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);

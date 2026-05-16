@@ -15,6 +15,7 @@
 #include "servo_control.h"
 #include "joint_config.h"
 #include "gait_types.h"
+#include "side.h"   // Side — Phase 3 setAnkleRollBias overload
 
 class MotionManager;
 
@@ -212,9 +213,19 @@ public:
     const BalanceConfig& getConfig() const                   { return _cfg; }
     BalanceState         getLastState() const                { return _lastState; }
     void                 setMotionManager(MotionManager* mm) { _motionManager = mm; }
+    // Phase 3: dual-parameter form preserved for callers that set both biases
+    // atomically (oe_clear in main.cpp). Prefer the Side-keyed overload below
+    // for new code — positional parameter order is the original silent-swap
+    // hazard this refactor closes.
     void                 setAnkleRollBias(float leftDeg, float rightDeg) {
         _cfg.ankle_roll_bias_l_deg = leftDeg;
         _cfg.ankle_roll_bias_r_deg = rightDeg;
+    }
+    // Phase 3: Side-keyed single-side setter. Calling twice per tick (once for
+    // each Side) is equivalent to the dual-parameter form above.
+    void                 setAnkleRollBias(Side side, float deg) {
+        if (side == Side::LEFT)  _cfg.ankle_roll_bias_l_deg = deg;
+        else                      _cfg.ankle_roll_bias_r_deg = deg;
     }
     void                 setRollSetpointRad(float rad) { _cfg.roll_setpoint_rad = rad; }
 

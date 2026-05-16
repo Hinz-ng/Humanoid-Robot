@@ -25,8 +25,10 @@
 #include "gait_types.h"
 #include "leg_ik.h"
 #include "foot_contact.h"
+#include "side.h"            // Side / LegJoint / channelFor — Phase 4 / Phase 5
+#include "weight_shift.h"    // ShiftDirection enum — Phase 5 _lastShiftDir type
 
-class WeightShift;   // forward declaration — full include in .cpp only
+// WeightShift class still forward-declared below for the pointer member.
 struct BalanceState; // forward declaration — full include in gait_controller.cpp
 class BalanceController; // forward declaration
 
@@ -202,8 +204,8 @@ struct GaitState {
     //   gateImuRollOK     - imuRoll past threshold in correct signed direction
     //   gateStanceFlat    - isFootFlat() for the stance foot
     //   gateStanceLoaded  - isFootLoaded() for the stance foot
-    // gateStanceIsLeft mirrors _currentHalf == 1 so the UI can label the
-    // sub-gates with the foot they refer to without re-deriving the mapping.
+    // gateStanceIsLeft mirrors (_swingSide == Side::RIGHT) so the UI can label
+    // the sub-gates with the foot they refer to without re-deriving the mapping.
     // Default at boot is OFF (kinematic only) — matches pre-F3 effective behaviour
     // where useImuGate was false in task-space mode. IMU_ROLL is opt-in and is only
     // reliable when joint-space balance is armed; do not promote in task-space mode.
@@ -297,16 +299,20 @@ private:
     GaitState    _state;
 
     // Sub-cycle tracking.
-    // _currentHalf: 0 = right foot swings (LEFT shift), 1 = left foot swings (RIGHT shift).
+    // _swingSide:   which leg is currently the swing leg. Phase 5 refactor —
+    //               replaces uint8_t _currentHalf where 0 meant LEFT-swings,
+    //               1 meant RIGHT-swings (hardware-verified mapping that now
+    //               lives in the type system, not in a comment).
     // _halfPhase:   [0, 1) within current half-cycle; advances only in SWINGING sub-state.
     // _subState:    mirrors _state.subState; kept local for clarity in update().
-    uint8_t      _currentHalf = 0;
+    Side         _swingSide   = Side::LEFT;
     float        _halfPhase   = 0.0f;
     StepSubState _subState    = StepSubState::WAIT_SHIFT;
 
     // Last direction sent to WeightShift (avoids redundant trigger calls).
-    // +1 = LEFT shift, -1 = RIGHT shift, 0 = none/center.
-    int8_t _lastShiftDir = 0;
+    // ShiftDirection::NONE means no shift commanded. Phase 5 refactor —
+    // replaces int8_t with the canonical wire-protocol enum.
+    ShiftDirection _lastShiftDir = ShiftDirection::NONE;
 
     IMUState _lastImuState{};   // cached at top of update() for trajectory helpers
 
@@ -319,14 +325,15 @@ private:
     uint32_t _stabilizeStartMs = 0;
     uint32_t _stopStartMs      = 0;
     float    _stopSwingFrac    = 0.0f;
-    uint8_t  _stopHalf         = 0;
+    Side     _stopSwingSide    = Side::LEFT;   // Phase 5 — was uint8_t _stopHalf
 
     // Stage 1: catch-step recovery private state.
     RecoverySubState _rcvSub          = RecoverySubState::TRIGGERED;
     int8_t           _rcvDirX         = 0;     // sagittal direction at trigger
     int8_t           _rcvDirY         = 0;     // lateral direction at trigger
     uint32_t         _rcvSubStartMs   = 0;     // millis() when _rcvSub last changed
-    bool             _rcvSwingIsRight = false; // which leg is the swing leg
+    Side             _rcvSwingSide    = Side::LEFT; // which leg is the recovery swing leg
+                                                     // Phase 5 refactor — was bool _rcvSwingIsRight
 
     // Stage 2: per-trigger step magnitudes and refractory lockout.
     float    _rcvStepX_mm       = 0.0f;  // sagittal step magnitude this recovery (signed)
@@ -343,8 +350,11 @@ private:
     // advancement.
     void _publishSwingLegMaskToWS() const;
 
-    // Trigger WeightShift direction matching the given half-cycle.
-    void  _triggerShiftForHalf(uint8_t half);
+    // Trigger WeightShift direction matching the given swing side.
+    // Phase 5 refactor: was _triggerShiftForHalf(uint8_t half). The body of
+    // this function is the single place in the codebase where the wire-protocol
+    // swing-side → ShiftDirection mapping is performed.
+    void  _triggerShiftForSwing(Side swing);
 
     // Complete current half-cycle: advance to next half, re-gate, or stop.
     void  _advanceHalf();
@@ -395,7 +405,14 @@ private:
     // SOURCE_GAIT. Logs (rate-limited) and skips submission on
     // IKStatus::DOMAIN_ERROR. Returns the LegIKResult so callers can update
     // telemetry without re-solving.
-    LegIKResult _submitFootTargetIK(bool isRight, const FootTarget& t);
+    // Phase 4: Side-typed canonical form. Channel selection routes through
+    // channelFor(side, LegJoint::*) instead of the legacy isRight ternaries.
+    LegIKResult _submitFootTargetIK(Side side, const FootTarget& t);
+    // Phase 4 backward-compat shim — keep bool-typed call sites compiling
+    // until they migrate. Removed in Phase 7.
+    LegIKResult _submitFootTargetIK(bool isRight, const FootTarget& t) {
+        return _submitFootTargetIK(sideFromIsRight(isRight), t);
+    }
 
     // Re-assert both legs' stance baseline for this tick.
     // Used whenever gait or WeightShift owns the legs, even if no swing is active.

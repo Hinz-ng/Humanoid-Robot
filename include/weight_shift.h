@@ -21,6 +21,7 @@
 #include <Arduino.h>
 #include "joint_config.h"
 #include "motion_manager.h"
+#include "side.h"   // Side / SIDE_COUNT / sideIdx — Phase 2 refactor
 
 class BalanceController;
 struct BalanceConfig;
@@ -170,12 +171,12 @@ private:
     WeightShiftState   _state;
 
     // Per-ankle independent ramp state.
-    float _rightAnkleProgress = 0.0f;
-    float _leftAnkleProgress  = 0.0f;
-    float _targetRight        = 0.0f;
-    float _targetLeft         = 0.0f;
-    float _rightDelayRemaining_ms = 0.0f;
-    float _leftDelayRemaining_ms  = 0.0f;
+    // Phase 2 refactor: collapsed _rightAnkleProgress / _leftAnkleProgress and
+    // the paired target / delay members into Side-indexed arrays. Element 0 =
+    // LEFT, element 1 = RIGHT — see Side enum in side.h.
+    float _ankleProgress[SIDE_COUNT]     = { 0.0f, 0.0f };
+    float _targetProgress[SIDE_COUNT]    = { 0.0f, 0.0f };
+    float _delayRemaining_ms[SIDE_COUNT] = { 0.0f, 0.0f };
 
     float _lastInjectedSetpointRad = 0.0f;
     uint32_t _settledAtMs = 0;

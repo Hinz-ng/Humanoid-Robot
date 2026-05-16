@@ -22,12 +22,11 @@ void WeightShift::init(BalanceController* bal, MotionManager* mm) {
 void WeightShift::forceCenterImmediate() {
     _state = {};
     _state.direction = ShiftDirection::NONE;
-    _rightAnkleProgress     = 0.0f;
-    _leftAnkleProgress      = 0.0f;
-    _targetRight            = 0.0f;
-    _targetLeft             = 0.0f;
-    _rightDelayRemaining_ms = 0.0f;
-    _leftDelayRemaining_ms  = 0.0f;
+    for (uint8_t i = 0; i < SIDE_COUNT; ++i) {
+        _ankleProgress[i]     = 0.0f;
+        _targetProgress[i]    = 0.0f;
+        _delayRemaining_ms[i] = 0.0f;
+    }
     _lastInjectedSetpointRad = 0.0f;
     _settledAtMs = 0;
     _smoothedForwardLean_mm  = 0.0f;
@@ -61,24 +60,36 @@ void WeightShift::trigger(ShiftDirection dir) {
     _state.direction = dir;
 
     if (dir == ShiftDirection::NONE) {
-        _targetRight = _targetLeft = 0.0f;
-        _rightDelayRemaining_ms = _leftDelayRemaining_ms = 0.0f;
+        for (uint8_t i = 0; i < SIDE_COUNT; ++i) {
+            _targetProgress[i]    = 0.0f;
+            _delayRemaining_ms[i] = 0.0f;
+        }
         Serial.println("[WeightShift] CENTER — both ankles ramping simultaneously.");
         return;
     }
 
+    // Both ankles ramp to the same magnitude target. The stance side starts
+    // immediately; the swing side waits shift_phase_delay_ms. Sign and the
+    // stance/swing assignment depend on direction — same physical effect as
+    // before the Phase 2 refactor.
     if (dir == ShiftDirection::LEFT) {
-        _targetRight = 1.0f;
-        _targetLeft  = 1.0f;
-        _rightDelayRemaining_ms = 0.0f;
-        _leftDelayRemaining_ms  = _cfg.shift_phase_delay_ms;
+        // CoM moves onto RIGHT foot: stance = RIGHT (immediate), swing = LEFT (delayed).
+        const Side stance = Side::RIGHT;
+        const Side swing  = Side::LEFT;
+        _targetProgress[sideIdx(Side::LEFT)]  = 1.0f;
+        _targetProgress[sideIdx(Side::RIGHT)] = 1.0f;
+        _delayRemaining_ms[sideIdx(stance)] = 0.0f;
+        _delayRemaining_ms[sideIdx(swing)]  = _cfg.shift_phase_delay_ms;
         Serial.printf("[WeightShift] LEFT (CoM→right) — right(stance) immediate, "
                       "left(swing) +%.0fms.\n", _cfg.shift_phase_delay_ms);
     } else {  // RIGHT
-        _targetRight = -1.0f;
-        _targetLeft  = -1.0f;
-        _leftDelayRemaining_ms  = 0.0f;
-        _rightDelayRemaining_ms = _cfg.shift_phase_delay_ms;
+        // CoM moves onto LEFT foot: stance = LEFT (immediate), swing = RIGHT (delayed).
+        const Side stance = Side::LEFT;
+        const Side swing  = Side::RIGHT;
+        _targetProgress[sideIdx(Side::LEFT)]  = -1.0f;
+        _targetProgress[sideIdx(Side::RIGHT)] = -1.0f;
+        _delayRemaining_ms[sideIdx(stance)] = 0.0f;
+        _delayRemaining_ms[sideIdx(swing)]  = _cfg.shift_phase_delay_ms;
         Serial.printf("[WeightShift] RIGHT (CoM→left) — left(stance) immediate, "
                       "right(swing) +%.0fms.\n", _cfg.shift_phase_delay_ms);
     }
@@ -93,34 +104,32 @@ void WeightShift::update(float dt_s) {
     const float ramp_s = fmaxf(_cfg.ramp_ms, 10.0f) * 1e-3f;
     const float step   = dt_s / ramp_s;
 
-    // ── Advance right ankle ───────────────────────────────────────────────────
-    if (_rightDelayRemaining_ms > 0.0f) {
-        _rightDelayRemaining_ms = fmaxf(_rightDelayRemaining_ms - dt_ms, 0.0f);
-    } else {
-        float d = _targetRight - _rightAnkleProgress;
-        _rightAnkleProgress = (fabsf(d) <= step)
-                              ? _targetRight
-                              : _rightAnkleProgress + copysignf(step, d);
-    }
-
-    // ── Advance left ankle ────────────────────────────────────────────────────
-    if (_leftDelayRemaining_ms > 0.0f) {
-        _leftDelayRemaining_ms = fmaxf(_leftDelayRemaining_ms - dt_ms, 0.0f);
-    } else {
-        float d = _targetLeft - _leftAnkleProgress;
-        _leftAnkleProgress = (fabsf(d) <= step)
-                             ? _targetLeft
-                             : _leftAnkleProgress + copysignf(step, d);
+    // ── Advance both ankles (Side-indexed loop, post-Phase-2) ────────────────
+    for (uint8_t i = 0; i < SIDE_COUNT; ++i) {
+        if (_delayRemaining_ms[i] > 0.0f) {
+            _delayRemaining_ms[i] = fmaxf(_delayRemaining_ms[i] - dt_ms, 0.0f);
+        } else {
+            const float d = _targetProgress[i] - _ankleProgress[i];
+            _ankleProgress[i] = (fabsf(d) <= step)
+                                ? _targetProgress[i]
+                                : _ankleProgress[i] + copysignf(step, d);
+        }
     }
 
     // ── Update state for telemetry ────────────────────────────────────────────
-    _state.right_progress = _rightAnkleProgress;
-    _state.left_progress  = _leftAnkleProgress;
-    _state.progress       = (_rightAnkleProgress + _leftAnkleProgress) * 0.5f;
-    _state.ramping        = (fabsf(_rightAnkleProgress - _targetRight) > 1e-3f ||
-                              fabsf(_leftAnkleProgress  - _targetLeft)  > 1e-3f ||
-                              _rightDelayRemaining_ms > 0.0f ||
-                              _leftDelayRemaining_ms  > 0.0f);
+    // Public field names (right_progress / left_progress) preserved — wire
+    // protocol and UI parsers depend on them. Reads come from the Side-indexed
+    // canonical store.
+    _state.right_progress = _ankleProgress[sideIdx(Side::RIGHT)];
+    _state.left_progress  = _ankleProgress[sideIdx(Side::LEFT)];
+    _state.progress       = (_ankleProgress[sideIdx(Side::RIGHT)]
+                            + _ankleProgress[sideIdx(Side::LEFT)]) * 0.5f;
+    _state.ramping        = (fabsf(_ankleProgress[sideIdx(Side::RIGHT)]
+                                   - _targetProgress[sideIdx(Side::RIGHT)]) > 1e-3f ||
+                              fabsf(_ankleProgress[sideIdx(Side::LEFT)]
+                                    - _targetProgress[sideIdx(Side::LEFT)])  > 1e-3f ||
+                              _delayRemaining_ms[sideIdx(Side::RIGHT)] > 0.0f ||
+                              _delayRemaining_ms[sideIdx(Side::LEFT)]  > 0.0f);
     if (!_state.ramping && _settledAtMs == 0
         && _state.direction != ShiftDirection::NONE) {
         _settledAtMs = millis();
@@ -150,13 +159,20 @@ void WeightShift::update(float dt_s) {
     const float scaleL = (_swingMask == SwingLeg::LEFT)  ? (1.0f - _swingLiftFrac) : 1.0f;
     const float scaleR = (_swingMask == SwingLeg::RIGHT) ? (1.0f - _swingLiftFrac) : 1.0f;
 
+    // Sign convention preserved char-for-char from pre-Phase-2 (see
+    // _applyRollCorrection): bias_r = -rightProgress × amp, bias_l = +leftProgress × amp.
+    // Both produce the same physical body tilt direction — this is the mirror
+    // operation, NOT duplication.
     const float biasRightDeg = (fabsf(_cfg.ankle_shift_deg) > 0.01f)
-                               ? (-_rightAnkleProgress * _cfg.ankle_shift_deg * scaleR)
+                               ? (-_ankleProgress[sideIdx(Side::RIGHT)] * _cfg.ankle_shift_deg * scaleR)
                                : 0.0f;
     const float biasLeftDeg  = (fabsf(_cfg.ankle_shift_deg) > 0.01f)
-                               ? (+_leftAnkleProgress  * _cfg.ankle_shift_deg * scaleL)
+                               ? (+_ankleProgress[sideIdx(Side::LEFT)]  * _cfg.ankle_shift_deg * scaleL)
                                : 0.0f;
-    _bal->setAnkleRollBias(biasLeftDeg, biasRightDeg);
+    // Phase 3: use the Side-keyed setter overload — equivalent to the dual-param
+    // form. Two writes per tick, same per-tick work as before.
+    _bal->setAnkleRollBias(Side::LEFT,  biasLeftDeg);
+    _bal->setAnkleRollBias(Side::RIGHT, biasRightDeg);
 
     // Roll setpoint: use average progress. Update only if changed > 0.5 mrad.
     // Suppressed in task-space mode — lateral CoM control flows through

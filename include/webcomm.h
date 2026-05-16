@@ -53,7 +53,12 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // Wire foot IMUs for diagnostic probing via WebSocket.
     void setFootIMUs(LSM6DSVDriver* left, LSM6DSVDriver* right);
     void setFootContactConfig(FootContactConfig* cfg);
+    // Phase 3: dual-parameter form preserved for callers that set both
+    // neutrals atomically (setup() in main.cpp). Prefer the Side-keyed overload
+    // for new code — positional parameter order is the silent-swap hazard this
+    // refactor closes.
     void setFootNeutralPitch(float leftRad, float rightRad);
+    void setFootNeutralPitch(Side side, float rad);
 private:
     AsyncWebServer server;
     AsyncWebSocket ws;

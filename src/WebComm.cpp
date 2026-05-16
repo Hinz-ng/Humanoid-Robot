@@ -49,6 +49,12 @@ void WebComm::setFootNeutralPitch(float leftRad, float rightRad) {
     _rightFootNeutralPitchRad = rightRad;
 }
 
+// Phase 3 — Side-keyed overload. See header for migration guidance.
+void WebComm::setFootNeutralPitch(Side side, float rad) {
+    if (side == Side::LEFT) _leftFootNeutralPitchRad  = rad;
+    else                     _rightFootNeutralPitchRad = rad;
+}
+
 // ---------------------------------------------------------------------------
 
 void listFiles() {

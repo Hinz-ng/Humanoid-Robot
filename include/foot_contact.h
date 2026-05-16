@@ -22,6 +22,7 @@
 
 #include <Arduino.h>
 #include "state_estimator.h"  // IMUState
+#include "side.h"             // Side / sideIdx — Phase 1 refactor
 
 // ---------------------------------------------------------------------------
 // FootContactConfig — all tuneables in one place. WS-tunable in F2.
@@ -103,13 +104,30 @@ bool isFootLoaded(const IMUState& state,
 // as untrusted.
 // ---------------------------------------------------------------------------
 struct FootContactSnapshot {
-    bool leftFlat    = false;
-    bool leftLoaded  = false;
-    bool rightFlat   = false;
-    bool rightLoaded = false;
-    bool leftValid   = false;
-    bool rightValid  = false;
-    bool valid       = false;   // leftValid && rightValid
+    // Phase 1 refactor: canonical representation is now arrays indexed by Side.
+    // The reference members below alias the array entries so existing callers
+    // that read `leftFlat` / `rightFlat` / etc. continue to compile unchanged.
+    // Reference members make this struct non-aggregate and non-copy-assignable;
+    // it is only constructed on the stack each tick (main.cpp) and passed by
+    // const-pointer to consumers, so this is acceptable.
+    bool flat[SIDE_COUNT]   = { false, false };
+    bool loaded[SIDE_COUNT] = { false, false };
+    bool valid[SIDE_COUNT]  = { false, false };
+
+    // Aggregate validity — was `valid` (scalar) before Phase 1. Renamed because
+    // `valid` is now the per-side array. Only writer (main.cpp) updated; no
+    // external reader of the old aggregate scalar exists.
+    bool allValid = false;
+
+    // ── Backward-compat references — DO NOT add new uses ─────────────────────
+    // Keep main.cpp / webcomm.cpp / gait_controller.cpp compiling unchanged
+    // through Phase 1. Removed in Phase 7 alongside their callers.
+    bool& leftFlat    = flat[sideIdx(Side::LEFT)];
+    bool& leftLoaded  = loaded[sideIdx(Side::LEFT)];
+    bool& leftValid   = valid[sideIdx(Side::LEFT)];
+    bool& rightFlat   = flat[sideIdx(Side::RIGHT)];
+    bool& rightLoaded = loaded[sideIdx(Side::RIGHT)];
+    bool& rightValid  = valid[sideIdx(Side::RIGHT)];
 };
 
 #endif // FOOT_CONTACT_H

@@ -337,13 +337,14 @@ void loop() {
             // Same snapshot drives the lift gate and the UI telemetry - there
             // is no path by which they can disagree.
             FootContactSnapshot footSnap;
-            footSnap.leftFlat    = isFootFlat(lf_state, footContactCfg);
-            footSnap.leftLoaded  = isFootLoaded(lf_state, /*neutral=*/0.0f, footContactCfg);
-            footSnap.rightFlat   = isFootFlat(rf_state, footContactCfg);
-            footSnap.rightLoaded = isFootLoaded(rf_state, /*neutral=*/0.0f, footContactCfg);
-            footSnap.leftValid   = lf_state.valid;
-            footSnap.rightValid  = rf_state.valid;
-            footSnap.valid       = footSnap.leftValid && footSnap.rightValid;
+            const IMUState* foot_states[SIDE_COUNT] = { &lf_state, &rf_state };
+            for (uint8_t i = 0; i < SIDE_COUNT; ++i) {
+                footSnap.flat[i]   = isFootFlat(*foot_states[i], footContactCfg);
+                footSnap.loaded[i] = isFootLoaded(*foot_states[i], /*neutral=*/0.0f, footContactCfg);
+                footSnap.valid[i]  = foot_states[i]->valid;
+            }
+            footSnap.allValid = footSnap.valid[sideIdx(Side::LEFT)]
+                             && footSnap.valid[sideIdx(Side::RIGHT)];
             const FootContactSnapshot* footSnapPtr = &footSnap;
 #else
             const FootContactSnapshot* footSnapPtr = nullptr;

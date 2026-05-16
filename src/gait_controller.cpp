@@ -18,9 +18,10 @@
 //                Once _halfPhase >= 1.0, _advanceHalf() flips the half-cycle
 //                and re-enters WAIT_SHIFT for the next leg.
 //
-// Weight shift direction (hardware-verified):
-//   _currentHalf == 0 → LEFT shift (body over left leg, LEFT foot swings)
-//   _currentHalf == 1 → RIGHT shift (body over right leg, RIGHT foot swings)
+// Weight shift direction (hardware-verified, Phase 5 — now type-keyed):
+//   _swingSide == Side::LEFT  → LEFT shift (body over left leg, LEFT foot swings)
+//   _swingSide == Side::RIGHT → RIGHT shift (body over right leg, RIGHT foot swings)
+// _triggerShiftForSwing() owns the wire-protocol mapping.
 //
 // POSE_STEP mode pause points:
 //   1 = gate-open   : weight shifted, foot still on ground (verify CoM)
@@ -51,15 +52,15 @@ void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController*
     _ws               = ws;
     _bal              = bal;
     _state            = {};
-    _currentHalf      = 0;
+    _swingSide        = Side::LEFT;
     _halfPhase        = 0.0f;
     _subState         = StepSubState::WAIT_SHIFT;
-    _lastShiftDir     = 0;
+    _lastShiftDir     = ShiftDirection::NONE;
     _poseHoldPt       = 0;
     _stabilizeStartMs = 0;
     _stopStartMs      = 0;
     _stopSwingFrac    = 0.0f;
-    _stopHalf         = 0;
+    _stopSwingSide    = Side::LEFT;
     Serial.println("[GaitCtrl] Initialized.");
 }
 
@@ -79,21 +80,21 @@ void GaitController::start(GaitMode mode) {
         _state.wsProgress = 0.0f;
         _state.liftGateOK = false;
         _state.poseHold   = 0;
-        _currentHalf      = 0;
+        _swingSide        = Side::LEFT;
         _halfPhase        = 0.0f;
         _subState         = StepSubState::WAIT_SHIFT;
-        _lastShiftDir     = 0;
+        _lastShiftDir     = ShiftDirection::NONE;
         _poseHoldPt       = 0;
         _stabilizeStartMs = 0;
         _stopStartMs      = 0;
         _stopSwingFrac    = 0.0f;
-        _stopHalf         = 0;
+        _stopSwingSide    = Side::LEFT;
         // Stage 1+: clear recovery state so stale telemetry is not broadcast.
         _rcvSub              = RecoverySubState::TRIGGERED;
         _rcvDirX             = 0;
         _rcvDirY             = 0;
         _rcvSubStartMs       = 0;
-        _rcvSwingIsRight     = false;
+        _rcvSwingSide        = Side::LEFT;
         _state.recoverySub       = RecoverySubState::TRIGGERED;
         _state.recoveryDirX      = 0;
         _state.recoveryDirY      = 0;
@@ -107,18 +108,19 @@ void GaitController::start(GaitMode mode) {
         return;
     }
 
-    // RUNNING, SINGLE_STEP, WSHIFT_ONLY, POSE_STEP all start from half=0.
-    _currentHalf      = 0;
+    // RUNNING, SINGLE_STEP, WSHIFT_ONLY, POSE_STEP all start from LEFT-swing
+    // (was _currentHalf = 0 — same hardware-verified mapping, now type-keyed).
+    _swingSide        = Side::LEFT;
     _halfPhase        = 0.0f;
     _subState         = StepSubState::WAIT_SHIFT;
-    _lastShiftDir     = 0;
+    _lastShiftDir     = ShiftDirection::NONE;
     _poseHoldPt       = 0;
     _stabilizeStartMs = 0;
     _stopStartMs      = 0;
     _stopSwingFrac    = 0.0f;
-    _stopHalf         = 0;
+    _stopSwingSide    = Side::LEFT;
     _state.poseHold   = 0;
-    _triggerShiftForHalf(0);  // begin LEFT shift immediately
+    _triggerShiftForSwing(Side::LEFT);  // begin LEFT-swing shift immediately
 
     Serial.printf("[GaitCtrl] start mode=%d\n", static_cast<int>(mode));
 }
@@ -130,7 +132,7 @@ void GaitController::stop() {
     _stopSwingFrac = (_subState == StepSubState::SWINGING)
                      ? _swingFrac(_halfPhase)
                      : 0.0f;
-    _stopHalf       = _currentHalf;
+    _stopSwingSide  = _swingSide;
     _stopStartMs    = millis();
     _subState       = StepSubState::STOPPING;
     _state.subState = _subState;
@@ -164,22 +166,27 @@ void GaitController::nextPose() {
 }
 
 // ---------------------------------------------------------------------------
-//  _triggerShiftForHalf  —  send the correct WeightShift direction for the
-//  given half-cycle. Idempotent: skipped if direction has not changed.
+//  _triggerShiftForSwing  —  send the correct WeightShift direction for the
+//  given swing side. Idempotent: skipped if direction has not changed.
+//
+//  This function is the SINGLE place in the codebase where the wire-protocol
+//  inversion lives:
+//    swing == LEFT  → CoM must go onto RIGHT leg → protocol command LEFT
+//    swing == RIGHT → CoM must go onto LEFT  leg → protocol command RIGHT
+//  (Yes, the names match — see weight_shift.h ShiftDirection convention block.)
 // ---------------------------------------------------------------------------
-void GaitController::_triggerShiftForHalf(uint8_t half) {
+void GaitController::_triggerShiftForSwing(Side swing) {
     if (!_ws) return;
-    // half=0 → body weight over RIGHT leg (right=stance, left=swing) → trigger LEFT
-    // half=1 → body weight over LEFT  leg (left=stance,  right=swing) → trigger RIGHT
-    // (Enum values reversed; see weight_shift.h convention block.)
-    const int8_t wantDir = (half == 0) ? +1 : -1;
+    const ShiftDirection wantDir = (swing == Side::LEFT)
+                                    ? ShiftDirection::LEFT
+                                    : ShiftDirection::RIGHT;
     if (wantDir == _lastShiftDir) return;
     _lastShiftDir = wantDir;
-    _ws->trigger(wantDir > 0 ? ShiftDirection::LEFT : ShiftDirection::RIGHT);
-    Serial.printf("[GaitCtrl] half=%d  trigger=%s  CoM→%s\n",
-                  half,
-                  wantDir > 0 ? "LEFT"  : "RIGHT",
-                  wantDir > 0 ? "right" : "left");
+    _ws->trigger(wantDir);
+    Serial.printf("[GaitCtrl] swing=%s  trigger=%s  CoM→%s\n",
+                  sideName(swing),
+                  (wantDir == ShiftDirection::LEFT) ? "LEFT"  : "RIGHT",
+                  (wantDir == ShiftDirection::LEFT) ? "right" : "left");
 }
 
 // ---------------------------------------------------------------------------
@@ -292,7 +299,7 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
 //  avoid serial flood. UNREACHABLE / LIMIT_CLAMPED still submit the (clamped)
 //  solution; status is recorded for the UI.
 // ---------------------------------------------------------------------------
-LegIKResult GaitController::_submitFootTargetIK(bool isRight,
+LegIKResult GaitController::_submitFootTargetIK(Side side,
                                                  const FootTarget& t) {
     LegIKResult r;
     if (_mm == nullptr) { r.status = IKStatus::DOMAIN_ERROR; return r; }
@@ -306,7 +313,7 @@ LegIKResult GaitController::_submitFootTargetIK(bool isRight,
         if (now - _lastLogMs > 1000) {
             _lastLogMs = now;
             Serial.printf("[GaitCtrl] IK DOMAIN_ERROR  side=%s  x=%.1f h=%.1f y=%.1f\n",
-                          isRight ? "R" : "L",
+                          sideName(side),
                           t.x_mm, t.h_sagittal_mm, t.y_mm);
         }
         return r;
@@ -325,25 +332,20 @@ LegIKResult GaitController::_submitFootTargetIK(bool isRight,
             _lastFFLogMs = now;
             Serial.printf("[GaitCtrl] FLAT-FOOT GUARD  side=%s  err=%.2f deg  "
                           "x=%.1f h=%.1f reach=%.1f%% - pose held.\n",
-                          isRight ? "R" : "L", r.flat_foot_error_deg,
+                          sideName(side), r.flat_foot_error_deg,
                           t.x_mm, t.h_sagittal_mm, r.sagittal_reach_pct);
         }
         return r;   // status fields populated; caller updates telemetry
     }
 
-    const uint8_t hipPitch   = isRight ? IDX_R_HIP_PITCH   : IDX_L_HIP_PITCH;
-    const uint8_t kneePitch  = isRight ? IDX_R_KNEE_PITCH  : IDX_L_KNEE_PITCH;
-    const uint8_t anklePitch = isRight ? IDX_R_ANKLE_PITCH : IDX_L_ANKLE_PITCH;
-    const uint8_t hipRoll    = isRight ? IDX_R_HIP_ROLL    : IDX_L_HIP_ROLL;
-    const uint8_t ankleRoll  = isRight ? IDX_R_ANKLE_ROLL  : IDX_L_ANKLE_ROLL;
-
     // SOURCE_GAIT (priority 1). SOURCE_BALANCE (priority 2) on shared joints
-    // will still override these. Expected for Stage 1 — see refactor §3.
-    _mm->submit(SOURCE_GAIT, hipPitch,   r.hip_pitch_deg);
-    _mm->submit(SOURCE_GAIT, kneePitch,  r.knee_pitch_deg);
-    _mm->submit(SOURCE_GAIT, anklePitch, r.ankle_pitch_deg);
-    _mm->submit(SOURCE_GAIT, hipRoll,    r.hip_roll_deg);
-    _mm->submit(SOURCE_GAIT, ankleRoll,  r.ankle_roll_deg);
+    // will still override these. Phase 4 refactor: channels resolved through
+    // channelFor(side, LegJoint::*) instead of the legacy isRight ternaries.
+    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_PITCH),   r.hip_pitch_deg);
+    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::KNEE_PITCH),  r.knee_pitch_deg);
+    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_PITCH), r.ankle_pitch_deg);
+    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_ROLL),    r.hip_roll_deg);
+    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_ROLL),  r.ankle_roll_deg);
 
     return r;
 }
@@ -384,7 +386,7 @@ void GaitController::_submitStanceBothLegs(const BalanceCorrection* bc) {
 // ---------------------------------------------------------------------------
 void GaitController::_submitCycleStanceBoth(float localPhase,
                                               const BalanceCorrection* bc) {
-    const bool leftIsSwing = (_currentHalf == 0);
+    const bool leftIsSwing = (_swingSide == Side::LEFT);
     const FootTarget tL = _buildFootTarget(/*isRight=*/false, /*liftFrac=*/0.0f,
                                             /*isSwing=*/  leftIsSwing,
                                             localPhase, bc);
@@ -405,28 +407,29 @@ void GaitController::_submitCycleStanceBoth(float localPhase,
 
 // ---------------------------------------------------------------------------
 //  _advanceHalf  —  called when _halfPhase >= 1.0 (foot back on ground).
-//  Flips the half-cycle and re-enters WAIT_SHIFT for the next leg.
-//  SINGLE_STEP stops after completing half=1 (both legs have taken one step).
+//  Flips the swing side and re-enters WAIT_SHIFT for the next leg.
+//  SINGLE_STEP stops after completing the RIGHT-swing half (both legs have
+//  taken one step).
 // ---------------------------------------------------------------------------
 void GaitController::_advanceHalf() {
-    if (_state.mode == GaitMode::SINGLE_STEP && _currentHalf == 1) {
+    if (_state.mode == GaitMode::SINGLE_STEP && _swingSide == Side::RIGHT) {
         stop();
         Serial.println("[GaitCtrl] SINGLE_STEP complete — IDLE.");
         return;
     }
 
-    _currentHalf      = 1 - _currentHalf;   // 0→1 or 1→0
+    _swingSide        = otherSide(_swingSide);
     _halfPhase        = 0.0f;
     _state.cycleXDispl_mm = 0.0f;
     _subState         = StepSubState::STABILIZING;
     _stabilizeStartMs = millis();
     // Center the weight shift; the structural/IIR transients from the half just
-    // completed damp during the hold. _triggerShiftForHalf() for the new half
+    // completed damp during the hold. _triggerShiftForSwing() for the new half
     // runs after STABILIZE expires (see update() STABILIZING branch).
     if (_ws) _ws->trigger(ShiftDirection::NONE);
-    _lastShiftDir = 0;
-    Serial.printf("[GaitCtrl] STABILIZE — half=%d, %ums hold\n",
-                  _currentHalf, (unsigned)GAIT_STABILIZE_MS);
+    _lastShiftDir = ShiftDirection::NONE;
+    Serial.printf("[GaitCtrl] STABILIZE — swing=%s, %ums hold\n",
+                  sideName(_swingSide), (unsigned)GAIT_STABILIZE_MS);
 }
 
 // ---------------------------------------------------------------------------
@@ -508,11 +511,11 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     //
     // POSE_STEP unconditionally bypasses Layer 2 - the operator is in the loop.
     //
-    // half=0 -> LEFT foot swings -> RIGHT foot is stance (rollSign = +1)
-    // half=1 -> RIGHT foot swings -> LEFT  foot is stance (rollSign = -1)
+    // swing=LEFT  -> RIGHT foot is stance (rollSign = +1)
+    // swing=RIGHT -> LEFT  foot is stance (rollSign = -1)
     const bool poseMode     = (_state.mode == GaitMode::POSE_STEP);
-    const bool isLeftStance = (_currentHalf == 1);
-    const float rollSign    = (_currentHalf == 0) ? +1.0f : -1.0f;
+    const bool isLeftStance = (_swingSide == Side::RIGHT);
+    const float rollSign    = (_swingSide == Side::LEFT) ? +1.0f : -1.0f;
 
     const bool progressOK = (wsProgress * rollSign >= _cfg.liftGateThreshold);
 
@@ -563,7 +566,9 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     _state.gateStanceIsLeft = isLeftStance;
 
     _state.subState = _subState;
-    _state.phase    = _currentHalf * 0.5f + _halfPhase * 0.5f;
+    // phase: LEFT-swing maps to [0, 0.5), RIGHT-swing maps to [0.5, 1.0).
+    // Underlying Side enum value (LEFT=0, RIGHT=1) preserves the legacy mapping.
+    _state.phase    = static_cast<uint8_t>(_swingSide) * 0.5f + _halfPhase * 0.5f;
     _state.poseHold = _poseHoldPt;
 
     // Keep the cycle baseline alive on every active tick. Later branches may
@@ -575,7 +580,7 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // BUG FIX (weight-shift runaway): when gait mode is IDLE but WeightShift is
     // active (manual WEIGHT_SHIFT:left/right from UI), only the stance IK should
     // run. The swing FSM below MUST NOT execute — otherwise the gate-open path
-    // lifts the foot and _advanceHalf() flips _currentHalf, retriggering an
+    // lifts the foot and _advanceHalf() flips _swingSide, retriggering an
     // opposite-direction WeightShift. Result is endless L↔R oscillation that
     // only the Center button stops. Pinning substate to WAIT_SHIFT and zeroing
     // poseHold keeps state coherent for the next GAIT_START.
@@ -597,7 +602,7 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         const float stopFrac    = _stopSwingFrac * liftRamp;
         const float strideScale = liftRamp;   // identical time profile
 
-        const bool leftIsSwing = (_stopHalf == 0);
+        const bool leftIsSwing = (_stopSwingSide == Side::LEFT);
         const FootTarget tL = _buildFootTarget(false, stopFrac,  leftIsSwing,
                                                _halfPhase, bc, strideScale);
         const FootTarget tR = _buildFootTarget(true,  stopFrac, !leftIsSwing,
@@ -618,9 +623,9 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         _state.captureOffsetMm = _captureOffsetMm() * strideScale;
         _state.cycleXDispl_mm  = _halfPhase * _cfg.stepLengthMm * strideScale;
 
-        if (elapsed >= GAIT_STOP_RAMP_MS / 2 && _ws && _lastShiftDir != 0) {
+        if (elapsed >= GAIT_STOP_RAMP_MS / 2 && _ws && _lastShiftDir != ShiftDirection::NONE) {
             _ws->trigger(ShiftDirection::NONE);
-            _lastShiftDir = 0;
+            _lastShiftDir = ShiftDirection::NONE;
         }
 
         const bool wsSettled = (!_ws) ||
@@ -632,11 +637,11 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _state.running   = false;
             _subState        = StepSubState::WAIT_SHIFT;
             _state.subState  = _subState;
-            _currentHalf     = 0;
+            _swingSide       = Side::LEFT;
             _halfPhase       = 0.0f;
             _stopSwingFrac   = 0.0f;
             _stopStartMs     = 0;
-            _stopHalf        = 0;
+            _stopSwingSide   = Side::LEFT;
             _state.phase     = 0.0f;
             _state.wsProgress = wsSettled ? 0.0f : _state.wsProgress;
             _state.poseHold  = 0;
@@ -650,8 +655,7 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     if (_state.mode == GaitMode::POSE_STEP && _poseHoldPt > 0) {
         if (_subState == StepSubState::SWINGING) {
             const float liftFrac = _swingFrac(_halfPhase);
-            // _currentHalf == 0 → LEFT foot swings (hardware-verified, see top comment).
-            const bool leftIsSwing = (_currentHalf == 0);
+            const bool leftIsSwing = (_swingSide == Side::LEFT);
 
             const FootTarget tL = _buildFootTarget(/*isRight=*/false, liftFrac,
                                                     /*isSwing=*/  leftIsSwing,
@@ -685,8 +689,8 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _halfPhase += dt_s / halfPeriod_s;
             if (_halfPhase >= 1.0f) {
                 _halfPhase   = 0.0f;
-                _currentHalf = 1 - _currentHalf;
-                _triggerShiftForHalf(_currentHalf);
+                _swingSide   = otherSide(_swingSide);
+                _triggerShiftForSwing(_swingSide);
             }
         }
         return;
@@ -703,9 +707,9 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         if (millis() - _stabilizeStartMs >= GAIT_STABILIZE_MS) {
             _subState       = StepSubState::WAIT_SHIFT;
             _state.subState = _subState;
-            _triggerShiftForHalf(_currentHalf);
-            Serial.printf("[GaitCtrl] STABILIZE done → WAIT_SHIFT half=%d\n",
-                          _currentHalf);
+            _triggerShiftForSwing(_swingSide);
+            Serial.printf("[GaitCtrl] STABILIZE done → WAIT_SHIFT swing=%s\n",
+                          sideName(_swingSide));
         }
         return;
     }
@@ -716,8 +720,8 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         _subState  = StepSubState::SWINGING;
         _halfPhase = 0.0f;
         _state.subState = _subState;
-        Serial.printf("[GaitCtrl] Gate open  half=%d  ws=%.3f  roll=%.4f rad\n",
-                      _currentHalf, wsProgress, imuState.roll);
+        Serial.printf("[GaitCtrl] Gate open  swing=%s  ws=%.3f  roll=%.4f rad\n",
+                      sideName(_swingSide), wsProgress, imuState.roll);
 
         // POSE_STEP: pause here so user can verify weight shift before lift.
         if (_state.mode == GaitMode::POSE_STEP) {
@@ -730,8 +734,7 @@ void GaitController::update(float dt_s, const IMUState& imuState,
 
     // SWINGING: compute lift, submit, advance phase.
     const float liftFrac = _swingFrac(_halfPhase);
-    // _currentHalf == 0 → LEFT foot swings (hardware-verified, see top comment).
-    const bool leftIsSwing = (_currentHalf == 0);
+    const bool leftIsSwing = (_swingSide == Side::LEFT);
 
     // Build BOTH foot targets every tick. Stance leg also goes through IK
     // so it holds its commanded pose against priority arbitration.
@@ -773,7 +776,7 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _halfPhase      = 0.5f;
             _poseHoldPt     = 2;
             _state.poseHold = 2;
-            _state.phase    = _currentHalf * 0.5f + _halfPhase * 0.5f;
+            _state.phase    = static_cast<uint8_t>(_swingSide) * 0.5f + _halfPhase * 0.5f;
             Serial.println("[GaitCtrl] POSE_STEP: hold=2 peak");
             return;
         }
@@ -787,7 +790,7 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _halfPhase      = 0.999f;  // hold near end; nextPose() will advance
             _poseHoldPt     = 3;
             _state.poseHold = 3;
-            _state.phase    = _currentHalf * 0.5f + _halfPhase * 0.5f;
+            _state.phase    = static_cast<uint8_t>(_swingSide) * 0.5f + _halfPhase * 0.5f;
             Serial.println("[GaitCtrl] POSE_STEP: hold=3 landing");
             return;
         }
@@ -818,7 +821,7 @@ void GaitController::triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad) 
     _rcvDirY = (tilt_roll_rad  > 0.0f) ? +1 : (tilt_roll_rad  < 0.0f ? -1 : 0);
 
     // Swing leg = leg on the side body is falling toward.
-    _rcvSwingIsRight = (tilt_roll_rad >= 0.0f);
+    _rcvSwingSide = (tilt_roll_rad >= 0.0f) ? Side::RIGHT : Side::LEFT;
 
     // Step magnitudes proportional to per-axis tilt component, capped.
     // Sign of lateral recovery is expressed by the swing leg selection, not
@@ -851,9 +854,9 @@ void GaitController::triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad) 
 
     // Clear any residual gait or weight-shift activity.
     if (_ws) _ws->trigger(ShiftDirection::NONE);
-    _lastShiftDir    = 0;
+    _lastShiftDir    = ShiftDirection::NONE;
     _halfPhase       = 0.0f;
-    _currentHalf     = 0;
+    _swingSide       = Side::LEFT;
     _poseHoldPt      = 0;
     _state.poseHold  = 0;
 
@@ -865,7 +868,7 @@ void GaitController::triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad) 
                   "step=(%.1f,%.1f)mm  swing=%s\n",
                   tilt_pitch_rad, tilt_roll_rad, tilt_mag,
                   _rcvStepX_mm, _rcvStepY_mm,
-                  _rcvSwingIsRight ? "R" : "L");
+                  sideName(_rcvSwingSide));
 }
 
 // ---------------------------------------------------------------------------
@@ -893,6 +896,24 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
     _state.recoveryDirX      = _rcvDirX;
     _state.recoveryDirY      = _rcvDirY;
 
+    // Phase 4 — collapse the per-leg telemetry triplet (status / reachPct /
+    // flatFootErr) into one helper so the swing/stance ternaries don't have to
+    // be repeated three times below. Captures _state by reference.
+    auto writeLegTelemetry = [&](Side side, const LegIKResult& r) {
+        const uint8_t status = static_cast<uint8_t>(r.status);
+        if (side == Side::LEFT) {
+            _state.lastIKStatusL        = status;
+            _state.lastReachPctL        = r.sagittal_reach_pct;
+            _state.lastFlatFootErrL_deg = r.flat_foot_error_deg;
+        } else {
+            _state.lastIKStatusR        = status;
+            _state.lastReachPctR        = r.sagittal_reach_pct;
+            _state.lastFlatFootErrR_deg = r.flat_foot_error_deg;
+        }
+    };
+    const Side swingSide  = _rcvSwingSide;
+    const Side stanceSide = otherSide(swingSide);
+
     // Step targets set at trigger time. y_mm sign convention: positive = outward
     // in the swing leg's frontal frame (same as Stage 1 +30 mm). For right-swing
     // this is rightward; for left-swing leftward. The IK and JointConfig direction
@@ -916,7 +937,7 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             const float liftFrac = 0.0f;
 
             FootTarget tSwing;
-            tSwing.isRightLeg    = _rcvSwingIsRight;
+            tSwing.isRightLeg    = isRight(swingSide);
             tSwing.x_mm          = GAIT_STANCE_X_OFFSET_MM;
             tSwing.y_mm          = 0.0f;
             tSwing.h_sagittal_mm = _cfg.stanceHeightMm;
@@ -924,7 +945,7 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tSwing.valid         = true;
 
             FootTarget tStance;
-            tStance.isRightLeg    = !_rcvSwingIsRight;
+            tStance.isRightLeg    = isRight(stanceSide);
             tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM
                                    - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC * t;
             // Positive y_mm = outward in the stance leg's own frontal frame.
@@ -937,14 +958,10 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tStance.h_frontal_mm  = 0.0f;
             tStance.valid         = true;
 
-            const LegIKResult rSwing  = _submitFootTargetIK(_rcvSwingIsRight,  tSwing);
-            const LegIKResult rStance = _submitFootTargetIK(!_rcvSwingIsRight, tStance);
-            _state.lastIKStatusL = static_cast<uint8_t>(_rcvSwingIsRight ? rStance.status : rSwing.status);
-            _state.lastIKStatusR = static_cast<uint8_t>(_rcvSwingIsRight ? rSwing.status  : rStance.status);
-            _state.lastReachPctL = _rcvSwingIsRight ? rStance.sagittal_reach_pct : rSwing.sagittal_reach_pct;
-            _state.lastReachPctR = _rcvSwingIsRight ? rSwing.sagittal_reach_pct  : rStance.sagittal_reach_pct;
-            _state.lastFlatFootErrL_deg = _rcvSwingIsRight ? rStance.flat_foot_error_deg : rSwing.flat_foot_error_deg;
-            _state.lastFlatFootErrR_deg = _rcvSwingIsRight ? rSwing.flat_foot_error_deg  : rStance.flat_foot_error_deg;
+            const LegIKResult rSwing  = _submitFootTargetIK(swingSide,  tSwing);
+            const LegIKResult rStance = _submitFootTargetIK(stanceSide, tStance);
+            writeLegTelemetry(swingSide,  rSwing);
+            writeLegTelemetry(stanceSide, rStance);
 
             if (elapsed >= RECOVERY_PRE_LIFT_MS) {
                 _enterRcvSub(RecoverySubState::LIFTING);
@@ -961,7 +978,7 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             const float liftFrac = 3.0f * t * t - 2.0f * t * t * t;
 
             FootTarget tSwing;
-            tSwing.isRightLeg    = _rcvSwingIsRight;
+            tSwing.isRightLeg    = isRight(swingSide);
             // Smoothstep on horizontal motion: zero velocity at t=0 (foot still grounded)
             // and t=1 (foot landed). Vertical lift uses sin*π/2 which has FULL velocity at
             // t=0 — together this means the foot rises before it moves forward, eliminating
@@ -974,7 +991,7 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tSwing.valid         = (tSwing.h_sagittal_mm >= 20.0f);
 
             FootTarget tStance;
-            tStance.isRightLeg    = !_rcvSwingIsRight;
+            tStance.isRightLeg    = isRight(stanceSide);
             // Counter-shift is fully established by end of PRE_LIFT. Holding it constant
             // here prevents the swing hip from being dragged backward during the lift,
             // which manifests as ground-scrubbing (the "shuffle"). The * t ramp was a
@@ -992,14 +1009,10 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tStance.h_frontal_mm  = 0.0f;
             tStance.valid         = true;
 
-            const LegIKResult rSwing  = _submitFootTargetIK(_rcvSwingIsRight,  tSwing);
-            const LegIKResult rStance = _submitFootTargetIK(!_rcvSwingIsRight, tStance);
-            _state.lastIKStatusL = static_cast<uint8_t>(_rcvSwingIsRight ? rStance.status : rSwing.status);
-            _state.lastIKStatusR = static_cast<uint8_t>(_rcvSwingIsRight ? rSwing.status  : rStance.status);
-            _state.lastReachPctL = _rcvSwingIsRight ? rStance.sagittal_reach_pct : rSwing.sagittal_reach_pct;
-            _state.lastReachPctR = _rcvSwingIsRight ? rSwing.sagittal_reach_pct  : rStance.sagittal_reach_pct;
-            _state.lastFlatFootErrL_deg = _rcvSwingIsRight ? rStance.flat_foot_error_deg : rSwing.flat_foot_error_deg;
-            _state.lastFlatFootErrR_deg = _rcvSwingIsRight ? rSwing.flat_foot_error_deg  : rStance.flat_foot_error_deg;
+            const LegIKResult rSwing  = _submitFootTargetIK(swingSide,  tSwing);
+            const LegIKResult rStance = _submitFootTargetIK(stanceSide, tStance);
+            writeLegTelemetry(swingSide,  rSwing);
+            writeLegTelemetry(stanceSide, rStance);
 
             if (elapsed >= RECOVERY_LIFT_MS) {
                 _enterRcvSub(RecoverySubState::LANDING);
@@ -1017,7 +1030,7 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             const float liftFrac = 1.0f - (3.0f * t * t - 2.0f * t * t * t);
 
             FootTarget tSwing;
-            tSwing.isRightLeg    = _rcvSwingIsRight;
+            tSwing.isRightLeg    = isRight(swingSide);
             tSwing.x_mm          = swingTargetX_mm + GAIT_STANCE_X_OFFSET_MM;
             tSwing.y_mm          = swingTargetY_mm;
             tSwing.h_sagittal_mm = _cfg.stanceHeightMm - liftFrac * effectiveStepHeight_mm;
@@ -1025,7 +1038,7 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tSwing.valid         = (tSwing.h_sagittal_mm >= 20.0f);
 
             FootTarget tStance;
-            tStance.isRightLeg    = !_rcvSwingIsRight;
+            tStance.isRightLeg    = isRight(stanceSide);
             // Counter-shift is fully established by end of PRE_LIFT. Holding it constant
             // here prevents the swing hip from being dragged backward during the lift,
             // which manifests as ground-scrubbing (the "shuffle"). The * t ramp was a
@@ -1040,14 +1053,10 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tStance.h_frontal_mm  = 0.0f;
             tStance.valid         = true;
 
-            const LegIKResult rSwing  = _submitFootTargetIK(_rcvSwingIsRight,  tSwing);
-            const LegIKResult rStance = _submitFootTargetIK(!_rcvSwingIsRight, tStance);
-            _state.lastIKStatusL = static_cast<uint8_t>(_rcvSwingIsRight ? rStance.status : rSwing.status);
-            _state.lastIKStatusR = static_cast<uint8_t>(_rcvSwingIsRight ? rSwing.status  : rStance.status);
-            _state.lastReachPctL = _rcvSwingIsRight ? rStance.sagittal_reach_pct : rSwing.sagittal_reach_pct;
-            _state.lastReachPctR = _rcvSwingIsRight ? rSwing.sagittal_reach_pct  : rStance.sagittal_reach_pct;
-            _state.lastFlatFootErrL_deg = _rcvSwingIsRight ? rStance.flat_foot_error_deg : rSwing.flat_foot_error_deg;
-            _state.lastFlatFootErrR_deg = _rcvSwingIsRight ? rSwing.flat_foot_error_deg  : rStance.flat_foot_error_deg;
+            const LegIKResult rSwing  = _submitFootTargetIK(swingSide,  tSwing);
+            const LegIKResult rStance = _submitFootTargetIK(stanceSide, tStance);
+            writeLegTelemetry(swingSide,  rSwing);
+            writeLegTelemetry(stanceSide, rStance);
 
             if (elapsed >= RECOVERY_LAND_MS) {
                 _enterRcvSub(RecoverySubState::DAMP_HOLD);
@@ -1059,7 +1068,7 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             // Hold both feet at planted positions briefly so structural transients
             // damp before the foot starts returning to centered stance.
             FootTarget tSwing;
-            tSwing.isRightLeg    = _rcvSwingIsRight;
+            tSwing.isRightLeg    = isRight(swingSide);
             tSwing.x_mm          = swingTargetX_mm + GAIT_STANCE_X_OFFSET_MM;
             tSwing.y_mm          = swingTargetY_mm;
             tSwing.h_sagittal_mm = _cfg.stanceHeightMm;
@@ -1067,7 +1076,7 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tSwing.valid         = true;
 
             FootTarget tStance;
-            tStance.isRightLeg    = !_rcvSwingIsRight;
+            tStance.isRightLeg    = isRight(stanceSide);
             tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM
                                    - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC;
             const float baseWidenMm = fabsf(swingTargetX_mm) * 0.20f;
@@ -1078,8 +1087,8 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tStance.h_frontal_mm  = 0.0f;
             tStance.valid         = true;
 
-            _submitFootTargetIK(_rcvSwingIsRight,  tSwing);
-            _submitFootTargetIK(!_rcvSwingIsRight, tStance);
+            _submitFootTargetIK(swingSide,  tSwing);
+            _submitFootTargetIK(stanceSide, tStance);
 
             if (elapsed >= RECOVERY_DAMP_HOLD_MS) {
                 _enterRcvSub(RecoverySubState::SOFT_RETURN);
@@ -1094,7 +1103,7 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             const float decay = 1.0f - (3.0f * t * t - 2.0f * t * t * t);
 
             FootTarget tSwing;
-            tSwing.isRightLeg    = _rcvSwingIsRight;
+            tSwing.isRightLeg    = isRight(swingSide);
             tSwing.x_mm          = swingTargetX_mm * decay + GAIT_STANCE_X_OFFSET_MM;
             tSwing.y_mm          = swingTargetY_mm * decay;
             tSwing.h_sagittal_mm = _cfg.stanceHeightMm;
@@ -1102,7 +1111,7 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tSwing.valid         = true;
 
             FootTarget tStance;
-            tStance.isRightLeg    = !_rcvSwingIsRight;
+            tStance.isRightLeg    = isRight(stanceSide);
             tStance.x_mm          = GAIT_STANCE_X_OFFSET_MM
                                    - swingTargetX_mm * RECOVERY_STANCE_COUNTERSHIFT_FRAC * decay;
             const float baseWidenMm = fabsf(swingTargetX_mm) * 0.20f * decay;
@@ -1113,8 +1122,8 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             tStance.h_frontal_mm  = 0.0f;
             tStance.valid         = true;
 
-            _submitFootTargetIK(_rcvSwingIsRight,  tSwing);
-            _submitFootTargetIK(!_rcvSwingIsRight, tStance);
+            _submitFootTargetIK(swingSide,  tSwing);
+            _submitFootTargetIK(stanceSide, tStance);
 
             if (elapsed >= RECOVERY_SOFT_RETURN_MS) {
                 _enterRcvSub(RecoverySubState::COMPLETE);
@@ -1177,13 +1186,13 @@ void GaitController::_publishSwingLegMaskToWS() const {
         const bool airborne = (_rcvSub == RecoverySubState::LIFTING)
                            || (_rcvSub == RecoverySubState::LANDING)
                            || (_rcvSub == RecoverySubState::DAMP_HOLD);
-        const SwingLeg swing = _rcvSwingIsRight ? SwingLeg::RIGHT : SwingLeg::LEFT;
+        const SwingLeg swing = (_rcvSwingSide == Side::RIGHT) ? SwingLeg::RIGHT : SwingLeg::LEFT;
         _ws->setSwingLegMask(swing, airborne ? 1.0f : 0.0f);
         return;
     }
 
     if (_subState == StepSubState::SWINGING) {
-        const SwingLeg swing = (_currentHalf == 0) ? SwingLeg::LEFT : SwingLeg::RIGHT;
+        const SwingLeg swing = (_swingSide == Side::LEFT) ? SwingLeg::LEFT : SwingLeg::RIGHT;
         _ws->setSwingLegMask(swing, _swingFrac(_halfPhase));
         return;
     }
@@ -1193,7 +1202,7 @@ void GaitController::_publishSwingLegMaskToWS() const {
         const float    liftRamp = (elapsed >= GAIT_STOP_RAMP_MS)
                                   ? 0.0f
                                   : 1.0f - (float)elapsed / (float)GAIT_STOP_RAMP_MS;
-        const SwingLeg swing = (_stopHalf == 0) ? SwingLeg::LEFT : SwingLeg::RIGHT;
+        const SwingLeg swing = (_stopSwingSide == Side::LEFT) ? SwingLeg::LEFT : SwingLeg::RIGHT;
         _ws->setSwingLegMask(swing, _stopSwingFrac * liftRamp);
         return;
     }

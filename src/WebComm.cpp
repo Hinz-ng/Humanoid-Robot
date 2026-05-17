@@ -866,8 +866,8 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         String key = pair.substring(0, eq);
                         float  val = pair.substring(eq + 1).toFloat();
                         if      (key == "enabled")  cfg.enabled             = (val > 0.5f);
-                        else if (key == "kp_pitch") cfg.kp_pitch_deg_per_rad = constrain(val, 0.0f, 90.0f);
-                        else if (key == "kp_roll")  cfg.kp_roll_deg_per_rad  = constrain(val, 0.0f, 90.0f);
+                        else if (key == "kp_pitch") cfg.kp_pitch_deg_per_rad = constrain(val, 0.0f, 120.0f);
+                        else if (key == "kp_roll")  cfg.kp_roll_deg_per_rad  = constrain(val, 0.0f, 120.0f);
                         else if (key == "max_p")    cfg.max_pitch_bias_deg   = constrain(val, 0.0f, 15.0f);
                         else if (key == "max_r")    cfg.max_roll_bias_deg    = constrain(val, 0.0f, 15.0f);
                         else if (key == "dead")     cfg.deadband_rad         = constrain(val, 0.0f, 0.20f);

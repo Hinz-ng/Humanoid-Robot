@@ -127,9 +127,16 @@ void SwingFootLeveler::update(Side swingSide, float liftFrac) {
     if (fabsf(r_err) < _cfg.deadband_rad) r_err = 0.0f;
 
     // Negative sign: foot tilts +pitch (forward) → ankle dorsiflexes (-bias)
-    // to push sole flat. Verify on hardware in L0 telemetry by tilting foot.
+    // to push sole flat. Pitch is symmetric across legs (balance controller
+    // applies same sign to both ankle pitches), no per-side correction.
     const float raw_p = -_cfg.kp_pitch_deg_per_rad * p_err;
-    const float raw_r = -_cfg.kp_roll_deg_per_rad  * r_err;
+
+    // Roll: anatomical→world mapping is opposite on left vs right ankles
+    // (JointConfig direction=-1 on left mirrors the servo). Match balance
+    // controller's pattern (right negated, left as-is) so the bias produces
+    // consistent world-frame correction on whichever leg is swinging.
+    const float roll_base = _cfg.kp_roll_deg_per_rad * r_err;
+    const float raw_r     = (swingSide == Side::RIGHT) ? -roll_base : roll_base;
 
     // Would-be: clamped, pre-envelope, pre-IIR. Stored for telemetry.
     const float clamped_p = constrain(raw_p, -_cfg.max_pitch_bias_deg, +_cfg.max_pitch_bias_deg);

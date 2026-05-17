@@ -46,6 +46,8 @@ void BalanceController::resetOutputState() {
     _ts_pitch_error      = 0.0f;
     _ts_roll_error       = 0.0f;
     _lastCorrection      = {};
+    _cfg.swing_leveler_roll_bias_l_deg = 0.0f;
+    _cfg.swing_leveler_roll_bias_r_deg = 0.0f;
 
     // Stage 0: zero recovery detection counters.
     _saturationCount  = 0;
@@ -211,7 +213,9 @@ BalanceState BalanceController::update(const IMUState& state) {
         // balance fully disabled — the most common test configuration.
         if (!oe_is_estopped() &&
             (fabsf(_cfg.ankle_roll_bias_l_deg) > 0.01f ||
-             fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f)) {
+             fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f ||
+             fabsf(_cfg.swing_leveler_roll_bias_l_deg) > 0.01f ||
+             fabsf(_cfg.swing_leveler_roll_bias_r_deg) > 0.01f)) {
             _applyRollCorrection(0.0f, 0.0f, 0.0f, 0.0f);
         }
         _lastState = out; return out;
@@ -264,7 +268,9 @@ BalanceState BalanceController::update(const IMUState& state) {
         // it stays in SOURCE_BALANCE via MotionManager, not in the IK chain.
         // Same path as the C-02 fix in the legacy (!pitch && !roll) gate.
         if (fabsf(_cfg.ankle_roll_bias_l_deg) > 0.01f ||
-            fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f) {
+            fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f ||
+            fabsf(_cfg.swing_leveler_roll_bias_l_deg) > 0.01f ||
+            fabsf(_cfg.swing_leveler_roll_bias_r_deg) > 0.01f) {
             _applyRollCorrection(0.0f, 0.0f, 0.0f, 0.0f);
         }
 
@@ -364,7 +370,9 @@ BalanceState BalanceController::update(const IMUState& state) {
         out.torso_roll_cmd_deg = torso_r;
 
     } else if (fabsf(_cfg.ankle_roll_bias_l_deg) > 0.01f ||
-               fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f) {
+               fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f ||
+               fabsf(_cfg.swing_leveler_roll_bias_l_deg) > 0.01f ||
+               fabsf(_cfg.swing_leveler_roll_bias_r_deg) > 0.01f) {
         // C-02 FIX: Roll PD is disabled, but WeightShift has injected a non-zero
         // ankle roll bias. Without this branch, _applyRollCorrection() is never
         // called, so the bias is never submitted to MotionManager and weight shift
@@ -644,8 +652,18 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg,
         // TASK-2: Add weight shift baseline AFTER shaping.
         // IIR history (filtered_cmd_deg) still tracks only the balance correction;
         // the bias is applied at submission time so it does not drift the IIR state.
-        float final_r = shaped_r + _cfg.ankle_roll_bias_r_deg;
-        float final_l = shaped_l + _cfg.ankle_roll_bias_l_deg;
+        // Two independent bias sources, added post-shaping:
+        //   ankle_roll_bias_*_deg          — WeightShift CoM-translation bias
+        //   swing_leveler_roll_bias_*_deg  — closed-loop foot leveler bias
+        // Composing here rather than at submission lets both ride the
+        // SOURCE_BALANCE priority slot together; otherwise the leveler at
+        // SOURCE_GAIT would be silently discarded.
+        float final_r = shaped_r
+                      + _cfg.ankle_roll_bias_r_deg
+                      + _cfg.swing_leveler_roll_bias_r_deg;
+        float final_l = shaped_l
+                      + _cfg.ankle_roll_bias_l_deg
+                      + _cfg.swing_leveler_roll_bias_l_deg;
 
         // Final clamp: combined bias + correction must not exceed joint limits.
         // JointModel enforces hard limits, but this prevents unnecessary chatter
@@ -653,10 +671,13 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg,
         // M-04 FIX: headroom must accommodate the LARGER of the two biases.
         // The previous code only used left bias; if right is larger (asymmetric
         // shift), the right clamp was too tight and could fight the weight shift.
-        float maxBias  = fmaxf(fabsf(_cfg.ankle_roll_bias_l_deg),
-                                fabsf(_cfg.ankle_roll_bias_r_deg));
+        const float biasL = fabsf(_cfg.ankle_roll_bias_l_deg)
+                          + fabsf(_cfg.swing_leveler_roll_bias_l_deg);
+        const float biasR = fabsf(_cfg.ankle_roll_bias_r_deg)
+                          + fabsf(_cfg.swing_leveler_roll_bias_r_deg);
+        const float maxBias  = fmaxf(biasL, biasR);
         float maxAnkle = _cfg.max_roll_correction_deg + maxBias;
-        maxAnkle = constrain(maxAnkle, 1.0f, 30.0f);
+        maxAnkle = constrain(maxAnkle, 1.0f, 40.0f);
         final_r  = constrain(final_r, -maxAnkle, maxAnkle);
         final_l  = constrain(final_l, -maxAnkle, maxAnkle);
 
@@ -679,12 +700,19 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg,
     float l_hip    = _shapeOutput(BJI_L_HIP_ROLL,    hip_deg,   rollRate_rs);
     float torso    = _shapeOutput(BJI_TORSO_ROLL,    torso_deg, rollRate_rs);
 
-    float final_r = shaped_r + _cfg.ankle_roll_bias_r_deg;
-    float final_l = shaped_l + _cfg.ankle_roll_bias_l_deg;
-    float maxBias  = fmaxf(fabsf(_cfg.ankle_roll_bias_l_deg),
-                           fabsf(_cfg.ankle_roll_bias_r_deg));
+    float final_r = shaped_r
+                  + _cfg.ankle_roll_bias_r_deg
+                  + _cfg.swing_leveler_roll_bias_r_deg;
+    float final_l = shaped_l
+                  + _cfg.ankle_roll_bias_l_deg
+                  + _cfg.swing_leveler_roll_bias_l_deg;
+    const float biasL = fabsf(_cfg.ankle_roll_bias_l_deg)
+                      + fabsf(_cfg.swing_leveler_roll_bias_l_deg);
+    const float biasR = fabsf(_cfg.ankle_roll_bias_r_deg)
+                      + fabsf(_cfg.swing_leveler_roll_bias_r_deg);
+    const float maxBias  = fmaxf(biasL, biasR);
     float maxAnkle = _cfg.max_roll_correction_deg + maxBias;
-    maxAnkle = constrain(maxAnkle, 1.0f, 30.0f);
+    maxAnkle = constrain(maxAnkle, 1.0f, 40.0f);
     final_r = constrain(final_r, -maxAnkle, maxAnkle);
     final_l = constrain(final_l, -maxAnkle, maxAnkle);
 

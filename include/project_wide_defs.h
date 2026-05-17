@@ -55,12 +55,12 @@
 // TUNING NOTE (2026-04-xx): Reduced from 0.4 → 0.25 Hz to give the IMU roll
 // gate (wsThresholdRad) more time to satisfy before the half-cycle advances.
 // Return to 0.4 once stance loading is stable at the lower rate.
-constexpr float GAIT_PHASE_RATE_HZ          = 0.45f;  // cycles/sec
+constexpr float GAIT_PHASE_RATE_HZ          = 0.55f;  // cycles/sec
 
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
 // If drag returns at 15 mm, the root cause is the gate, not step height.
-constexpr float GAIT_STEP_HEIGHT_MM         = 14.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 10.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 35.0f;  // Phase 3+; forward stride
 
@@ -228,14 +228,14 @@ constexpr float FOOT_IMU_ACCEL_LPF_BETA = 0.70f;
 // P gain: deg of ankle correction per rad of foot tilt error.
 // 1 rad ~= 57 deg, so kp=25 -> ~0.44 deg per deg of foot tilt. Conservative
 // start; tune toward 0.7 on hardware during L1.
-constexpr float SWING_LEVELER_KP_PITCH_DEG_PER_RAD = 25.0f;
-constexpr float SWING_LEVELER_KP_ROLL_DEG_PER_RAD  = 25.0f;
+constexpr float SWING_LEVELER_KP_PITCH_DEG_PER_RAD = 100.0f;
+constexpr float SWING_LEVELER_KP_ROLL_DEG_PER_RAD  = 100.0f;
 
 // Bias clamps. Must remain inside IK ankle soft-limits with margin for the
 // IK-computed flat-foot value (which already consumes most of the range
 // during deep swing arcs).
-constexpr float SWING_LEVELER_MAX_PITCH_BIAS_DEG = 8.0f;
-constexpr float SWING_LEVELER_MAX_ROLL_BIAS_DEG  = 6.0f;
+constexpr float SWING_LEVELER_MAX_PITCH_BIAS_DEG = 12.0f;
+constexpr float SWING_LEVELER_MAX_ROLL_BIAS_DEG  = 20.0f;
 
 // Input deadband. ~1 deg below the noise floor of the foot LPF at rest.
 constexpr float SWING_LEVELER_DEADBAND_RAD = 0.0175f;
@@ -251,7 +251,7 @@ constexpr float SWING_LEVELER_OUTPUT_IIR_ALPHA = 0.5f;
 // peak=1.0 places full bias at the apex; disengage=1.01 is effectively
 // "never" on the ascent path, and the envelope's natural return to zero
 // happens via liftFrac sinusoidally falling below engage on descent.
-constexpr float SWING_LEVELER_ENGAGE_LIFT_FRAC    = 0.20f;
+constexpr float SWING_LEVELER_ENGAGE_LIFT_FRAC    = 0.25f;
 constexpr float SWING_LEVELER_PEAK_LIFT_FRAC      = 1.0f;
 constexpr float SWING_LEVELER_DISENGAGE_LIFT_FRAC = 1.01f;
 

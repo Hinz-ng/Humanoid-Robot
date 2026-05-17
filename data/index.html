@@ -1469,7 +1469,7 @@
                     <span>kp pitch (°/rad)</span>
                     <span class="tune-val" id="tvLvlKpPitch">25</span>
                 </div>
-                <input type="range" id="slLvlKpPitch" min="0" max="60" step="1" value="25"
+                <input type="range" id="slLvlKpPitch" min="0" max="120" step="1" value="25"
                        oninput="updateLevelerLabel('kp_pitch', this.value); sendLevelerTune()">
                 <div class="small-note">
                     Pitch correction gain. Verify sign in L0 before enabling.
@@ -1480,7 +1480,7 @@
                     <span>kp roll (°/rad)</span>
                     <span class="tune-val" id="tvLvlKpRoll">25</span>
                 </div>
-                <input type="range" id="slLvlKpRoll" min="0" max="60" step="1" value="25"
+                <input type="range" id="slLvlKpRoll" min="0" max="120" step="1" value="25"
                        oninput="updateLevelerLabel('kp_roll', this.value); sendLevelerTune()">
                 <div class="small-note">
                     Roll correction gain. Keep 0 until pitch sign is confirmed.

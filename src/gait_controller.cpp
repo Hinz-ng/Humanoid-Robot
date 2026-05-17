@@ -347,13 +347,21 @@ LegIKResult GaitController::_submitFootTargetIK(Side side,
     // anklePitchBiasFor() / ankleRollBiasFor() return 0 for the stance leg
     // (activeSide check inside the leveler) and 0 in L0 (enabled=false),
     // so this is safe to apply unconditionally on both legs.
+    // Pitch leveler bias added directly at SOURCE_GAIT — pitch balance
+    // submission is opt-in (only when pitch_enabled), so this submission
+    // typically wins during leveler testing.
+    //
+    // Roll leveler bias is NOT added here — it's plumbed through
+    // BalanceController via setSwingLevelerRollBias(), composed additively in
+    // _applyRollCorrection at SOURCE_BALANCE. Adding it here too would result
+    // in zero contribution (overwritten by SOURCE_BALANCE), or in the rare
+    // case the SOURCE_BALANCE path is silent, would double-count.
     const float pitch_bias = _swingLeveler ? _swingLeveler->anklePitchBiasFor(side) : 0.0f;
-    const float roll_bias  = _swingLeveler ? _swingLeveler->ankleRollBiasFor(side)  : 0.0f;
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_PITCH),   r.hip_pitch_deg);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::KNEE_PITCH),  r.knee_pitch_deg);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_PITCH), r.ankle_pitch_deg + pitch_bias);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_ROLL),    r.hip_roll_deg);
-    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_ROLL),  r.ankle_roll_deg + roll_bias);
+    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_ROLL),  r.ankle_roll_deg);
 
     return r;
 }
@@ -490,6 +498,25 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         const float lf = (_subState == StepSubState::SWINGING)
                          ? _swingFrac(_halfPhase) : 0.0f;
         _swingLeveler->update(_swingSide, lf);
+
+        // Plumb the leveler's roll bias into BalanceController so it composes
+        // post-shaping with the WeightShift ankle_roll_bias. Without this, the
+        // leveler's roll submission at SOURCE_GAIT (priority 1) is overwritten
+        // every tick by BalanceController's SOURCE_BALANCE submission (priority
+        // 2), which always fires during walking because WeightShift keeps the
+        // stance-side bias non-zero. One side always returns 0 (non-swing).
+        //
+        // PITCH bias is NOT plumbed this way — pitch path through SOURCE_GAIT
+        // still works because _applyPitchCorrection only submits when pitch
+        // balance is enabled, which it isn't during typical leveler testing.
+        // If pitch balance is enabled later, this asymmetry will need to be
+        // resolved by mirroring this plumbing for pitch.
+        if (_bal) {
+            _bal->setSwingLevelerRollBias(
+                Side::LEFT,  _swingLeveler->ankleRollBiasFor(Side::LEFT));
+            _bal->setSwingLevelerRollBias(
+                Side::RIGHT, _swingLeveler->ankleRollBiasFor(Side::RIGHT));
+        }
     }
 
     const WeightShiftState wsState = _ws ? _ws->getState() : WeightShiftState{};

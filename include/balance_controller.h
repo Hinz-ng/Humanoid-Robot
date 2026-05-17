@@ -108,6 +108,24 @@ struct BalanceConfig {
     float ankle_roll_bias_l_deg = 0.0f;
     float ankle_roll_bias_r_deg = 0.0f;
 
+    // --- Swing-foot leveler ankle ROLL bias ---
+    // Pushed each tick from GaitController via setSwingLevelerRollBias()
+    // after SwingFootLeveler::update() runs. ADDED to ankle roll at submission
+    // time in _applyRollCorrection() — composes additively with the WeightShift
+    // ankle_roll_bias_l/r_deg field (different concerns, different sources).
+    //
+    // Sign convention matches the leveler's internal convention: a single signed
+    // value per side, written directly to the swing-side joint command. The
+    // non-swing side's field is always 0 (the leveler returns 0 there).
+    //
+    // Routed through SOURCE_BALANCE so it survives priority arbitration when
+    // WeightShift is also injecting a roll bias on the same tick (SOURCE_BALANCE
+    // > SOURCE_GAIT).
+    //
+    // MUST NOT be set from WebSocket. Only GaitController writes via setter.
+    float swing_leveler_roll_bias_l_deg = 0.0f;
+    float swing_leveler_roll_bias_r_deg = 0.0f;
+
     // --- Stage 3: Task-space output mode ---
     //   false (default): legacy joint-space. _applyPitchCorrection / _applyRollCorrection
     //                    submit to MotionManager as before.
@@ -226,6 +244,14 @@ public:
     void                 setAnkleRollBias(Side side, float deg) {
         if (side == Side::LEFT)  _cfg.ankle_roll_bias_l_deg = deg;
         else                      _cfg.ankle_roll_bias_r_deg = deg;
+    }
+    // Side-keyed setter for swing-foot leveler ankle roll bias.
+    // Called once per side per tick from GaitController::update() after the
+    // leveler's own update(). Uses targeted-field write (not setConfig) to
+    // avoid the BalanceConfig WiFi-task RMW race documented in CODING_STANDARD.
+    void                 setSwingLevelerRollBias(Side side, float deg) {
+        if (side == Side::LEFT)  _cfg.swing_leveler_roll_bias_l_deg = deg;
+        else                      _cfg.swing_leveler_roll_bias_r_deg = deg;
     }
     void                 setRollSetpointRad(float rad) { _cfg.roll_setpoint_rad = rad; }
 

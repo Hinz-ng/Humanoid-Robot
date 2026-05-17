@@ -1453,11 +1453,11 @@
                 <div class="bal-out-val" id="lvlTelemRbias">0.000</div>
             </div>
             <div class="bal-out-cell">
-                <div class="bal-out-lbl">Foot pitch (rad)</div>
+                <div class="bal-out-lbl">Foot pitch (°)</div>
                 <div class="bal-out-val" id="lvlTelemPfoot">0.0000</div>
             </div>
             <div class="bal-out-cell">
-                <div class="bal-out-lbl">Foot roll (rad)</div>
+                <div class="bal-out-lbl">Foot roll (°)</div>
                 <div class="bal-out-val" id="lvlTelemRfoot">0.0000</div>
             </div>
         </div>
@@ -3060,35 +3060,50 @@ function parseGaitState(payload) {
     // Swing-foot leveler L0 telemetry
     {
         const lvlAct   = (v["lvl_act"] === "1");
+        const lvlEn    = (v["lvl_en"]  === "1");
+        const lvlValid = (v["lvl_v"]   === "1");
         const lvlPbias = parseFloat(v["lvl_pbias"] || "0");
         const lvlRbias = parseFloat(v["lvl_rbias"] || "0");
         const lvlPfoot = parseFloat(v["lvl_pfoot"] || "0");
         const lvlRfoot = parseFloat(v["lvl_rfoot"] || "0");
         const lvlEnv   = parseFloat(v["lvl_env"]   || "0");
 
-        set("lvlTelemPbias", lvlPbias.toFixed(3));
-        set("lvlTelemRbias", lvlRbias.toFixed(3));
-        set("lvlTelemPfoot", lvlPfoot.toFixed(4));
-        set("lvlTelemRfoot", lvlRfoot.toFixed(4));
+        // Display foot angles in degrees (firmware sends radians).
+        const toDeg = r => (r * 180.0 / Math.PI);
+
+        set("lvlTelemPbias", lvlPbias.toFixed(2));
+        set("lvlTelemRbias", lvlRbias.toFixed(2));
+        set("lvlTelemPfoot", toDeg(lvlPfoot).toFixed(2) + "°");
+        set("lvlTelemRfoot", toDeg(lvlRfoot).toFixed(2) + "°");
 
         const envFill = document.getElementById("lvlEnvFill");
         const envLbl  = document.getElementById("lvlEnvLabel");
         if (envFill) envFill.style.width = (Math.min(lvlEnv, 1.0) * 100).toFixed(1) + "%";
         if (envLbl)  envLbl.textContent  = lvlEnv.toFixed(3);
 
+        // Enabled badge — synced from firmware (was set only by toggle button).
+        // Fixes "permanently DISABLED on reload" and gives authoritative state
+        // after CLEAR_ESTOP / connection drop.
+        const enBadge = document.getElementById("lvlEnabledBadge");
+        if (enBadge) {
+            enBadge.textContent = lvlEn ? "ENABLED" : "DISABLED";
+            enBadge.className   = "gait-mode-badge " + (lvlEn ? "gait-mode-run" : "gait-mode-idle");
+        }
+
+        // Armed badge — now "controller on + IMU valid" (NOT gated by envelope).
+        // Goes ARMED as soon as you toggle enable AND foot IMU is producing
+        // valid data. Goes DISARMED if enable=0 OR IMU calibrating/NACKing.
         const armedBadge = document.getElementById("lvlArmedBadge");
         if (armedBadge) {
             armedBadge.textContent = lvlAct ? "ARMED" : "DISARMED";
             armedBadge.className   = "gait-gate-badge " + (lvlAct ? "gait-gate-open" : "gait-gate-closed");
         }
 
-        // IMU valid: inferred from whether foot pitch/roll are non-zero or from armed
+        // IMU valid — authoritative from firmware (replaces prior heuristic).
         const imuLbl = document.getElementById("lvlImuValidLabel");
         if (imuLbl) {
-            // lvl_act implies imu valid; if not armed but pbias is non-zero the imu was valid
-            const imuValid = lvlAct || (lvlEnv > 0.0 && (Math.abs(lvlPfoot) > 0.001 || Math.abs(lvlRfoot) > 0.001));
-            imuLbl.textContent = "IMU: " + (imuValid ? "valid" : "—");
-            imuLbl.style.color = imuValid ? "#66bb6a" : "#888";
+            imuLbl.textContent = "IMU: " + (lvlValid ? "valid" : "—");
+            imuLbl.style.color = lvlValid ? "#66bb6a" : "#888";
         }
     }
 }
@@ -3129,10 +3144,7 @@ function toggleLevelerEnable() {
         ws.send(`CMD:SWING_LEVELER_TUNE:enabled=${enable ? 1 : 0}`);
         console.log("[WS TX] SWING_LEVELER_TUNE:enabled=" + (enable ? 1 : 0));
     }
-    if (badge) {
-        badge.textContent = enable ? "ENABLED" : "DISABLED";
-        badge.className   = "gait-mode-badge " + (enable ? "gait-mode-run" : "gait-mode-idle");
-    }
+    // Don't mutate the badge here — parseGaitState() syncs from lvl_en.
 }
 
 // =============================================================================

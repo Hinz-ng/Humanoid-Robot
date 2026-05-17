@@ -29,7 +29,7 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
     {  1,  "right_ankle_pitch",   136.0f,  +1,  -60.0f,  +60.0f,  180.0f,  706.0f  },  // TUNE
 
     //  Knee Pitch (same servo as hip roll)  — 270° servo, 0.12 s/60° → 500 °/s
-    {  2,  "right_knee_pitch",    138.0f,  -1,  0.0f, +100.0f,  270.0f,  500.0f  },  // TUNE
+    {  2,  "right_knee_pitch",    136.0f,  -1,  0.0f, +100.0f,  270.0f,  500.0f  },  // TUNE
 
     //  Hip Roll (same servo as knee pitch)  — 270° servo, 0.12 s/60° → 500 °/s
     {  3,  "right_hip_roll",      135.0f,  +1,  -20.0f,  +80.0f,  270.0f,  500.0f  },  // TUNE

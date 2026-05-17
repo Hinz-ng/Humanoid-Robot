@@ -459,7 +459,8 @@ void WebComm::broadcastGaitState() {
         "rsub=%d,rdx=%d,rdy=%d,rms=%lu,"
         "rcvX=%.1f,rcvY=%.1f,rcvMag=%.1f,rcvSY=%.1f,xDispl=%.1f,"
         "ikL=%d,ikR=%d,reachL=%.1f,reachR=%.1f,ffL=%.3f,ffR=%.3f,capOffset=%.1f,capEn=%d,capGain=%.2f,"
-        "lvl_act=%d,lvl_pbias=%.3f,lvl_rbias=%.3f,lvl_pfoot=%.4f,lvl_rfoot=%.4f,lvl_env=%.3f",
+        "lvl_act=%d,lvl_en=%d,lvl_v=%d,lvl_pbias=%.3f,lvl_rbias=%.3f,"
+        "lvl_pfoot=%.4f,lvl_rfoot=%.4f,lvl_env=%.3f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -490,13 +491,18 @@ void WebComm::broadcastGaitState() {
         static_cast<int>(_gaitCtrl->getConfig().captureEnabled),
         _gaitCtrl->getConfig().captureGain,
         // Swing-foot leveler fields (L0+):
-        //   lvl_act  — armed this tick (enabled + in envelope + IMU valid)
-        //   lvl_pbias — would-be pitch bias (P × envelope, pre-IIR); non-zero in L0
-        //   lvl_rbias — would-be roll bias
-        //   lvl_pfoot — filtered swing-foot pitch (rad)
-        //   lvl_rfoot — filtered swing-foot roll (rad)
-        //   lvl_env   — envelope scale [0..1]
+        //   lvl_act   - controller armed (enabled + IMU valid)
+        //   lvl_en    - enabled config flag (allows UI to sync badge on reconnect)
+        //   lvl_v     - foot IMU valid (replaces the imu_valid UI heuristic)
+        //   lvl_pbias - would-be pitch bias (PRE-envelope, PRE-IIR);
+        //               non-zero whenever foot tilted, even at rest
+        //   lvl_rbias - would-be roll bias
+        //   lvl_pfoot - filtered swing-foot pitch (rad)
+        //   lvl_rfoot - filtered swing-foot roll (rad)
+        //   lvl_env   - envelope scale [0..1]; non-zero only mid-swing
         static_cast<int>(lvl.armed),
+        _swingLeveler ? static_cast<int>(_swingLeveler->getConfig().enabled) : 0,
+        static_cast<int>(lvl.foot_imu_valid),
         lvl.ankle_pitch_bias_deg,
         lvl.ankle_roll_bias_deg,
         lvl.foot_pitch_rad,
@@ -872,6 +878,20 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         else if (key == "dis")      cfg.disengage_lift_frac  = constrain(val, 0.0f, 1.0f);
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
+                }
+                // Cross-validate envelope ordering: eng < peak < dis.
+                // Out-of-order would make _envelope() return 0 for all
+                // liftFrac, silently disabling actuation. Reject and log.
+                if (cfg.engage_lift_frac >= cfg.peak_lift_frac ||
+                    cfg.peak_lift_frac   >= cfg.disengage_lift_frac) {
+                    Serial.printf("[WebComm] SWING_LEVELER_TUNE: invalid envelope "
+                                  "order eng=%.2f peak=%.2f dis=%.2f - "
+                                  "reverting to defaults.\n",
+                                  cfg.engage_lift_frac, cfg.peak_lift_frac,
+                                  cfg.disengage_lift_frac);
+                    cfg.engage_lift_frac    = SWING_LEVELER_ENGAGE_LIFT_FRAC;
+                    cfg.peak_lift_frac      = SWING_LEVELER_PEAK_LIFT_FRAC;
+                    cfg.disengage_lift_frac = SWING_LEVELER_DISENGAGE_LIFT_FRAC;
                 }
                 _swingLeveler->setConfig(cfg);
                 Serial.printf("[WebComm] SWING_LEVELER_TUNE: en=%d kpP=%.1f kpR=%.1f "

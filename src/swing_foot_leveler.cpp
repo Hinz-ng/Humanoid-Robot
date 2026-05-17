@@ -112,41 +112,51 @@ void SwingFootLeveler::update(Side swingSide, float liftFrac) {
     _state.foot_pitch_rad = _pitch_lpf_rad;
     _state.foot_roll_rad  = _roll_lpf_rad;
 
-    // 5. Apply deadband then compute P output × envelope.
-    //    This is the "would-be" bias — always published for L0 telemetry
-    //    so the operator can verify sign and magnitude before L1.
+    // 5. Apply deadband then compute raw P output.
+    //    NOTE on semantics (changed from initial L0 draft):
+    //    - "would-be" telemetry below is PRE-envelope, PRE-IIR, PRE-enable.
+    //      It is non-zero whenever the foot has tilt beyond the deadband,
+    //      regardless of swing phase or enabled state. This enables bench-test
+    //      sign/magnitude verification by tilting the foot in-hand without
+    //      having to run a gait cycle.
+    //    - "applied" path further down is POST-envelope, POST-IIR, gated by
+    //      enabled. Zero outside SWINGING or when disabled.
     float p_err = _pitch_lpf_rad;
     float r_err = _roll_lpf_rad;
     if (fabsf(p_err) < _cfg.deadband_rad) p_err = 0.0f;
     if (fabsf(r_err) < _cfg.deadband_rad) r_err = 0.0f;
 
-    // Negative sign: foot tilts +pitch (forward) → ankle pitches backward
-    // (dorsiflexion) to push sole flat. Verify on hardware in L0 telemetry.
+    // Negative sign: foot tilts +pitch (forward) → ankle dorsiflexes (-bias)
+    // to push sole flat. Verify on hardware in L0 telemetry by tilting foot.
     const float raw_p = -_cfg.kp_pitch_deg_per_rad * p_err;
     const float raw_r = -_cfg.kp_roll_deg_per_rad  * r_err;
 
-    // Would-be value = P × envelope, clamped. Stored for telemetry.
-    const float env_scale = _state.envelope_scale;
-    float would_be_p = raw_p * env_scale;
-    float would_be_r = raw_r * env_scale;
-    would_be_p = constrain(would_be_p, -_cfg.max_pitch_bias_deg, +_cfg.max_pitch_bias_deg);
-    would_be_r = constrain(would_be_r, -_cfg.max_roll_bias_deg,  +_cfg.max_roll_bias_deg);
-    _state.ankle_pitch_bias_deg = would_be_p;
-    _state.ankle_roll_bias_deg  = would_be_r;
+    // Would-be: clamped, pre-envelope, pre-IIR. Stored for telemetry.
+    const float clamped_p = constrain(raw_p, -_cfg.max_pitch_bias_deg, +_cfg.max_pitch_bias_deg);
+    const float clamped_r = constrain(raw_r, -_cfg.max_roll_bias_deg,  +_cfg.max_roll_bias_deg);
+    _state.ankle_pitch_bias_deg = clamped_p;
+    _state.ankle_roll_bias_deg  = clamped_r;
 
-    // 6. IIR: feed the would-be value when enabled; feed 0 when disabled so
-    //    the output decays smoothly to zero. Decay also happens naturally when
-    //    envelope_scale = 0 (would_be = 0 regardless of enabled).
-    const float iir_input_p = _cfg.enabled ? would_be_p : 0.0f;
-    const float iir_input_r = _cfg.enabled ? would_be_r : 0.0f;
+    // 6. Apply envelope and enable gate to produce IIR input.
+    //    env_scale=0 outside SWINGING -> IIR fed 0 -> applied decays to 0.
+    //    enabled=false -> IIR fed 0 -> applied decays to 0 -> getter returns 0.
+    const float env_scale   = _state.envelope_scale;
+    const float gated_p     = clamped_p * env_scale;
+    const float gated_r     = clamped_r * env_scale;
+    const float iir_input_p = _cfg.enabled ? gated_p : 0.0f;
+    const float iir_input_r = _cfg.enabled ? gated_r : 0.0f;
     const float oAlpha      = _cfg.output_iir_alpha;
     _pitch_bias_iir_deg = oAlpha * _pitch_bias_iir_deg + (1.0f - oAlpha) * iir_input_p;
     _roll_bias_iir_deg  = oAlpha * _roll_bias_iir_deg  + (1.0f - oAlpha) * iir_input_r;
 
-    // 7. Publish applied values and armed flag.
+    // 7. Publish applied values + armed flag.
+    //    armed = enabled + IMU valid. Decoupled from envelope so the UI badge
+    //    distinguishes "controller is on" from "currently actuating".
+    //    env_scale (published separately as lvl_env) provides actuating-now
+    //    visual feedback. This pairing solves the L0 verifiability problem.
     _state.applied_pitch_bias_deg = _pitch_bias_iir_deg;
     _state.applied_roll_bias_deg  = _roll_bias_iir_deg;
-    _state.armed = _cfg.enabled && footState.valid && env_scale > 0.0f;
+    _state.armed = _cfg.enabled && footState.valid;
 }
 
 // ---------------------------------------------------------------------------

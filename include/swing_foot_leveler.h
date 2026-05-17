@@ -72,13 +72,17 @@ struct SwingFootLevelerConfig {
 // would-be corrections before actuation is turned on.
 // ---------------------------------------------------------------------------
 struct SwingFootLevelerState {
-    bool    armed                 = false;  // enabled && in envelope && IMU valid
+    bool    armed                 = false;  // enabled && foot_imu_valid
+                                            // (NOT gated by envelope — see lvl_env
+                                            //  for currently-actuating signal)
     Side    activeSide            = Side::LEFT;
     float   foot_pitch_rad        = 0.0f;  // input-LPF filtered foot pitch
     float   foot_roll_rad         = 0.0f;  // input-LPF filtered foot roll
-    // "Would-be" bias: P output × envelope, clamped, BEFORE the IIR and
-    // BEFORE the enabled gate. Non-zero in L0 so sign/magnitude can be
-    // verified without actuating.
+    // "Would-be" bias: P output, clamped, BEFORE envelope, BEFORE IIR, BEFORE
+    // the enabled gate. Non-zero whenever |foot pitch| > deadband regardless
+    // of swing phase or enabled state. Lets the operator verify sign and
+    // magnitude at the bench by tilting the foot in-hand. Renamed semantics
+    // since initial L0 draft: previously included envelope scaling.
     float   ankle_pitch_bias_deg  = 0.0f;
     float   ankle_roll_bias_deg   = 0.0f;
     float   envelope_scale        = 0.0f;  // lift-frac shaping factor [0..1]

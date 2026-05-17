@@ -245,8 +245,14 @@ constexpr float SWING_LEVELER_INPUT_LPF_ALPHA  = 0.6f;
 constexpr float SWING_LEVELER_OUTPUT_IIR_ALPHA = 0.5f;
 
 // Lift-frac envelope corners.
+// liftFrac peaks at 1.0 at the swing apex (sin(pi/2)). The previous
+// peak=0.55, disengage=0.80 defaults notched the envelope to zero through
+// the entire apex window because liftFrac > disengage there. Setting
+// peak=1.0 places full bias at the apex; disengage=1.01 is effectively
+// "never" on the ascent path, and the envelope's natural return to zero
+// happens via liftFrac sinusoidally falling below engage on descent.
 constexpr float SWING_LEVELER_ENGAGE_LIFT_FRAC    = 0.20f;
-constexpr float SWING_LEVELER_PEAK_LIFT_FRAC      = 0.55f;
-constexpr float SWING_LEVELER_DISENGAGE_LIFT_FRAC = 0.80f;
+constexpr float SWING_LEVELER_PEAK_LIFT_FRAC      = 1.0f;
+constexpr float SWING_LEVELER_DISENGAGE_LIFT_FRAC = 1.01f;
 
 #endif // PROJECT_WIDE_DEFS_H

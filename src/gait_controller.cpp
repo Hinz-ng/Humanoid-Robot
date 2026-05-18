@@ -62,6 +62,8 @@ void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController*
     _stopStartMs      = 0;
     _stopSwingFrac    = 0.0f;
     _stopSwingSide    = Side::LEFT;
+    _waitShiftStartMs = 0;
+    _gateOkSinceMs    = 0;
     Serial.println("[GaitCtrl] Initialized.");
 }
 
@@ -87,6 +89,8 @@ void GaitController::start(GaitMode mode) {
         _lastShiftDir     = ShiftDirection::NONE;
         _poseHoldPt       = 0;
         _stabilizeStartMs = 0;
+        _waitShiftStartMs = 0;
+        _gateOkSinceMs    = 0;
         _stopStartMs      = 0;
         _stopSwingFrac    = 0.0f;
         _stopSwingSide    = Side::LEFT;
@@ -121,6 +125,8 @@ void GaitController::start(GaitMode mode) {
     _stopSwingFrac    = 0.0f;
     _stopSwingSide    = Side::LEFT;
     _state.poseHold   = 0;
+    _waitShiftStartMs = millis();
+    _gateOkSinceMs    = 0;
     _triggerShiftForSwing(Side::LEFT);  // begin LEFT-swing shift immediately
 
     Serial.printf("[GaitCtrl] start mode=%d\n", static_cast<int>(mode));
@@ -754,8 +760,10 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // do not superimpose into a destabilising transient.
     if (_subState == StepSubState::STABILIZING) {
         if (millis() - _stabilizeStartMs >= GAIT_STABILIZE_MS) {
-            _subState       = StepSubState::WAIT_SHIFT;
-            _state.subState = _subState;
+            _subState         = StepSubState::WAIT_SHIFT;
+            _state.subState   = _subState;
+            _waitShiftStartMs = millis();
+            _gateOkSinceMs    = 0;
             _triggerShiftForSwing(_swingSide);
             Serial.printf("[GaitCtrl] STABILIZE done → WAIT_SHIFT swing=%s\n",
                           sideName(_swingSide));
@@ -764,13 +772,62 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     }
 
     if (_subState == StepSubState::WAIT_SHIFT) {
-        if (!_state.liftGateOK) return;  // still waiting for CoM to shift
+        const uint32_t now = millis();
         // Gate opened — begin the swing arc from zero for a clean sin profile.
+        // Always update elapsed telemetry, regardless of gate state. The UI
+        // shows this so the operator can see how long transfer has been
+        // attempted -- useful during tuning even when dwell/timeout are off.
+        _state.waitShiftElapsedMs = now - _waitShiftStartMs;
+
+        // Dwell tracking. Gate must remain continuously OK for liftDwellMs
+        // before the transition fires. Any tick where liftGateOK goes false
+        // resets the counter -- there is no "credit" carried across gaps.
+        // liftDwellMs == 0 reduces to current single-tick behavior because
+        // the (now - _gateOkSinceMs >= 0) check passes immediately.
+        if (_state.liftGateOK) {
+            if (_gateOkSinceMs == 0) _gateOkSinceMs = now;
+            _state.gateDwellMs = now - _gateOkSinceMs;
+        } else {
+            _gateOkSinceMs     = 0;
+            _state.gateDwellMs = 0;
+        }
+
+        // Timeout check. Aborts to IDLE if WAIT_SHIFT has exceeded its budget
+        // without producing a confirmed gate. waitShiftMaxMs == 0 disables
+        // the timeout entirely (pre-Stage-2 indefinite-wait behavior).
+        // Disabled in POSE_STEP -- the operator is in the loop and may be
+        // taking arbitrary time between pose advances.
+        const bool timeoutEnabled = (_cfg.waitShiftMaxMs > 0)
+                                    && (_state.mode != GaitMode::POSE_STEP);
+        if (timeoutEnabled && _state.waitShiftElapsedMs >= _cfg.waitShiftMaxMs) {
+            Serial.printf("[GaitCtrl] WAIT_SHIFT TIMEOUT swing=%s  elapsed=%lu ms  "
+                          "ws=%.3f  flat=%d loaded=%d imuRoll=%d â€” aborting to IDLE\n",
+                          sideName(_swingSide),
+                          (unsigned long)_state.waitShiftElapsedMs,
+                          wsProgress,
+                          (int)_state.gateStanceFlat,
+                          (int)_state.gateStanceLoaded,
+                          (int)_state.gateImuRollOK);
+            _state.waitShiftTimedOut = true;   // one-tick edge for UI
+            stop();                            // clean ramp to IDLE
+            return;
+        }
+
+        // Gate not yet held long enough: continue waiting.
+        const bool dwellSatisfied = (_gateOkSinceMs > 0)
+                                    && (now - _gateOkSinceMs >= _cfg.liftDwellMs);
+        if (!dwellSatisfied) return;
+
+        // Dwell satisfied â€” commit to swing.
         _subState  = StepSubState::SWINGING;
         _halfPhase = 0.0f;
         _state.subState = _subState;
-        Serial.printf("[GaitCtrl] Gate open  swing=%s  ws=%.3f  roll=%.4f rad\n",
-                      sideName(_swingSide), wsProgress, imuState.roll);
+        _state.waitShiftTimedOut = false;
+        Serial.printf("[GaitCtrl] Gate open  swing=%s  ws=%.3f  roll=%.4f rad  "
+                      "dwell=%lu ms  elapsed=%lu ms\n",
+                      sideName(_swingSide), wsProgress, imuState.roll,
+                      (unsigned long)_state.gateDwellMs,
+                      (unsigned long)_state.waitShiftElapsedMs);
 
         // POSE_STEP: pause here so user can verify weight shift before lift.
         if (_state.mode == GaitMode::POSE_STEP) {

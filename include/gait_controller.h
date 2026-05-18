@@ -181,6 +181,12 @@ struct GaitConfig {
     bool  captureEnabled    = false;       // WS: "captureEnabled"
     float captureGain       = GAIT_CAPTURE_GAIN_DEFAULT;  // WS: "captureGain"
     float captureOffsetMaxMm = GAIT_CAPTURE_OFFSET_MAX_MM; // WS: "captureMax"
+
+    // Stage 2 -- support-transfer dwell + timeout. See project_wide_defs.h
+    // for rationale. 0 on either field reverts to pre-Stage-2 behavior
+    // on that axis (no dwell / no timeout).
+    uint32_t liftDwellMs    = GAIT_LIFT_DWELL_MS_DEFAULT;     // WS: "dwellMs"
+    uint32_t waitShiftMaxMs = GAIT_WAIT_SHIFT_MAX_MS_DEFAULT; // WS: "waitMaxMs"
 };
 
 // ---------------------------------------------------------------------------
@@ -214,6 +220,20 @@ struct GaitState {
     bool gateStanceFlat   = false;
     bool gateStanceLoaded = false;
     bool gateStanceIsLeft = false;
+
+    // Stage 2 -- support-transfer telemetry. All values reset on entry to
+    // WAIT_SHIFT and on transitions out of it.
+    //   waitShiftElapsedMs: ms since current WAIT_SHIFT entry. Counts in
+    //                       all WAIT_SHIFT ticks; useful for tuning.
+    //   gateDwellMs:        ms since gate first went continuously OK in
+    //                       this WAIT_SHIFT episode. 0 if gate currently
+    //                       not OK (i.e. dwell counter has been reset).
+    //   waitShiftTimedOut:  set true for one tick on the transition that
+    //                       fired the timeout abort. UI uses this as an
+    //                       edge to log/highlight the event.
+    uint32_t waitShiftElapsedMs = 0;
+    uint32_t gateDwellMs        = 0;
+    bool     waitShiftTimedOut  = false;
 
     // Stage 1 IK telemetry. Updated each tick by _submitFootTargetIK().
     uint8_t      lastIKStatusL = 0;   // IKStatus enum value
@@ -329,6 +349,14 @@ private:
     // millis() timestamp at which the current STABILIZING substate began.
     // Compared against GAIT_STABILIZE_MS to decide when to release into WAIT_SHIFT.
     uint32_t _stabilizeStartMs = 0;
+    // Stage 2 -- dwell + timeout bookkeeping. Both are millis() timestamps.
+    // _waitShiftStartMs: set on every entry to WAIT_SHIFT. Drives the
+    //                    timeout comparison.
+    // _gateOkSinceMs:    set when liftGateOK first goes true within a
+    //                    WAIT_SHIFT episode. Reset to 0 if the gate
+    //                    goes false again. Drives the dwell comparison.
+    uint32_t _waitShiftStartMs = 0;
+    uint32_t _gateOkSinceMs    = 0;
     uint32_t _stopStartMs      = 0;
     float    _stopSwingFrac    = 0.0f;
     Side     _stopSwingSide    = Side::LEFT;   // Phase 5 — was uint8_t _stopHalf

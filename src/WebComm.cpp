@@ -501,6 +501,7 @@ void WebComm::broadcastGaitState() {
         "rsub=%d,rdx=%d,rdy=%d,rms=%lu,"
         "rcvX=%.1f,rcvY=%.1f,rcvMag=%.1f,rcvSY=%.1f,xDispl=%.1f,"
         "ikL=%d,ikR=%d,reachL=%.1f,reachR=%.1f,ffL=%.3f,ffR=%.3f,capOffset=%.1f,capEn=%d,capGain=%.2f,"
+        "wsElapsed=%lu,gateDwell=%lu,wsTo=%d,dwellMs=%lu,waitMaxMs=%lu,"
         "lvl_act=%d,lvl_en=%d,lvl_v=%d,lvl_pbias=%.3f,lvl_rbias=%.3f,"
         "lvl_pfoot=%.4f,lvl_rfoot=%.4f,lvl_env=%.3f",
         s.phase,
@@ -532,6 +533,11 @@ void WebComm::broadcastGaitState() {
         s.captureOffsetMm,
         static_cast<int>(_gaitCtrl->getConfig().captureEnabled),
         _gaitCtrl->getConfig().captureGain,
+        (unsigned long)s.waitShiftElapsedMs,
+        (unsigned long)s.gateDwellMs,
+        (int)s.waitShiftTimedOut,
+        (unsigned long)_gaitCtrl->getConfig().liftDwellMs,
+        (unsigned long)_gaitCtrl->getConfig().waitShiftMaxMs,
         // Swing-foot leveler fields (L0+):
         //   lvl_act   - controller armed (enabled + IMU valid)
         //   lvl_en    - enabled config flag (allows UI to sync badge on reconnect)
@@ -1343,15 +1349,28 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             // most stance heights. Re-evaluate the cap before raising.
                             cfg.captureOffsetMaxMm = constrain(val, 0.0f, 30.0f);
                         }
+                        else if (key == "dwellMs") {
+                            // 0 disables dwell. 1000 ms cap is generous;
+                            // beyond that the dwell dominates step timing.
+                            cfg.liftDwellMs = (uint32_t)constrain(val, 0.0f, 1000.0f);
+                        }
+                        else if (key == "waitMaxMs") {
+                            // 0 disables the timeout. 10 s cap because longer
+                            // waits indicate a hardware or tuning fault that
+                            // should be diagnosed, not tolerated.
+                            cfg.waitShiftMaxMs = (uint32_t)constrain(val, 0.0f, 10000.0f);
+                        }
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
                 _gaitCtrl->setConfig(cfg);
                 Serial.printf("[WebComm] GAIT_TUNE: rate=%.2f Hz  gate=%.2f  wsThresh=%.3f rad  "
-                              "stepH=%.1f mm  stanceH=%.1f mm  stepLen=%.1f mm  capEn=%d capGain=%.2f capMax=%.1f\n",
+                              "stepH=%.1f mm  stanceH=%.1f mm  stepLen=%.1f mm  capEn=%d capGain=%.2f capMax=%.1f  "
+                              "dwell=%lu waitMax=%lu\n",
                               cfg.phaseRateHz, cfg.liftGateThreshold, cfg.wsThresholdRad,
                               cfg.stepHeightMm, cfg.stanceHeightMm, cfg.stepLengthMm,
-                              (int)cfg.captureEnabled, cfg.captureGain, cfg.captureOffsetMaxMm);
+                              (int)cfg.captureEnabled, cfg.captureGain, cfg.captureOffsetMaxMm,
+                              (unsigned long)cfg.liftDwellMs, (unsigned long)cfg.waitShiftMaxMs);
             }
         }
 

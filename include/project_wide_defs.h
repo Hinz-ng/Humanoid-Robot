@@ -60,7 +60,7 @@ constexpr float GAIT_PHASE_RATE_HZ          = 0.55f;  // cycles/sec
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
 // If drag returns at 15 mm, the root cause is the gate, not step height.
-constexpr float GAIT_STEP_HEIGHT_MM         = 10.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 8.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 35.0f;  // Phase 3+; forward stride
 
@@ -94,6 +94,30 @@ constexpr float GAIT_STANCE_X_OFFSET_MM         = -10.0f;
 // At alpha=0.90 / 400 Hz, τ ≈ 25 ms → 150 ms gives ~6τ.
 constexpr uint32_t GAIT_STABILIZE_MS            = 400;
 constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
+
+// ============================================================
+// LIFT GATE DWELL & TIMEOUT  (Stage 2 -- support-transfer robustness)
+// ============================================================
+// Required continuous-OK duration before WAIT_SHIFT exits to SWINGING.
+// Converts the single-tick edge trigger into a persistence-confirmed
+// transition. Filters transient predicate satisfactions that don't
+// represent a stably-completed support transfer.
+//
+// 80 ms ~= 32 ticks at 400 Hz -- long enough to debounce ramp-edge
+// transients and brief predicate flickers, short enough that the
+// added per-step latency is mechanically invisible.
+//
+// 0 disables dwell (single-tick gate -- pre-Stage-2 behavior).
+constexpr uint32_t GAIT_LIFT_DWELL_MS_DEFAULT = 80;
+
+// Maximum WAIT_SHIFT duration before declaring transfer failure.
+// On expiry, GaitController calls stop() (clean ramp to IDLE).
+// Sized to give the WeightShift ramp (~400 ms) + phase delay (~500 ms)
+// + dwell (80 ms) + 2x margin to complete. Tune up if your gait
+// genuinely needs longer to settle; tune down to fail-fast in testing.
+//
+// 0 disables the timeout (wait indefinitely -- pre-Stage-2 behavior).
+constexpr uint32_t GAIT_WAIT_SHIFT_MAX_MS_DEFAULT = 2500;
 
 // ============================================================
 // CAPTURE-POINT — Stage 2.2 (sagittal only)
@@ -237,11 +261,11 @@ constexpr float FOOT_IMPACT_THRESHOLD_G_DEFAULT = 0.15f;
 // First-order LPF coefficient on the magnitude stream before differencing.
 // alpha=1.0 disables smoothing; alpha<1.0 attenuates both noise and the
 // transient of interest.
-constexpr float FOOT_IMPACT_LPF_ALPHA_DEFAULT = 0.5f;
+constexpr float FOOT_IMPACT_LPF_ALPHA_DEFAULT = 0.3f;
 
 // Per-side refractory after a detection. Prevents one physical event
 // from being counted as multiple events while the sensor rings. Units: ms.
-constexpr uint32_t FOOT_IMPACT_REFRACTORY_MS_DEFAULT = 200;
+constexpr uint32_t FOOT_IMPACT_REFRACTORY_MS_DEFAULT = 300;
 
 // ============================================================
 // SWING-FOOT LEVELER (Section 14)
@@ -253,8 +277,8 @@ constexpr uint32_t FOOT_IMPACT_REFRACTORY_MS_DEFAULT = 200;
 // P gain: deg of ankle correction per rad of foot tilt error.
 // 1 rad ~= 57 deg, so kp=25 -> ~0.44 deg per deg of foot tilt. Conservative
 // start; tune toward 0.7 on hardware during L1.
-constexpr float SWING_LEVELER_KP_PITCH_DEG_PER_RAD = 100.0f;
-constexpr float SWING_LEVELER_KP_ROLL_DEG_PER_RAD  = 100.0f;
+constexpr float SWING_LEVELER_KP_PITCH_DEG_PER_RAD = 30.0f;
+constexpr float SWING_LEVELER_KP_ROLL_DEG_PER_RAD  = 30.0f;
 
 // Bias clamps. Must remain inside IK ankle soft-limits with margin for the
 // IK-computed flat-foot value (which already consumes most of the range
@@ -276,7 +300,7 @@ constexpr float SWING_LEVELER_OUTPUT_IIR_ALPHA = 0.5f;
 // peak=1.0 places full bias at the apex; disengage=1.01 is effectively
 // "never" on the ascent path, and the envelope's natural return to zero
 // happens via liftFrac sinusoidally falling below engage on descent.
-constexpr float SWING_LEVELER_ENGAGE_LIFT_FRAC    = 0.25f;
+constexpr float SWING_LEVELER_ENGAGE_LIFT_FRAC    = 0.6f;
 constexpr float SWING_LEVELER_PEAK_LIFT_FRAC      = 1.0f;
 constexpr float SWING_LEVELER_DISENGAGE_LIFT_FRAC = 1.01f;
 

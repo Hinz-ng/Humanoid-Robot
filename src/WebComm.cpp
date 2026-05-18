@@ -10,6 +10,7 @@
 #include "swing_foot_leveler.h" // SwingFootLeveler — SWING_LEVELER_TUNE + GAIT: telemetry
 #include "lsm6dsv_driver.h"    // LSM6DSVDriver for foot IMU diagnostic
 #include "foot_contact.h"
+#include "foot_impact.h"
 
 // Constructor ---------------------------------------------------------------
 WebComm::WebComm(ServoControl* servo)
@@ -47,6 +48,10 @@ void WebComm::setFootContactConfig(FootContactConfig* cfg) {
 
 void WebComm::setSwingFootLeveler(SwingFootLeveler* l) {
     _swingLeveler = l;
+}
+
+void WebComm::setFootImpactDetector(FootImpactDetector* d) {
+    _footImpact = d;
 }
 
 void WebComm::setFootNeutralPitch(float leftRad, float rightRad) {
@@ -284,6 +289,43 @@ void WebComm::broadcastFootContact(const FootContactSnapshot* snap) {
         cfg.flat_roll_threshold_rad,
         cfg.loaded_pitch_deviation_rad,
         cfg.loaded_pitch_sign
+    );
+    ws.textAll(buf);
+}
+
+// =============================================================================
+//  FOOT IMPACT BROADCAST  (L0)
+//  Protocol: "FOOT_IMPACT:en=0|1,thr=X,lpf=X,ref=N,v_l=0|1,..."
+//  Rate-limited to 10 Hz.
+// =============================================================================
+void WebComm::broadcastFootImpact() {
+    if (_footImpact == nullptr || ws.count() == 0) return;
+    for (auto& c : ws.getClients()) {
+        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
+    }
+
+    const uint32_t INTERVAL_US = 100000;  // 10 Hz
+    uint32_t now = micros();
+    if ((now - _lastFootImpactBroadcast_us) < INTERVAL_US) return;
+    _lastFootImpactBroadcast_us = now;
+
+    const FootImpactConfig& c = _footImpact->getConfig();
+    const FootImpactSideState& L = _footImpact->getState(Side::LEFT);
+    const FootImpactSideState& R = _footImpact->getState(Side::RIGHT);
+
+    char buf[320];
+    snprintf(buf, sizeof(buf),
+        "FOOT_IMPACT:"
+        "en=%d,thr=%.3f,lpf=%.3f,ref=%lu,"
+        "v_l=%d,ar_l=%d,d_l=%d,m_l=%.3f,dl_l=%.3f,c_l=%lu,ms_l=%lu,lm_l=%.3f,ld_l=%.3f,"
+        "v_r=%d,ar_r=%d,d_r=%d,m_r=%.3f,dl_r=%.3f,c_r=%lu,ms_r=%lu,lm_r=%.3f,ld_r=%.3f",
+        c.enabled ? 1 : 0, c.threshold_g, c.lpf_alpha, (unsigned long)c.refractory_ms,
+        L.valid ? 1 : 0, L.armed ? 1 : 0, L.detected ? 1 : 0,
+        L.magnitude_g, L.delta_g, (unsigned long)L.detect_count,
+        (unsigned long)L.ms_since_last, L.last_magnitude_g, L.last_delta_g,
+        R.valid ? 1 : 0, R.armed ? 1 : 0, R.detected ? 1 : 0,
+        R.magnitude_g, R.delta_g, (unsigned long)R.detect_count,
+        (unsigned long)R.ms_since_last, R.last_magnitude_g, R.last_delta_g
     );
     ws.textAll(buf);
 }
@@ -572,6 +614,10 @@ void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
             _lastBalanceBroadcast_us = 0;
             broadcastBalanceState(_balCtrl->getLastState());
         }
+        if (_footImpact) {
+            _lastFootImpactBroadcast_us = 0;
+            broadcastFootImpact();
+        }
     }
     if (type == WS_EVT_DISCONNECT) {
         Serial.printf("[WebComm] Client #%u disconnected\n", client->id());
@@ -840,6 +886,40 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                               cfg.flat_roll_threshold_rad,
                               cfg.loaded_pitch_deviation_rad,
                               cfg.loaded_pitch_sign);
+            }
+        }
+        // ---------------------------------------------------------------------
+        //  Foot-impact tuning (L0)
+        //  Protocol: CMD:FOOT_IMPACT_TUNE:enabled=1,thr=1.5,lpf=0.5,ref=200
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("FOOT_IMPACT_TUNE:")) {
+            if (_footImpact) {
+                FootImpactConfig cfg = _footImpact->getConfig();
+                String params = cmd.substring(17);
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    String pair = (comma == -1) ? params.substring(start)
+                                                : params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq != -1) {
+                        String key = pair.substring(0, eq);
+                        String val = pair.substring(eq + 1);
+                        if      (key == "enabled") cfg.enabled       = (val.toInt() != 0);
+                        else if (key == "thr")     cfg.threshold_g   = val.toFloat();
+                        else if (key == "lpf")     cfg.lpf_alpha     = val.toFloat();
+                        else if (key == "ref")     cfg.refractory_ms = (uint32_t)val.toInt();
+                    }
+                    start = (comma == -1) ? params.length() : comma + 1;
+                }
+                _footImpact->setConfig(cfg);
+                _lastFootImpactBroadcast_us = 0;
+                broadcastFootImpact();
+                Serial.printf("[WebComm] FOOT_IMPACT_TUNE: en=%d thr=%.3f lpf=%.3f ref=%lu\n",
+                              (int)_footImpact->getConfig().enabled,
+                              _footImpact->getConfig().threshold_g,
+                              _footImpact->getConfig().lpf_alpha,
+                              (unsigned long)_footImpact->getConfig().refractory_ms);
             }
         }
         

@@ -35,7 +35,7 @@ struct FootContactConfig {
     // during in-place stepping; tighten toward 0.025 rad after F1 telemetry
     // confirms the noise floor at rest is < 0.5 deg.
     float flat_pitch_threshold_rad = 0.035f;
-    float flat_roll_threshold_rad  = 0.035f;
+    float flat_roll_threshold_rad  = 0.05f;
 
     // --- isFootLoaded asymmetric threshold ---
     // foot pitch under load deviates from neutral by ~this magnitude due to

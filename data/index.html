@@ -589,6 +589,60 @@
             </div>
         </div>
 
+        <div class="imu-group-label top-gap">Foot impact (L0 telemetry only)</div>
+        <div class="flex-row-gap-sm mb-10">
+            <label class="form-label-inline">
+                <input type="checkbox" id="fi-enabled">
+                Enabled
+            </label>
+            <button class="btn-spd-apply" id="fi-apply" onclick="sendFootImpactTune()">Apply</button>
+        </div>
+        <div class="bal-tune-grid">
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Threshold (g)</span><span class="tune-val" id="tvFiThr">1.500</span></div>
+                <input type="range" id="slFiThr" min="0.05" max="20" step="0.05" value="1.5"
+                       oninput="updateFiLabel('thr', this.value)">
+            </div>
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>LPF alpha</span><span class="tune-val" id="tvFiLpf">0.500</span></div>
+                <input type="range" id="slFiLpf" min="0.05" max="1.0" step="0.05" value="0.5"
+                       oninput="updateFiLabel('lpf', this.value)">
+            </div>
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Refractory (ms)</span><span class="tune-val" id="tvFiRef">200</span></div>
+                <input type="range" id="slFiRef" min="0" max="2000" step="10" value="200"
+                       oninput="updateFiLabel('ref', this.value)">
+            </div>
+        </div>
+        <div class="imu-grid top-gap-sm">
+            <div class="imu-group">
+                <div class="imu-group-label">Left impact</div>
+                <div class="imu-row"><span class="imu-axis">VAL</span><span class="imu-value" id="fi-v-l">—</span></div>
+                <div class="imu-row"><span class="imu-axis">ARM</span><span class="imu-value" id="fi-ar-l">—</span></div>
+                <div class="imu-row"><span class="imu-axis">DET</span><span class="imu-value" id="fi-d-l">—</span></div>
+                <div class="imu-row"><span class="imu-axis">|a|</span><span class="imu-value" id="fi-m-l">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Δ</span><span class="imu-value" id="fi-dl-l">—</span></div>
+                <div class="imu-row"><span class="imu-axis">CNT</span><span class="imu-value" id="fi-c-l">—</span></div>
+                <div class="imu-row"><span class="imu-axis">MS</span><span class="imu-value" id="fi-ms-l">—</span></div>
+                <div class="imu-row"><span class="imu-axis">L|a|</span><span class="imu-value" id="fi-lm-l">—</span></div>
+                <div class="imu-row"><span class="imu-axis">LΔ</span><span class="imu-value" id="fi-ld-l">—</span></div>
+                <div class="imu-row"><span class="imu-axis">PH</span><span class="imu-value" id="fi-ph-l">—</span></div>
+            </div>
+            <div class="imu-group">
+                <div class="imu-group-label">Right impact</div>
+                <div class="imu-row"><span class="imu-axis">VAL</span><span class="imu-value" id="fi-v-r">—</span></div>
+                <div class="imu-row"><span class="imu-axis">ARM</span><span class="imu-value" id="fi-ar-r">—</span></div>
+                <div class="imu-row"><span class="imu-axis">DET</span><span class="imu-value" id="fi-d-r">—</span></div>
+                <div class="imu-row"><span class="imu-axis">|a|</span><span class="imu-value" id="fi-m-r">—</span></div>
+                <div class="imu-row"><span class="imu-axis">Δ</span><span class="imu-value" id="fi-dl-r">—</span></div>
+                <div class="imu-row"><span class="imu-axis">CNT</span><span class="imu-value" id="fi-c-r">—</span></div>
+                <div class="imu-row"><span class="imu-axis">MS</span><span class="imu-value" id="fi-ms-r">—</span></div>
+                <div class="imu-row"><span class="imu-axis">L|a|</span><span class="imu-value" id="fi-lm-r">—</span></div>
+                <div class="imu-row"><span class="imu-axis">LΔ</span><span class="imu-value" id="fi-ld-r">—</span></div>
+                <div class="imu-row"><span class="imu-axis">PH</span><span class="imu-value" id="fi-ph-r">—</span></div>
+            </div>
+        </div>
+
         <!-- Loop budget diagnostic — surfaces if F1 is starving the 400 Hz tick. -->
         <div class="imu-status" id="footImuLoopBudget">
             Loop budget (last 5s peak): &mdash;
@@ -2035,6 +2089,55 @@ function initWebSocket() {
                 setFcSignUI(parseFloat(v.loadSign));
             }
         }
+        else if (msg.startsWith("FOOT_IMPACT:")) {
+            const v = {};
+            msg.substring(12).split(",").forEach(p => {
+                const eq = p.indexOf("=");
+                if (eq !== -1) v[p.substring(0, eq)] = p.substring(eq + 1);
+            });
+            const upd = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = val;
+            };
+            const setBoolText = (id, val) => upd(id, val === "1" ? "yes" : "no");
+            document.getElementById("fi-enabled").checked = (v.en === "1");
+            if (!_tuneActive) {
+                _syncSlider("slFiThr", "tvFiThr", parseFloat(v.thr || "1.5"), 3);
+                _syncSlider("slFiLpf", "tvFiLpf", parseFloat(v.lpf || "0.5"), 3);
+                _syncSlider("slFiRef", "tvFiRef", parseFloat(v.ref || "200"), 0);
+            }
+            setBoolText("fi-v-l",  v.v_l);
+            setBoolText("fi-v-r",  v.v_r);
+            setBoolText("fi-ar-l", v.ar_l);
+            setBoolText("fi-ar-r", v.ar_r);
+            upd("fi-d-l",  v.d_l === "1" ? "★" : "—");
+            upd("fi-d-r",  v.d_r === "1" ? "★" : "—");
+            upd("fi-m-l",  parseFloat(v.m_l  || "0").toFixed(3));
+            upd("fi-m-r",  parseFloat(v.m_r  || "0").toFixed(3));
+            upd("fi-dl-l", parseFloat(v.dl_l || "0").toFixed(3));
+            upd("fi-dl-r", parseFloat(v.dl_r || "0").toFixed(3));
+            upd("fi-c-l",  v.c_l || "0");
+            upd("fi-c-r",  v.c_r || "0");
+            upd("fi-ms-l", v.ms_l || "0");
+            upd("fi-ms-r", v.ms_r || "0");
+            upd("fi-lm-l", parseFloat(v.lm_l || "0").toFixed(3));
+            upd("fi-lm-r", parseFloat(v.lm_r || "0").toFixed(3));
+            upd("fi-ld-l", parseFloat(v.ld_l || "0").toFixed(3));
+            upd("fi-ld-r", parseFloat(v.ld_r || "0").toFixed(3));
+
+            const cl = parseInt(v.c_l || "0", 10);
+            const cr = parseInt(v.c_r || "0", 10);
+            if (cl > _fiLastCount.l) {
+                _fiLastCount.l = cl;
+                _fiPhaseAtLast.l = _lastGaitPhase !== null ? _lastGaitPhase.toFixed(3) : "—";
+            }
+            if (cr > _fiLastCount.r) {
+                _fiLastCount.r = cr;
+                _fiPhaseAtLast.r = _lastGaitPhase !== null ? _lastGaitPhase.toFixed(3) : "—";
+            }
+            upd("fi-ph-l", _fiPhaseAtLast.l);
+            upd("fi-ph-r", _fiPhaseAtLast.r);
+        }
         else if (msg.startsWith("FOOT_BUDGET:")) {
             // Format: "FOOT_BUDGET:peak_us=...,avg_us=...,window_s=..."
             const v = {};
@@ -2765,6 +2868,34 @@ function setFcSign(sign) {
     }
 }
 
+const _fiLastCount = { l: 0, r: 0 };
+const _fiPhaseAtLast = { l: "—", r: "—" };
+let _lastGaitPhase = null;
+
+function updateFiLabel(id, rawVal) {
+    _setTuneActive();
+    const map = {
+        thr: { el: "tvFiThr", decimals: 3 },
+        lpf: { el: "tvFiLpf", decimals: 3 },
+        ref: { el: "tvFiRef", decimals: 0 },
+    };
+    const m = map[id];
+    if (m) {
+        document.getElementById(m.el).textContent = parseFloat(rawVal).toFixed(m.decimals);
+    }
+}
+
+function sendFootImpactTune() {
+    if (!(ws && ws.readyState === WebSocket.OPEN)) return;
+    const enabled = document.getElementById("fi-enabled").checked ? 1 : 0;
+    const thr = parseFloat(document.getElementById("slFiThr").value).toFixed(3);
+    const lpf = parseFloat(document.getElementById("slFiLpf").value).toFixed(3);
+    const ref = parseInt(document.getElementById("slFiRef").value, 10);
+    const msg = `CMD:FOOT_IMPACT_TUNE:enabled=${enabled},thr=${thr},lpf=${lpf},ref=${ref}`;
+    ws.send(msg);
+    console.log("[WS TX]", msg);
+}
+
 // Debounced send — converts setpoint from degrees to radians before sending.
 function sendWSTune() {
     clearTimeout(sendWSTune._t);
@@ -2896,6 +3027,7 @@ function parseGaitState(payload) {
     const mode    = parseInt(v["mode"] || "0");
     const sub     = parseInt(v["sub"]  || "0");
     const phase   = parseFloat(v["phase"]  || "0");
+    _lastGaitPhase = phase;
     const liftL   = parseFloat(v["liftL"]  || "0");
     const liftR   = parseFloat(v["liftR"]  || "0");
     const wsProg  = parseFloat(v["ws"]     || "0");

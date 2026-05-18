@@ -11,10 +11,15 @@
 #include "gait_controller.h"
 #include <math.h>
 
+#ifdef UNIT_TEST
+void runFootImpactTests();
+#endif
+
 // ── Phase F1: foot IMUs (read + filter + telemetry, no closed-loop) ───────
 #if FOOT_IMU_ENABLED
 #include <Wire.h>
 #include "foot_contact.h"
+#include "foot_impact.h"
 #include "lsm6dsv_driver.h"
 #include "swing_foot_leveler.h"
 
@@ -110,6 +115,7 @@ StateEstimator leftFootEstimator (_makeFootFilterConfig());
 StateEstimator rightFootEstimator(_makeFootFilterConfig());
 FootContactConfig footContactCfg;
 SwingFootLeveler  swingFootLeveler;
+FootImpactDetector footImpactDetector;
 
 #endif
 GaitController    gaitController;   // open-loop walking gait
@@ -179,6 +185,7 @@ void oe_clear() {
     gaitController.start(GaitMode::IDLE);
 #if FOOT_IMU_ENABLED
     swingFootLeveler.reset();
+    footImpactDetector.reset();
 #endif
     _oe_estopped = false;
     _oe_released = true;
@@ -193,6 +200,10 @@ void oe_clear() {
 void setup() {
     Serial.begin(115200);
     Serial.println("Booting Robot...");
+
+#ifdef UNIT_TEST
+    runFootImpactTests();
+#endif
 
     oe_begin();
     servoController.init();       // Wire.begin(8, 9) happens here
@@ -259,6 +270,8 @@ void setup() {
     swingFootLeveler.init(&leftFootEstimator, &rightFootEstimator);
     gaitController.setSwingFootLeveler(&swingFootLeveler);
     webComm.setSwingFootLeveler(&swingFootLeveler);
+    footImpactDetector.init();
+    webComm.setFootImpactDetector(&footImpactDetector);
 #endif
 
     Serial.println("System Ready.");
@@ -311,9 +324,10 @@ void loop() {
             const uint32_t _footStartUs = micros();
             RawIMUData lf_raw   = leftFootIMU.read();
             _remapFootRawToRobotFrame(lf_raw);
-            const IMUState   lf_state = leftFootEstimator.update(lf_raw, dt);
             RawIMUData rf_raw   = rightFootIMU.read();
             _remapFootRawToRobotFrame(rf_raw);
+            footImpactDetector.update(lf_raw, rf_raw);
+            const IMUState   lf_state = leftFootEstimator.update(lf_raw, dt);
             const IMUState   rf_state = rightFootEstimator.update(rf_raw, dt);
             const uint32_t _footDurUs = micros() - _footStartUs;
 
@@ -397,6 +411,7 @@ void loop() {
             webComm.broadcastFootIMU(lf_raw, rf_raw);
             webComm.broadcastFootEstimate(lf_state, rf_state);
             webComm.broadcastFootContact(footSnapPtr);
+            webComm.broadcastFootImpact();
 #endif
             webComm.broadcastBalanceState(balState);
             webComm.broadcastGaitState();

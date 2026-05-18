@@ -16,6 +16,7 @@ class WeightShift;
 class GaitController;    // forward declare — only pointer stored
 class LSM6DSVDriver;     // forward declare — foot IMU diagnostic
 class SwingFootLeveler;  // forward declare — swing-foot leveler (L0+)
+class FootImpactDetector;
 
 class WebComm {
 public:    // ctor can be invoked at global scope; it simply stores the servo pointer.
@@ -37,6 +38,7 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // the gait controller saw this tick. Pass nullptr to no-op (used when
     // FOOT_IMU is compiled out).
     void broadcastFootContact(const FootContactSnapshot* snap);
+    void broadcastFootImpact();
     void broadcastCalibStatus(CalibState state, float progress); // --- ADD
     void broadcastBalanceState(const BalanceState& state);
     void broadcastSpeeds();
@@ -56,6 +58,7 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     void setFootContactConfig(FootContactConfig* cfg);
     // Wire swing-foot leveler for CMD:SWING_LEVELER_TUNE and GAIT: telemetry.
     void setSwingFootLeveler(SwingFootLeveler* l);
+    void setFootImpactDetector(FootImpactDetector* d);
     // Phase 3: dual-parameter form preserved for callers that set both
     // neutrals atomically (setup() in main.cpp). Prefer the Side-keyed overload
     // for new code — positional parameter order is the silent-swap hazard this
@@ -72,6 +75,7 @@ private:
     uint32_t _lastFootIMUBroadcast_us       = 0;
     uint32_t _lastFootEstimateBroadcast_us  = 0;
     uint32_t _lastFootContactBroadcast_us   = 0;
+    uint32_t _lastFootImpactBroadcast_us    = 0;
     uint32_t _lastCalibBroadcast_us     = 0;   // rate-limits calib status to 10 Hz
     BalanceController* _balCtrl         = nullptr;
     uint32_t           _lastBalanceBroadcast_us = 0;
@@ -85,6 +89,7 @@ private:
     float              _leftFootNeutralPitchRad  = 0.0f;
     float              _rightFootNeutralPitchRad = 0.0f;
     SwingFootLeveler*  _swingLeveler        = nullptr;
+    FootImpactDetector* _footImpact         = nullptr;
     
     void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
     void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);

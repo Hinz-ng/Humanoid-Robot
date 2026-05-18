@@ -219,6 +219,31 @@ constexpr float FOOT_IMU_ACCEL_LPF_BETA = 0.70f;
 #define FOOT_IMU_BENCH_PRINT  0
 
 // ============================================================
+// FOOT IMPACT DETECTION
+// L3.5 stateful detector. Telemetry-only at L0; no control consumer.
+// See include/foot_impact.h for signal definition.
+// ============================================================
+
+// Master enable at boot. True so the telemetry pipeline is live as soon as
+// the operator opens the UI panel. Detector does not act on detections at
+// L0 even when enabled — actuation is a future-phase concern (L1+).
+constexpr bool FOOT_IMPACT_ENABLED_DEFAULT = true;
+
+// Threshold on |first-difference of LPF-smoothed |a||. Default is a
+// placeholder pending empirical characterization on real hardware.
+// Units: g.
+constexpr float FOOT_IMPACT_THRESHOLD_G_DEFAULT = 1.5f;
+
+// First-order LPF coefficient on the magnitude stream before differencing.
+// alpha=1.0 disables smoothing; alpha<1.0 attenuates both noise and the
+// transient of interest.
+constexpr float FOOT_IMPACT_LPF_ALPHA_DEFAULT = 0.5f;
+
+// Per-side refractory after a detection. Prevents one physical event
+// from being counted as multiple events while the sensor rings. Units: ms.
+constexpr uint32_t FOOT_IMPACT_REFRACTORY_MS_DEFAULT = 200;
+
+// ============================================================
 // SWING-FOOT LEVELER (Section 14)
 // Closed-loop ankle pitch/roll correction during swing phase.
 // Reads swing-leg foot IMU; emits additive bias on top of IK angles.

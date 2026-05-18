@@ -232,7 +232,7 @@ constexpr bool FOOT_IMPACT_ENABLED_DEFAULT = true;
 // Threshold on |first-difference of LPF-smoothed |a||. Default is a
 // placeholder pending empirical characterization on real hardware.
 // Units: g.
-constexpr float FOOT_IMPACT_THRESHOLD_G_DEFAULT = 1.5f;
+constexpr float FOOT_IMPACT_THRESHOLD_G_DEFAULT = 0.15f;
 
 // First-order LPF coefficient on the magnitude stream before differencing.
 // alpha=1.0 disables smoothing; alpha<1.0 attenuates both noise and the

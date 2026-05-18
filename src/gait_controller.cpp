@@ -585,6 +585,22 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         }
     }
 
+    // Stage 3 -- Lateral CoM observation via inverted-pendulum model.
+    // Computed every tick regardless of liftGateMode so telemetry is
+    // always available for diagnostic comparison against IMU_ROLL.
+    // Invalid IMU leaves comLateralOK=false, keeping the gate closed.
+    float comLateralMm = 0.0f;
+    bool  comLateralOK = false;
+    if (imuState.valid) {
+        const float rollCorrected = imuState.roll - _cfg.torsoRollNeutralRad;
+        comLateralMm = H_COM_MM * rollCorrected;   // sin(x) ~= x for small x
+        // Signed projection. rollSign is +1 for LEFT-swing (CoM should
+        // move RIGHT, body roll positive), -1 for RIGHT-swing -- same
+        // convention as the IMU_ROLL gate above so both modes are
+        // directly comparable in telemetry.
+        comLateralOK = (comLateralMm * rollSign >= _cfg.comLateralGateMm);
+    }
+
     bool extraGate = true;
     if (!poseMode) {
         switch (_cfg.liftGateMode) {
@@ -606,6 +622,12 @@ void GaitController::update(float dt_s, const IMUState& imuState,
                 // two predicates describe the same physical event.
                 extraGate = stanceFlat && stanceLoaded;
                 break;
+            case LiftGateMode::COM_LATERAL:
+                extraGate = comLateralOK;
+                break;
+            case LiftGateMode::STANCE_FLAT_COM_LATERAL:
+                extraGate = stanceFlat && comLateralOK;
+                break;
         }
     }
 
@@ -614,6 +636,8 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     _state.gateStanceFlat   = stanceFlat;
     _state.gateStanceLoaded = stanceLoaded;
     _state.gateStanceIsLeft = isLeftStance;
+    _state.comLateralMm     = comLateralMm;
+    _state.gateComLateralOK = comLateralOK;
 
     _state.subState = _subState;
     // phase: LEFT-swing maps to [0, 0.5), RIGHT-swing maps to [0.5, 1.0).
@@ -979,6 +1003,31 @@ void GaitController::triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad) 
                   tilt_pitch_rad, tilt_roll_rad, tilt_mag,
                   _rcvStepX_mm, _rcvStepY_mm,
                   sideName(_rcvSwingSide));
+}
+
+// ---------------------------------------------------------------------------
+//  tareToTorso  --  capture current imuState.pitch/roll as the neutral.
+//
+//  Rejected outside IDLE so the tare cannot capture transient pose during
+//  a gait cycle or recovery. Rejected when IMU is invalid so the tare
+//  cannot capture pre-calibration garbage. Both rejections log a clear
+//  reason; the WebSocket response surfaces the success bit to the UI.
+// ---------------------------------------------------------------------------
+bool GaitController::tareToTorso(const IMUState& imuState) {
+    if (_state.mode != GaitMode::IDLE) {
+        Serial.printf("[GaitCtrl] TORSO_TARE rejected: mode=%d (must be IDLE)\n",
+                      static_cast<int>(_state.mode));
+        return false;
+    }
+    if (!imuState.valid) {
+        Serial.println("[GaitCtrl] TORSO_TARE rejected: IMU not valid");
+        return false;
+    }
+    _cfg.torsoRollNeutralRad  = imuState.roll;
+    _cfg.torsoPitchNeutralRad = imuState.pitch;
+    Serial.printf("[GaitCtrl] TORSO_TARE: pitch=%.4f rad  roll=%.4f rad\n",
+                  _cfg.torsoPitchNeutralRad, _cfg.torsoRollNeutralRad);
+    return true;
 }
 
 // ---------------------------------------------------------------------------

@@ -1296,11 +1296,15 @@
             <button class="btn-sign" id="btnGateImu" onclick="setGateMode(1)">IMU roll (legacy)</button>
             <button class="btn-sign btn-sign-active" id="btnGateFlat" onclick="setGateMode(2)">Stance flat</button>
             <button class="btn-sign" id="btnGateLoad" onclick="setGateMode(3)">Stance flat + loaded ⚠</button>
+            <button class="btn-sign" id="btnGateComLat" onclick="setGateMode(4)">COM lateral</button>
+            <button class="btn-sign" id="btnGateFlatComLat" onclick="setGateMode(5)">Flat + COM</button>
         </div>
         <div class="small-note">
             Independent options — each picks ONE extra predicate beyond the kinematic
             progress check. "Stance flat" is the verified default. "IMU roll" only
             works with joint-space balance armed; "loaded" needs F4 calibration.
+            "COM lateral" uses neutral-corrected lateral CoM and "Flat + COM" requires
+            both stance-flat and COM-lateral before the gate opens.
         </div>
 
         <!-- Phase progress bar -->
@@ -1318,6 +1322,7 @@
             <button class="btn-gait-step" id="btnGaitCapToggle" onclick="toggleCapture()">
                 Capture: OFF
             </button>
+            <button class="btn-gait-step"  onclick="sendCmd('TORSO_TARE')">🎯 Torso Tare</button>
             <button class="btn-gait-step"  onclick="sendCmd('GAIT_STEP')">↷ Single Step</button>
             <button class="btn-gait-wshift" onclick="sendCmd('GAIT_WSHIFT')">⇆ W-Shift Only</button>
             <button class="btn-gait-pose"  onclick="sendCmd('GAIT_POSE_STEP')">⏸ Pose Step</button>
@@ -1374,6 +1379,14 @@
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">Gate: Stance loaded</div>
                 <div class="bal-out-val" id="gaitGateLoad">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">COM lateral (mm)</div>
+                <div class="bal-out-val" id="gaitTelemComLat">0.0</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">COM gate</div>
+                <div class="bal-out-val" id="gaitTelemGateComLat">—</div>
             </div>
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">IK L</div>
@@ -1465,6 +1478,42 @@
                 <div class="small-note">
                     Phase 2: forward stride per cycle. 0 disables.
                     Hard-capped at stanceH × 0.20. Start at 10 mm.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>COM lateral gate (mm)</span>
+                    <span class="tune-val" id="tvGaitComLatGate">14.0</span>
+                </div>
+                <input type="range" id="slGaitComLatGate" min="0" max="50" step="0.5" value="14"
+                       oninput="updateGaitLabel('comLatGate', this.value); sendGaitTune()">
+                <div class="small-note">
+                    Lateral COM displacement needed to open the lift gate. Small values move earlier.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Torso neutral roll (rad)</span>
+                    <span class="tune-val" id="tvGaitTorsoNeutralRoll">0.000</span>
+                </div>
+                <input type="range" id="slGaitTorsoNeutralRoll" min="-0.20" max="0.20" step="0.005" value="0"
+                       oninput="updateGaitLabel('torsoNeutralRoll', this.value); sendGaitTune()">
+                <div class="small-note">
+                    Roll bias trimmed from current torso IMU before COM lateral gating.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Torso neutral pitch (rad)</span>
+                    <span class="tune-val" id="tvGaitTorsoNeutralPitch">0.000</span>
+                </div>
+                <input type="range" id="slGaitTorsoNeutralPitch" min="-0.20" max="0.20" step="0.005" value="0"
+                       oninput="updateGaitLabel('torsoNeutralPitch', this.value); sendGaitTune()">
+                <div class="small-note">
+                    Pitch bias stored for future sagittal support and gate trimming.
                 </div>
             </div>
 
@@ -3017,6 +3066,9 @@ const _gaitTuneMap = {
     stepLen:    { el: "tvGaitStepLen",  decimals: 0 },
     captureGain: { el: "tvGaitCapGain", decimals: 2 },
     captureMax:  { el: "tvGaitCapMax",  decimals: 0 },
+    comLatGate: { el: "tvGaitComLatGate", decimals: 1 },
+    torsoNeutralRoll:  { el: "tvGaitTorsoNeutralRoll",  decimals: 3 },
+    torsoNeutralPitch: { el: "tvGaitTorsoNeutralPitch", decimals: 3 },
 };
 
 function updateGaitLabel(id, rawVal) {
@@ -3038,9 +3090,13 @@ function sendGaitTune() {
         const stepLen  = document.getElementById("slGaitStepLen").value;
         const capGain  = parseFloat(document.getElementById("slGaitCapGain").value).toFixed(2);
         const capMax   = document.getElementById("slGaitCapMax").value;
+        const comLatGate = parseFloat(document.getElementById("slGaitComLatGate").value).toFixed(1);
+        const torsoNeutralRoll = parseFloat(document.getElementById("slGaitTorsoNeutralRoll").value).toFixed(5);
+        const torsoNeutralPitch = parseFloat(document.getElementById("slGaitTorsoNeutralPitch").value).toFixed(5);
         const msg = `CMD:GAIT_TUNE:phaseRate=${rate},liftGate=${gate},`
                   + `wsThresh=${wsThreshRad},stepH_mm=${stepH},stanceH_mm=${stanceH},`
-                  + `stepLength_mm=${stepLen},captureGain=${capGain},captureMax=${capMax}`;
+                  + `stepLength_mm=${stepLen},captureGain=${capGain},captureMax=${capMax},`
+                  + `comLatGateMm=${comLatGate},torsoNeutralRoll=${torsoNeutralRoll},torsoNeutralPitch=${torsoNeutralPitch}`;
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(msg);
             console.log("[WS TX]", msg);
@@ -3069,7 +3125,7 @@ function setGateMode(mode) {
 }
 
 function syncGateModeButtons(mode) {
-    const ids = ["btnGateOff", "btnGateImu", "btnGateFlat", "btnGateLoad"];
+    const ids = ["btnGateOff", "btnGateImu", "btnGateFlat", "btnGateLoad", "btnGateComLat", "btnGateFlatComLat"];
     ids.forEach((id, idx) => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -3101,6 +3157,11 @@ function parseGaitState(payload) {
     const gImu      = (v["gImu"] === "1");
     const gFlat     = (v["gFlat"] === "1");
     const gLoad     = (v["gLoad"] === "1");
+    const comLatMm  = parseFloat(v["comLatMm"] || "0");
+    const gateComLat = (v["gateComLat"] === "1");
+    const trNeutP   = parseFloat(v["trNeutP"] || "0");
+    const trNeutR   = parseFloat(v["trNeutR"] || "0");
+    const comLatGate = parseFloat(v["comLatGate"] || "0");
     const stanceIsL = (v["gStanceL"] === "1");
 
     if (!_tuneActive) syncGateModeButtons(gateMode);
@@ -3194,6 +3255,8 @@ function parseGaitState(payload) {
         }
     }
     set("gaitTelemHold",  isPoseMode ? (hold > 0 ? "HOLD " + hold : "running") : "—");
+    set("gaitTelemComLat", comLatMm.toFixed(1) + " mm");
+    set("gaitTelemGateComLat", gateComLat ? "✓" : "—");
 
     const ikNames  = {0: "OK", 1: "UNREACH", 2: "CLAMPED", 3: "DOMAIN!"};
     const ikColors = {0: "#4caf50", 1: "#ff9800", 2: "#ff9800", 3: "#f44336"};
@@ -3249,6 +3312,9 @@ function parseGaitState(payload) {
         _syncSlider("slGaitCapGain", "tvGaitCapGain", capGain, 2);
         const capMax = parseFloat(v["capMax"] || "15");
         _syncSlider("slGaitCapMax", "tvGaitCapMax", capMax, 0);
+        _syncSlider("slGaitComLatGate", "tvGaitComLatGate", comLatGate, 1);
+        _syncSlider("slGaitTorsoNeutralRoll", "tvGaitTorsoNeutralRoll", trNeutR, 3);
+        _syncSlider("slGaitTorsoNeutralPitch", "tvGaitTorsoNeutralPitch", trNeutP, 3);
     }
 
     // Swing-foot leveler L0 telemetry

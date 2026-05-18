@@ -60,7 +60,7 @@ constexpr float GAIT_PHASE_RATE_HZ          = 0.55f;  // cycles/sec
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
 // If drag returns at 15 mm, the root cause is the gate, not step height.
-constexpr float GAIT_STEP_HEIGHT_MM         = 8.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 12.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 35.0f;  // Phase 3+; forward stride
 
@@ -117,7 +117,26 @@ constexpr uint32_t GAIT_LIFT_DWELL_MS_DEFAULT = 80;
 // genuinely needs longer to settle; tune down to fail-fast in testing.
 //
 // 0 disables the timeout (wait indefinitely -- pre-Stage-2 behavior).
-constexpr uint32_t GAIT_WAIT_SHIFT_MAX_MS_DEFAULT = 2500;
+constexpr uint32_t GAIT_WAIT_SHIFT_MAX_MS_DEFAULT = 2000;
+
+// ============================================================
+// LATERAL CoM OBSERVATION GATE  (Stage 3)
+// ============================================================
+// Threshold (mm) on neutral-corrected observed lateral CoM displacement,
+// computed from torso IMU roll via the inverted-pendulum approximation:
+//
+//   com_lateral_mm = H_COM_MM * sin(imuRoll - torsoRollNeutralRad)
+//                  ~= H_COM_MM * (imuRoll - torsoRollNeutralRad)
+//
+// for small angles. Gate satisfies when the signed observation projected
+// onto the expected shift direction exceeds this threshold.
+//
+// Tuning: set to 60-80% of |lateral_shift_mm|. With lateral_shift_mm=-20,
+// a threshold of 14-16 mm confirms the body has substantially shifted
+// before lift, with margin for IIR settling and sensor noise. Setting
+// too close to lateral_shift_mm makes the gate brittle to drift; setting
+// too low defeats the point of observation.
+constexpr float GAIT_COM_LATERAL_GATE_MM_DEFAULT = 14.0f;
 
 // ============================================================
 // CAPTURE-POINT — Stage 2.2 (sagittal only)

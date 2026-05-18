@@ -498,6 +498,7 @@ void WebComm::broadcastGaitState() {
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
         "gateMode=%d,gImu=%d,gFlat=%d,gLoad=%d,gStanceL=%d,"
+        "comLatMm=%.1f,gateComLat=%d,trNeutP=%.5f,trNeutR=%.5f,comLatGate=%.1f,"
         "rsub=%d,rdx=%d,rdy=%d,rms=%lu,"
         "rcvX=%.1f,rcvY=%.1f,rcvMag=%.1f,rcvSY=%.1f,xDispl=%.1f,"
         "ikL=%d,ikR=%d,reachL=%.1f,reachR=%.1f,ffL=%.3f,ffR=%.3f,capOffset=%.1f,capEn=%d,capGain=%.2f,"
@@ -520,6 +521,11 @@ void WebComm::broadcastGaitState() {
         static_cast<int>(s.gateStanceFlat),
         static_cast<int>(s.gateStanceLoaded),
         static_cast<int>(s.gateStanceIsLeft),
+        s.comLateralMm,
+        (int)s.gateComLateralOK,
+        _gaitCtrl->getConfig().torsoPitchNeutralRad,
+        _gaitCtrl->getConfig().torsoRollNeutralRad,
+        _gaitCtrl->getConfig().comLateralGateMm,
         static_cast<int>(s.recoverySub),
         static_cast<int>(s.recoveryDirX),
         static_cast<int>(s.recoveryDirY),
@@ -1014,6 +1020,20 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             ws.textAll(buf);
             Serial.printf("[WebComm] %s\n", buf);
         }
+        else if (cmd == "TORSO_TARE") {
+            if (_gaitCtrl && _stateEst) {
+                const bool ok = _gaitCtrl->tareToTorso(_stateEst->getState());
+                const GaitConfig& cfg = _gaitCtrl->getConfig();
+                char buf[120];
+                snprintf(buf, sizeof(buf),
+                    "TORSO_TARE:ok=%d,pitch=%.4f,roll=%.4f",
+                    (int)ok, cfg.torsoPitchNeutralRad, cfg.torsoRollNeutralRad);
+                ws.textAll(buf);
+                Serial.printf("[WebComm] %s\n", buf);
+            } else {
+                ws.textAll("TORSO_TARE:ok=0,err=not_wired");
+            }
+        }
         else if (cmd.startsWith("BALANCE_TUNE:")) {
             if (_balCtrl) {
                 BalanceConfig cfg = _balCtrl->getConfig();
@@ -1318,7 +1338,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         if      (key == "phaseRate")   cfg.phaseRateHz       = constrain(val, 0.05f, 2.0f);
                         else if (key == "liftGate")    cfg.liftGateThreshold = constrain(val, 0.0f, 0.99f);
                         else if (key == "liftGateMode") {
-                            const int m = constrain((int)val, 0, 3);
+                            const int m = constrain((int)val, 0, 5);
                             cfg.liftGateMode = static_cast<LiftGateMode>(m);
                         }
                         else if (key == "wsThresh")    cfg.wsThresholdRad    = constrain(val, 0.01f, 0.50f);
@@ -1360,17 +1380,34 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             // should be diagnosed, not tolerated.
                             cfg.waitShiftMaxMs = (uint32_t)constrain(val, 0.0f, 10000.0f);
                         }
+                        else if (key == "comLatGateMm") {
+                            // 0 disables the gate (always satisfies in
+                            // COM_LATERAL mode); 50 mm cap because beyond
+                            // that the threshold approaches lateral_shift_mm
+                            // and the gate effectively never opens.
+                            cfg.comLateralGateMm = constrain(val, 0.0f, 50.0f);
+                        }
+                        else if (key == "torsoNeutralRoll") {
+                            // +/-0.20 rad (~11 deg) hard cap. Anything larger
+                            // indicates mounting/hardware fault that the
+                            // operator should fix, not tare around.
+                            cfg.torsoRollNeutralRad = constrain(val, -0.20f, 0.20f);
+                        }
+                        else if (key == "torsoNeutralPitch") {
+                            cfg.torsoPitchNeutralRad = constrain(val, -0.20f, 0.20f);
+                        }
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
                 _gaitCtrl->setConfig(cfg);
                 Serial.printf("[WebComm] GAIT_TUNE: rate=%.2f Hz  gate=%.2f  wsThresh=%.3f rad  "
                               "stepH=%.1f mm  stanceH=%.1f mm  stepLen=%.1f mm  capEn=%d capGain=%.2f capMax=%.1f  "
-                              "dwell=%lu waitMax=%lu\n",
+                              "dwell=%lu waitMax=%lu comLat=%.1f trP=%.4f trR=%.4f\n",
                               cfg.phaseRateHz, cfg.liftGateThreshold, cfg.wsThresholdRad,
                               cfg.stepHeightMm, cfg.stanceHeightMm, cfg.stepLengthMm,
                               (int)cfg.captureEnabled, cfg.captureGain, cfg.captureOffsetMaxMm,
-                              (unsigned long)cfg.liftDwellMs, (unsigned long)cfg.waitShiftMaxMs);
+                              (unsigned long)cfg.liftDwellMs, (unsigned long)cfg.waitShiftMaxMs,
+                              cfg.comLateralGateMm, cfg.torsoPitchNeutralRad, cfg.torsoRollNeutralRad);
             }
         }
 

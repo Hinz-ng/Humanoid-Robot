@@ -103,6 +103,7 @@ enum class GaitMode : uint8_t {
 //    STANCE_LOADED - stance foot's pitch shows the loaded-deviation signature.
 //                    Requires isFootLoaded() to be tuned via F4 voltage-drift
 //                    calibration. Opt-in for tuning sessions only.
+//    COM_LATERAL   - neutral-corrected lateral CoM observation in mm past threshold.
 //
 //  Default at boot is STANCE_FLAT - empirically the only sub-gate that
 //  reliably passes on this platform. Promote / demote at runtime via UI.
@@ -114,6 +115,13 @@ enum class LiftGateMode : uint8_t {
     IMU_ROLL      = 1,  // torso roll past threshold (legacy joint-space)
     STANCE_FLAT   = 2,  // stance foot's pitch + roll inside flat threshold
     STANCE_LOADED = 3,  // stance foot pitch shows load signature (needs F4)
+    // Observed lateral CoM displacement from torso IMU + inverted-pendulum
+    // model. Works in both joint-space and task-space balance modes.
+    // Neutral-corrected via GaitConfig::torsoRollNeutralRad -- robust to
+    // small chassis/mounting asymmetries that bias the raw roll reference.
+    // Recommended over IMU_ROLL once neutrals are tared.
+    COM_LATERAL   = 4,
+    STANCE_FLAT_COM_LATERAL = 5,
 };
 
 // ---------------------------------------------------------------------------
@@ -187,6 +195,23 @@ struct GaitConfig {
     // on that axis (no dwell / no timeout).
     uint32_t liftDwellMs    = GAIT_LIFT_DWELL_MS_DEFAULT;     // WS: "dwellMs"
     uint32_t waitShiftMaxMs = GAIT_WAIT_SHIFT_MAX_MS_DEFAULT; // WS: "waitMaxMs"
+
+    // Stage 3 -- Lateral CoM observation gate. See project_wide_defs.h
+    // for the model and tuning guidance. Threshold compared in mm.
+    float comLateralGateMm = GAIT_COM_LATERAL_GATE_MM_DEFAULT;  // WS: "comLatGateMm"
+
+    // Torso IMU neutral biases (rad). Subtracted from imuRoll / imuPitch
+    // wherever "tilt relative to standing rest" is the meaningful signal.
+    // Set via CMD:TORSO_TARE (captures current imuState; requires IDLE
+    // and valid IMU) or directly via CMD:GAIT_TUNE:torsoNeutralRoll=...,
+    // torsoNeutralPitch=.... Not persisted across reboots -- re-tare on
+    // each power cycle or after any chassis change.
+    //
+    // CONSUMER MAP: torsoRollNeutralRad -> COM_LATERAL gate only (current).
+    //               torsoPitchNeutralRad -> reserved for future sagittal use.
+    // If a second consumer appears, promote these to a shared trim store.
+    float torsoRollNeutralRad  = 0.0f;
+    float torsoPitchNeutralRad = 0.0f;
 };
 
 // ---------------------------------------------------------------------------
@@ -234,6 +259,16 @@ struct GaitState {
     uint32_t waitShiftElapsedMs = 0;
     uint32_t gateDwellMs        = 0;
     bool     waitShiftTimedOut  = false;
+
+    // Stage 3 -- Lateral CoM observation telemetry.
+    //   comLateralMm:     signed neutral-corrected displacement.
+    //                     Positive = body shifted to robot's right.
+    //                     Computed every tick regardless of gate mode so
+    //                     it's available for tuning the threshold against
+    //                     measured behavior.
+    //   gateComLateralOK: |comLateralMm * expectedSign| >= comLateralGateMm.
+    float comLateralMm     = 0.0f;
+    bool  gateComLateralOK = false;
 
     // Stage 1 IK telemetry. Updated each tick by _submitFootTargetIK().
     uint8_t      lastIKStatusL = 0;   // IKStatus enum value
@@ -291,6 +326,11 @@ public:
     // Advance to the next pause point in POSE_STEP mode.
     // Ignored if mode != POSE_STEP or not currently paused.
     void nextPose();
+    // Capture the current IMU pitch/roll as the torso neutrals.
+    // Rejected unless mode == IDLE and imuState.valid -- taring while
+    // moving or before IMU calibration would store transient garbage.
+    // Returns true on success.
+    bool tareToTorso(const IMUState& imuState);
 
     // Call every tick from main.cpp, after weightShift.update().
     // bc:       task-space balance correction (Stage 3). Pass nullptr for legacy mode.

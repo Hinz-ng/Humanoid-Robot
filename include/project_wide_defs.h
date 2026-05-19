@@ -280,11 +280,11 @@ constexpr float FOOT_IMPACT_THRESHOLD_G_DEFAULT = 0.15f;
 // First-order LPF coefficient on the magnitude stream before differencing.
 // alpha=1.0 disables smoothing; alpha<1.0 attenuates both noise and the
 // transient of interest.
-constexpr float FOOT_IMPACT_LPF_ALPHA_DEFAULT = 0.3f;
+constexpr float FOOT_IMPACT_LPF_ALPHA_DEFAULT = 0.5f;
 
 // Per-side refractory after a detection. Prevents one physical event
 // from being counted as multiple events while the sensor rings. Units: ms.
-constexpr uint32_t FOOT_IMPACT_REFRACTORY_MS_DEFAULT = 300;
+constexpr uint32_t FOOT_IMPACT_REFRACTORY_MS_DEFAULT = 75;
 
 // ============================================================
 // SWING-FOOT LEVELER (Section 14)

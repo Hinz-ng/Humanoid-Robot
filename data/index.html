@@ -1402,6 +1402,52 @@
             </div>
         </div>
 
+        <!-- Touchdown-awareness panel (Stage 0/1).
+             Master toggle, gate slider, and per-swing observability cells.
+             Stays its own section so the policy knob doesn't disappear into
+             the dense tune grid below. -->
+        <div class="panel-subtitle-divider">
+            Touchdown awareness
+            <span id="tdEnBadge" class="gait-mode-badge gait-mode-run" style="margin-left:8px;">ENABLED</span>
+        </div>
+        <div class="gait-btn-row">
+            <button class="btn-gait-step" id="btnTouchdownToggle" onclick="toggleTouchdown()">
+                Touchdown: ON
+            </button>
+        </div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Detected (this swing)</div>
+                <div class="bal-out-val" id="tdSeenCell">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Latch state</div>
+                <div class="bal-out-val" id="tdLockedCell">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Phase @ detect</div>
+                <div class="bal-out-val" id="tdPhaseCell">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Side @ detect</div>
+                <div class="bal-out-val" id="tdSideCell">—</div>
+            </div>
+        </div>
+        <div class="gait-tune-grid">
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Gate phase (min _halfPhase to consume)</span>
+                    <span class="tune-val" id="tvTouchdownGate">0.70</span>
+                </div>
+                <input type="range" id="slTouchdownGate" min="0.30" max="0.99" step="0.01" value="0.70"
+                       oninput="updateTouchdownLabel(this.value); sendTouchdownTune()">
+                <div class="small-note">
+                    Detector events below this _halfPhase are ignored (treated as mid-swing noise).
+                    Lower → more permissive (catches early touchdowns). Higher → stricter.
+                </div>
+            </div>
+        </div>
+
         <!-- Tune sliders -->
         <div class="panel-subtitle-divider">
             Tuning — send takes effect immediately
@@ -3114,6 +3160,36 @@ function toggleCapture() {
     // Button text syncs from broadcast — see parseGaitState extension below.
 }
 
+// Touchdown-awareness controls (Stage 0/1).
+// Master enable toggle and gate-phase slider live on their own command
+// (CMD:TOUCHDOWN_TUNE) so the policy knob stays discoverable.
+function toggleTouchdown() {
+    const btn = document.getElementById('btnTouchdownToggle');
+    const enable = btn && btn.textContent.indexOf('OFF') !== -1;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(`CMD:TOUCHDOWN_TUNE:enabled=${enable ? 1 : 0}`);
+    }
+}
+
+function sendTouchdownTune() {
+    _setTuneActive();
+    clearTimeout(sendTouchdownTune._t);
+    sendTouchdownTune._t = setTimeout(() => {
+        const gate = parseFloat(document.getElementById("slTouchdownGate").value).toFixed(2);
+        const msg  = `CMD:TOUCHDOWN_TUNE:gatePhase=${gate}`;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(msg);
+            console.log("[WS TX]", msg);
+        }
+    }, 80);
+}
+
+function updateTouchdownLabel(rawVal) {
+    _setTuneActive();
+    const el = document.getElementById("tvTouchdownGate");
+    if (el) el.textContent = parseFloat(rawVal).toFixed(2);
+}
+
 function setGateMode(mode) {
     _setTuneActive();
     // Update button visual state immediately for responsiveness; firmware
@@ -3364,6 +3440,51 @@ function parseGaitState(payload) {
         if (imuLbl) {
             imuLbl.textContent = "IMU: " + (lvlValid ? "valid" : "—");
             imuLbl.style.color = lvlValid ? "#66bb6a" : "#888";
+        }
+    }
+
+    // Touchdown-awareness panel (Stage 0/1).
+    // Fields: tdEn (config), tdGate (config), tdSeen (per-swing sticky),
+    //         tdLkd (latch this tick), tdPh (phase at detection), tdSide.
+    {
+        const tdEn    = (v["tdEn"]   === "1");
+        const tdLkd   = (v["tdLkd"]  === "1");
+        const tdSeen  = (v["tdSeen"] === "1");
+        const tdPh    = parseFloat(v["tdPh"]   || "0");
+        const tdSide  = parseInt(v["tdSide"]   || "0");
+        const tdGate  = parseFloat(v["tdGate"] || "0.7");
+
+        // Enabled badge + button text — same pattern as the capture toggle.
+        const enBadge = document.getElementById("tdEnBadge");
+        if (enBadge) {
+            enBadge.textContent = tdEn ? "ENABLED" : "DISABLED";
+            enBadge.className   = "gait-mode-badge " + (tdEn ? "gait-mode-run" : "gait-mode-idle");
+        }
+        const tdBtn = document.getElementById("btnTouchdownToggle");
+        if (tdBtn) {
+            tdBtn.textContent = tdEn ? "Touchdown: ON" : "Touchdown: OFF";
+            tdBtn.style.background = tdEn ? "#1565c0" : "#e65100";
+        }
+
+        // Detected-this-swing indicator. Sticky → no flicker between 10 Hz frames.
+        const seenEl = document.getElementById("tdSeenCell");
+        if (seenEl) {
+            seenEl.textContent = tdSeen ? "★ seen" : "—";
+            seenEl.style.color = tdSeen ? "#4caf50" : "#888";
+        }
+        const lkdEl = document.getElementById("tdLockedCell");
+        if (lkdEl) {
+            lkdEl.textContent = tdLkd ? "LATCHED" : "—";
+            lkdEl.style.color = tdLkd ? "#ffc107" : "#888";
+        }
+        const phEl = document.getElementById("tdPhaseCell");
+        if (phEl) phEl.textContent = tdSeen ? tdPh.toFixed(3) : "—";
+        const sideEl = document.getElementById("tdSideCell");
+        if (sideEl) sideEl.textContent = tdSeen ? (tdSide === 0 ? "LEFT" : "RIGHT") : "—";
+
+        // Gate slider sync (guarded while user is dragging).
+        if (!_tuneActive) {
+            _syncSlider("slTouchdownGate", "tvTouchdownGate", tdGate, 2);
         }
     }
 }

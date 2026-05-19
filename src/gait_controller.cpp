@@ -38,11 +38,38 @@
 #include "balance_controller.h"  // BalanceState — needed for recovery flag observation
 #include "weight_shift.h"
 #include "swing_foot_leveler.h"  // SwingFootLeveler — ankle bias during swing
+#include "foot_impact.h"         // FootImpactDetector — touchdown awareness (Stage 0/1)
 #include "oe_control.h"
 #include "leg_ik.h"
 #include "joint_config.h"
 #include "motion_manager.h"
 #include <math.h>
+
+// ---------------------------------------------------------------------------
+//  _clearTouchdownLatch — wipe the per-swing latch + telemetry mirror.
+//
+//  Called from any boundary that ends "the current swing" semantically:
+//    - _advanceHalf()  : new half-cycle starts; previous swing is over.
+//    - start(mode)     : any mode entry starts a fresh half from LEFT swing.
+//    - triggerRecovery(): recovery uses its own trajectory; latch is irrelevant.
+//
+//  Stage 0 telemetry fields are cleared here too so the UI never observes
+//  stale "seen during last swing" values on the new half.
+// ---------------------------------------------------------------------------
+void GaitController::_clearTouchdownLatch() {
+    _touchdownLocked         = false;
+    _touchdownLockedX_mm     = 0.0f;
+    _touchdownLockedH_mm     = 0.0f;
+    _touchdownLockedPhase    = 0.0f;
+    _state.touchdownSeen      = false;
+    _state.touchdownPhase     = 0.0f;
+    _state.touchdownSwingX_mm = 0.0f;
+    _state.touchdownLocked    = false;
+    // touchdownSide is not reset — it carries the side that the (now-cleared)
+    // event referred to. UI reads it together with touchdownSeen; when seen=0
+    // the UI treats side as "n/a". Leaving it intact avoids a flicker between
+    // role-swap and the first detection on the new swing leg.
+}
 
 // ---------------------------------------------------------------------------
 void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController* bal) {
@@ -64,6 +91,8 @@ void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController*
     _stopSwingSide    = Side::LEFT;
     _waitShiftStartMs = 0;
     _gateOkSinceMs    = 0;
+    _clearTouchdownLatch();
+    _state.touchdownSide = 0;   // not cleared by _clearTouchdownLatch; explicit on init
     Serial.println("[GaitCtrl] Initialized.");
 }
 
@@ -108,6 +137,7 @@ void GaitController::start(GaitMode mode) {
         _state.rcvStepY_mm   = 0.0f;
         _state.rcvMagnitude  = 0.0f;
         _state.cycleXDispl_mm = 0.0f;
+        _clearTouchdownLatch();
         if (_ws) _ws->trigger(ShiftDirection::NONE);
         Serial.println("[GaitCtrl] IDLE — weight shift centered.");
         return;
@@ -127,6 +157,7 @@ void GaitController::start(GaitMode mode) {
     _state.poseHold   = 0;
     _waitShiftStartMs = millis();
     _gateOkSinceMs    = 0;
+    _clearTouchdownLatch();
     _triggerShiftForSwing(Side::LEFT);  // begin LEFT-swing shift immediately
 
     Serial.printf("[GaitCtrl] start mode=%d\n", static_cast<int>(mode));
@@ -197,11 +228,14 @@ void GaitController::_triggerShiftForSwing(Side swing) {
 }
 
 // ---------------------------------------------------------------------------
-//  _swingFrac  —  sin-shaped lift fraction.
+//  _swingFrac  —  raised-cosine vertical lift fraction.
 //  localPhase ∈ [0, 1) → [0, 1]: 0 at start, 1.0 at midpoint, 0 at end.
+//  Raised cosine (Hann window) gives zero vertical velocity at lift-off,
+//  mid-stance peak, and touchdown, reducing landing shock while preserving
+//  peak ascent/descent amplitude.
 // ---------------------------------------------------------------------------
 float GaitController::_swingFrac(float localPhase) const {
-    return sinf(localPhase * static_cast<float>(M_PI));
+    return 0.5f * (1.0f - cosf(localPhase * 2.0f * static_cast<float>(M_PI)));
 }
 
 // ---------------------------------------------------------------------------
@@ -261,20 +295,47 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
     t.y_mm         = 0.0f;
     t.h_frontal_mm = 0.0f;
 
-    const float liftMm = isSwing ? (swingFrac * _cfg.stepHeightMm) : 0.0f;
-    t.h_sagittal_mm = _cfg.stanceHeightMm - liftMm;
+    // Touchdown-awareness lift freeze (Stage 1).
+    //
+    // When the latch is held on the swing leg, h_sagittal is frozen at the
+    // value snapshotted at the moment of detection. Continuing to drive h
+    // toward stanceHeightMm (lift → 0) after ground contact would command
+    // foot penetration, creating a downward reaction force that shoves the
+    // body backward — the exact failure mode this subsystem prevents.
+    //
+    // Normal trajectory runs for all other cases (latch not set, or stance leg).
+    if (isSwing && _touchdownLocked) {
+        t.h_sagittal_mm = _touchdownLockedH_mm;
+    } else {
+        const float liftMm = isSwing ? (swingFrac * _cfg.stepHeightMm) : 0.0f;
+        t.h_sagittal_mm = _cfg.stanceHeightMm - liftMm;
+    }
 
-    // Stage 3: linear stride applied to BOTH legs.
-    //   Swing  leg: x = (localPhase - 0.5) × L  → starts at -L/2, lands at +L/2
-    //   Stance leg: x = (0.5 - localPhase) × L  → starts at +L/2, retreats to -L/2
-    // Net effect: body advances ≈ L per half-cycle. Foot stays planted while the
-    // hip translates forward in body frame (foot retreats relative to hip).
+    // Stage 3: smoothstep stride applied to BOTH legs.
+    //   Swing  leg: x = (s - 0.5) × L + captureReal  → starts at -L/2, lands at +L/2
+    //   Stance leg: x = (0.5 - s) × L           → starts at +L/2, retreats to -L/2
+    // Smoothstep on localPhase gives zero velocity at the role-swap boundary
+    // for both legs, eliminating the x-velocity discontinuity there.
+    //
+    // Touchdown-awareness stride override (Stage 1):
+    //   When the latch is held AND this is the swing leg, replace the
+    //   stride contribution with the snapshot captured at lock time. The
+    //   STANCE leg's formula is left untouched so its retreat continues
+    //   to advance the body forward over the (now planted) swing foot.
+    //   This is the central architectural decision of Stage 1: freeze
+    //   the SWING-leg progression only, never the half-cycle phase or
+    //   the stance leg.
     if (_cfg.stepLengthMm > 0.0f && strideScale > 0.0f) {
-        const float captureRaw = isSwing ? _captureOffsetMm() : 0.0f;
-        const float strideRaw  = isSwing
-            ? (localPhase - 0.5f) * _cfg.stepLengthMm + captureRaw
-            : (0.5f - localPhase) * _cfg.stepLengthMm;
-        t.x_mm += strideRaw * strideScale;
+        if (isSwing && _touchdownLocked) {
+            t.x_mm += _touchdownLockedX_mm * strideScale;
+        } else {
+            const float s = localPhase * localPhase * (3.0f - 2.0f * localPhase);
+            const float captureRaw = isSwing ? _captureOffsetMm() : 0.0f;
+            const float strideRaw  = isSwing
+                ? (s - 0.5f) * _cfg.stepLengthMm + captureRaw
+                : (0.5f - s) * _cfg.stepLengthMm;
+            t.x_mm += strideRaw * strideScale;
+        }
     }
 
     // Stage 2: WeightShift task-space contribution (forward lean + lateral shift).
@@ -445,6 +506,10 @@ void GaitController::_advanceHalf() {
     _state.cycleXDispl_mm = 0.0f;
     _subState         = StepSubState::STABILIZING;
     _stabilizeStartMs = millis();
+    // New swing leg = new half-cycle: previous latch is no longer meaningful.
+    // Telemetry mirror also wiped so the UI shows a clean "no detection yet"
+    // state until the new swing leg actually triggers.
+    _clearTouchdownLatch();
     // Center the weight shift; the structural/IIR transients from the half just
     // completed damp during the hold. _triggerShiftForSwing() for the new half
     // runs after STABILIZE expires (see update() STABILIZING branch).
@@ -667,6 +732,70 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         return;
     }
 
+    // -----------------------------------------------------------------------
+    // Touchdown-awareness latch (Stage 1).
+    //
+    // Run BEFORE any foot target is built this tick so the latch state is
+    // honored by both _submitCycleStanceBoth (below) and the SWINGING-branch
+    // submission later in this function. The detector itself is gait-
+    // agnostic: it produces per-side "detected" events; the policy of
+    // *when* to consume them lives here.
+    //
+    // Gating policy (per touchdown-awareness_integration_plan.md §3.1):
+    //   - Only while SWINGING (lift trajectory is active).
+    //   - Only when _halfPhase > touchdownGatePhase (late swing).
+    //   - Only when the latch is not already set (one event per half).
+    //   - Only when the detector reported a fresh detection THIS tick
+    //     for the side that is currently swinging.
+    //
+    // Snapshotting:
+    //   - The stride x contribution captured here is the full open-loop
+    //     value that _buildFootTarget would have produced for the swing
+    //     leg this tick (smoothstep stride + capture). After lock, that
+    //     value is reused verbatim while the latch is held — so the foot
+    //     stops advancing forward in body frame, and the stance leg keeps
+    //     retreating per its own (unlocked) formula. The body therefore
+    //     advances naturally over the planted foot.
+    // -----------------------------------------------------------------------
+    if (_subState == StepSubState::SWINGING
+        && _cfg.touchdownEnabled
+        && !_touchdownLocked
+        && _impact != nullptr
+        && _halfPhase > _cfg.touchdownGatePhase) {
+        const FootImpactSideState& imp = _impact->getState(_swingSide);
+        if (imp.detected) {
+            // Snapshot stride x at this tick using the same smoothstep +
+            // capture formula _buildFootTarget uses. Keeping the formula
+            // in one place would be cleaner but _buildFootTarget is const
+            // and stateless by design; duplicating one line here is the
+            // minimum-blast-radius option.
+            const float s        = _halfPhase * _halfPhase * (3.0f - 2.0f * _halfPhase);
+            const float captureX = _captureOffsetMm();
+            _touchdownLockedX_mm  = (s - 0.5f) * _cfg.stepLengthMm + captureX;
+            _touchdownLockedH_mm  = _cfg.stanceHeightMm
+                                  - _swingFrac(_halfPhase) * _cfg.stepHeightMm;
+            _touchdownLockedPhase = _halfPhase;
+            _touchdownLocked      = true;
+
+            // Stage 0 telemetry mirror.
+            _state.touchdownSeen      = true;
+            _state.touchdownPhase     = _halfPhase;
+            _state.touchdownSwingX_mm = _touchdownLockedX_mm;
+            _state.touchdownSide      = static_cast<uint8_t>(_swingSide);
+            _state.touchdownLocked    = true;
+
+            Serial.printf("[GaitCtrl] TOUCHDOWN  swing=%s  phase=%.3f  "
+                          "x=%.1f mm  delta_g=%.3f\n",
+                          sideName(_swingSide),
+                          _halfPhase,
+                          _touchdownLockedX_mm,
+                          imp.last_delta_g);
+        }
+    }
+    // Keep the public mirror in sync every tick (clears if a future hook
+    // ever clears the internal latch without going through _clearTouchdownLatch).
+    _state.touchdownLocked = _touchdownLocked;
+
     // Active gait modes only: cycle-role aware stance (Stage 3). Both legs
     // receive the stride formula so accumulated body displacement is preserved
     // through WAIT_SHIFT and STABILIZING. Later branches (SWINGING) overwrite
@@ -675,9 +804,11 @@ void GaitController::update(float dt_s, const IMUState& imuState,
 
     if (_subState == StepSubState::STOPPING) {
         const uint32_t elapsed = millis() - _stopStartMs;
-        const float liftRamp = (elapsed >= GAIT_STOP_RAMP_MS)
-                             ? 0.0f
-                             : (1.0f - (float)elapsed / (float)GAIT_STOP_RAMP_MS);
+        const float    t       = (elapsed >= GAIT_STOP_RAMP_MS)
+                                ? 1.0f
+                                : (float)elapsed / (float)GAIT_STOP_RAMP_MS;
+        const float    smooth  = t * t * (3.0f - 2.0f * t);
+        const float    liftRamp = 1.0f - smooth;
         const float stopFrac    = _stopSwingFrac * liftRamp;
         const float strideScale = liftRamp;   // identical time profile
 
@@ -993,6 +1124,11 @@ void GaitController::triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad) 
     // Reset leveler IIR state on recovery entry (Risk #9): recovery uses fast
     // smoothstep trajectories; the leveler would fight them if left armed.
     if (_swingLeveler) _swingLeveler->reset();
+
+    // Recovery uses its own trajectory and never reads the touchdown latch.
+    // Clear it on entry so a residual lock from the previous gait swing does
+    // not leak telemetry into the recovery panel.
+    _clearTouchdownLatch();
 
     _state.mode    = GaitMode::RECOVERY_STEP;
     _state.running = true;
@@ -1358,10 +1494,12 @@ void GaitController::_publishSwingLegMaskToWS() const {
 
     if (_subState == StepSubState::STOPPING) {
         const uint32_t elapsed  = millis() - _stopStartMs;
-        const float    liftRamp = (elapsed >= GAIT_STOP_RAMP_MS)
-                                  ? 0.0f
-                                  : 1.0f - (float)elapsed / (float)GAIT_STOP_RAMP_MS;
-        const SwingLeg swing = (_stopSwingSide == Side::LEFT) ? SwingLeg::LEFT : SwingLeg::RIGHT;
+        const float    t        = (elapsed >= GAIT_STOP_RAMP_MS)
+                                 ? 1.0f
+                                 : (float)elapsed / (float)GAIT_STOP_RAMP_MS;
+        const float    smooth   = t * t * (3.0f - 2.0f * t);
+        const float    liftRamp = 1.0f - smooth;
+        const SwingLeg  swing   = (_stopSwingSide == Side::LEFT) ? SwingLeg::LEFT : SwingLeg::RIGHT;
         _ws->setSwingLegMask(swing, _stopSwingFrac * liftRamp);
         return;
     }

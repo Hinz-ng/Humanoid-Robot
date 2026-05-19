@@ -272,6 +272,10 @@ void setup() {
     webComm.setSwingFootLeveler(&swingFootLeveler);
     footImpactDetector.init();
     webComm.setFootImpactDetector(&footImpactDetector);
+    // Touchdown-awareness wiring (Stage 0/1): GaitController consumes the
+    // detector as an advisory signal during late swing. Detector ownership
+    // stays here; gait sees a read-only pointer.
+    gaitController.setFootImpactDetector(&footImpactDetector);
 #endif
 
     Serial.println("System Ready.");

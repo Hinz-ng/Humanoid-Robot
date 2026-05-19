@@ -66,7 +66,7 @@ struct FootImpactConfig {
     // Detection threshold on |delta_g|. The right value depends on
     // empirically-measured spike shape; default is conservative and
     // EXPECTED to be re-tuned after L0 telemetry capture.
-    float threshold_g = 1.5f;              // delta magnitude, g
+    float threshold_g = 0.15f;              // delta magnitude, g
 
     // First-order LPF on the accel magnitude before differencing.
     //   alpha = 1.0  =>  no smoothing (pass-through)

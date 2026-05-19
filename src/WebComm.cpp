@@ -493,7 +493,7 @@ void WebComm::broadcastGaitState() {
                                       ? _swingLeveler->getState()
                                       : SwingFootLevelerState{};
 
-    char buf[600];
+    char buf[760];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
@@ -504,7 +504,16 @@ void WebComm::broadcastGaitState() {
         "ikL=%d,ikR=%d,reachL=%.1f,reachR=%.1f,ffL=%.3f,ffR=%.3f,capOffset=%.1f,capEn=%d,capGain=%.2f,"
         "wsElapsed=%lu,gateDwell=%lu,wsTo=%d,dwellMs=%lu,waitMaxMs=%lu,"
         "lvl_act=%d,lvl_en=%d,lvl_v=%d,lvl_pbias=%.3f,lvl_rbias=%.3f,"
-        "lvl_pfoot=%.4f,lvl_rfoot=%.4f,lvl_env=%.3f",
+        "lvl_pfoot=%.4f,lvl_rfoot=%.4f,lvl_env=%.3f,"
+        // Touchdown-awareness (Stage 0/1).
+        //   tdEn   - master enable from GaitConfig
+        //   tdGate - phase gate floor [0..1)
+        //   tdSeen - sticky: detection seen during current swing
+        //   tdLkd  - latch active this tick
+        //   tdPh   - _halfPhase at first gated detection
+        //   tdSide - 0=LEFT 1=RIGHT (matches Side enum)
+        //   tdX    - swing-leg stride x snapshot (mm) at detection
+        "tdEn=%d,tdGate=%.2f,tdSeen=%d,tdLkd=%d,tdPh=%.3f,tdSide=%d,tdX=%.1f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -561,7 +570,15 @@ void WebComm::broadcastGaitState() {
         lvl.ankle_roll_bias_deg,
         lvl.foot_pitch_rad,
         lvl.foot_roll_rad,
-        lvl.envelope_scale
+        lvl.envelope_scale,
+        // Touchdown-awareness — config + per-swing telemetry.
+        static_cast<int>(_gaitCtrl->getConfig().touchdownEnabled),
+        _gaitCtrl->getConfig().touchdownGatePhase,
+        static_cast<int>(s.touchdownSeen),
+        static_cast<int>(s.touchdownLocked),
+        s.touchdownPhase,
+        static_cast<int>(s.touchdownSide),
+        s.touchdownSwingX_mm
     );
     ws.textAll(buf);
 }
@@ -1319,6 +1336,44 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             if (_gaitCtrl) {
                 _gaitCtrl->triggerRecovery(-0.20f, 0.0f);
                 Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_B — simulating backward push");
+            }
+        }
+        // ---------------------------------------------------------------------
+        //  Touchdown-awareness tuning (Stage 0/1)
+        //  Protocol: CMD:TOUCHDOWN_TUNE:enabled=1,gatePhase=0.70
+        //
+        //  Lives in its own command (not folded into GAIT_TUNE) so the policy
+        //  knob stays visible and discoverable. Fields are validated and
+        //  clamped here; the gait controller takes them via setConfig().
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("TOUCHDOWN_TUNE:")) {
+            if (_gaitCtrl) {
+                GaitConfig cfg = _gaitCtrl->getConfig();
+                String params = cmd.substring(15);
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    String pair = (comma == -1) ? params.substring(start)
+                                                : params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq != -1) {
+                        String key = pair.substring(0, eq);
+                        String val = pair.substring(eq + 1);
+                        if      (key == "enabled")   cfg.touchdownEnabled   = (val.toInt() != 0);
+                        // Floor at 0.30: anything lower defeats the whole
+                        // point of the late-swing gate (the impact detector
+                        // already has noise rejection but mid-swing impacts
+                        // are nearly always linkage transients).
+                        // Ceiling at 0.99: a sub-tick window before phase
+                        // wraps is still meaningful at 400 Hz.
+                        else if (key == "gatePhase") cfg.touchdownGatePhase = constrain(val.toFloat(), 0.30f, 0.99f);
+                    }
+                    start = (comma == -1) ? params.length() : comma + 1;
+                }
+                _gaitCtrl->setConfig(cfg);
+                Serial.printf("[WebComm] TOUCHDOWN_TUNE: en=%d gatePhase=%.2f\n",
+                              (int)cfg.touchdownEnabled,
+                              cfg.touchdownGatePhase);
             }
         }
         else if (cmd.startsWith("GAIT_TUNE:")) {

@@ -32,6 +32,10 @@
 struct BalanceState; // forward declaration — full include in gait_controller.cpp
 class BalanceController; // forward declaration
 class SwingFootLeveler;  // forward declaration — full include in gait_controller.cpp
+class FootImpactDetector; // forward declaration — full include in gait_controller.cpp
+                          // Touchdown-awareness Stage 1: consumer of the
+                          // per-side impact detector. Detector remains gait-
+                          // agnostic; the policy (when/how to latch) lives here.
 
 // ---------------------------------------------------------------------------
 //  Step execution sub-state (within each half-cycle).
@@ -212,6 +216,30 @@ struct GaitConfig {
     // If a second consumer appears, promote these to a shared trim store.
     float torsoRollNeutralRad  = 0.0f;
     float torsoPitchNeutralRad = 0.0f;
+
+    // -----------------------------------------------------------------------
+    // Touchdown-awareness (Stage 0 + Stage 1).
+    //
+    // Consumer-side policy for the gait-agnostic FootImpactDetector signal.
+    // When enabled, the swing leg's gait-generated stride progression term
+    // and lift trajectory are frozen at touchdown so the foot stops scrubbing
+    // forward through the body frame. The stance leg's retreat formula keeps
+    // running unchanged, so the body advances naturally over the planted foot.
+    //
+    // touchdownEnabled    — master enable. Default ON: the latch is the
+    //                       primary fix for the post-touchdown scrub failure
+    //                       (see touchdown-awareness_integration_plan.md §2).
+    //                       Toggle OFF for A/B baseline measurements.
+    //
+    // touchdownGatePhase  — minimum _halfPhase at which an impact detection
+    //                       is allowed to fire the latch. Filters out
+    //                       false-positive impacts during early/mid swing.
+    //                       Default 0.7: late enough to be safely past peak,
+    //                       generous enough to catch touchdowns ~5 mm
+    //                       early due to floor variation.
+    // -----------------------------------------------------------------------
+    bool  touchdownEnabled   = true;
+    float touchdownGatePhase = 0.7f;  // [0..1)
 };
 
 // ---------------------------------------------------------------------------
@@ -306,7 +334,31 @@ struct GaitState {
     // Set per-tick by _runRecoveryStep() so the UI can confirm stance abduction
     // is happening even before it becomes visually obvious.
     float    rcvStanceY_mm = 0.0f;
-    
+
+    // ------------------------------------------------------------------
+    // Touchdown-awareness telemetry (Stage 0).
+    //
+    // All fields refer to the CURRENT swing half-cycle. They reset on
+    // _advanceHalf(), start(), and the IDLE branch of start(IDLE) so the
+    // UI never sees stale values across role swaps. Telemetry-only —
+    // nothing in the control stack reads these fields.
+    //
+    //   touchdownSeen      sticky: true from first gated detection until
+    //                      the half-cycle ends.
+    //   touchdownPhase     _halfPhase value at first gated detection.
+    //   touchdownSwingX_mm swing leg's commanded stride-x contribution
+    //                      (mm) at first gated detection.
+    //   touchdownSide      0 = LEFT swing, 1 = RIGHT swing (matches Side enum).
+    //   touchdownLocked    Stage 1 latch state. Mirrors the private
+    //                      _touchdownLocked member so the UI can show
+    //                      whether the foot is being held in place this tick.
+    // ------------------------------------------------------------------
+    bool    touchdownSeen      = false;
+    float   touchdownPhase     = 0.0f;
+    float   touchdownSwingX_mm = 0.0f;
+    uint8_t touchdownSide      = 0;
+    bool    touchdownLocked    = false;
+
 };
 
 // ---------------------------------------------------------------------------
@@ -355,11 +407,18 @@ public:
     // When wired, _submitFootTargetIK applies leveler bias on the swing leg.
     void setSwingFootLeveler(SwingFootLeveler* l) { _swingLeveler = l; }
 
+    // Wire foot-impact detector. Optional — nullptr disables touchdown
+    // latching entirely (Stage 0 telemetry will also stay quiet). The
+    // detector remains owned by main.cpp; GaitController is a read-only
+    // consumer.
+    void setFootImpactDetector(FootImpactDetector* d) { _impact = d; }
+
 private:
     MotionManager*     _mm           = nullptr;
     WeightShift*       _ws           = nullptr;
     BalanceController* _bal          = nullptr;
     SwingFootLeveler*  _swingLeveler = nullptr;
+    FootImpactDetector* _impact      = nullptr;   // Stage 0/1 — observational
 
     GaitConfig   _cfg;
     GaitState    _state;
@@ -413,6 +472,37 @@ private:
     float    _rcvStepX_mm       = 0.0f;  // sagittal step magnitude this recovery (signed)
     float    _rcvStepY_mm       = 0.0f;  // lateral step magnitude this recovery (signed)
     uint32_t _rcvLockoutUntilMs = 0;     // millis() until which re-trigger is blocked
+
+    // -----------------------------------------------------------------------
+    // Touchdown-awareness latch (Stage 1).
+    //
+    // The latch is per-half-cycle local state. When set, the swing leg's
+    // stride x contribution and h_sagittal are frozen at the values
+    // snapshotted at the moment of detection. Everything else (WeightShift
+    // contribution, BalanceCorrection on the stance leg, swing-foot leveler,
+    // capture offset on subsequent half-cycles) keeps composing normally.
+    //
+    // Freezing h prevents the gait from commanding foot penetration after
+    // ground contact: continuing to drive h toward stanceHeightMm would push
+    // the foot into the floor, creating a reaction force that shoves the body
+    // backward — the exact failure mode this subsystem was built to prevent.
+    //
+    // The latch is reset in _advanceHalf() (next half), start() (any mode
+    // entry), stop() implicitly (STOPPING ramps from current state, then
+    // start(IDLE) clears), and on triggerRecovery() entry.
+    //
+    // Detector and gate-phase live in _cfg (touchdownEnabled, touchdownGatePhase).
+    // Detector pointer lives in _impact (set via setFootImpactDetector()).
+    // -----------------------------------------------------------------------
+    bool     _touchdownLocked      = false;
+    float    _touchdownLockedX_mm  = 0.0f;   // snapshot of stride x at lock
+    float    _touchdownLockedH_mm  = 0.0f;   // snapshot of h_sagittal_mm at lock
+    float    _touchdownLockedPhase = 0.0f;   // _halfPhase at lock
+
+    // Clears the latch and the public telemetry mirror. Call at any half-
+    // cycle boundary, mode change, or recovery entry to keep the per-swing
+    // semantics tight.
+    void _clearTouchdownLatch();
 
     void _enterRcvSub(RecoverySubState s);
     // imuState required by COMPLETE case to decide whether to chain a second step.

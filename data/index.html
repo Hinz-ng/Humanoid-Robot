@@ -590,17 +590,17 @@
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Flat pitch threshold (°)</span><span class="tune-val" id="tvFcFlatP">2.0</span></div>
                 <input type="range" id="slFcFlatP" min="0.3" max="11.5" step="0.1" value="2.0"
-                       oninput="updateFcLabel('flatP', this.value); sendFcTune()">
+                       oninput="updateFcLabel('flatP', this.value); sendFcKey('flatP', (this.value * Math.PI / 180).toFixed(5))">
             </div>
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Flat roll threshold (°)</span><span class="tune-val" id="tvFcFlatR">2.0</span></div>
                 <input type="range" id="slFcFlatR" min="0.3" max="11.5" step="0.1" value="2.0"
-                       oninput="updateFcLabel('flatR', this.value); sendFcTune()">
+                       oninput="updateFcLabel('flatR', this.value); sendFcKey('flatR', (this.value * Math.PI / 180).toFixed(5))">
             </div>
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Loaded deviation (°)</span><span class="tune-val" id="tvFcLoadDev">1.4</span></div>
                 <input type="range" id="slFcLoadDev" min="0.3" max="5.7" step="0.1" value="1.4"
-                       oninput="updateFcLabel('loadDev', this.value); sendFcTune()">
+                       oninput="updateFcLabel('loadDev', this.value); sendFcKey('loadDev', (this.value * Math.PI / 180).toFixed(5))">
             </div>
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Loaded sign</span><span class="tune-val" id="tvFcLoadSign">+1</span></div>
@@ -615,26 +615,34 @@
         <div class="flex-row-gap-sm mb-10">
             <label class="form-label-inline">
                 <input type="checkbox" id="fi-enabled"
-                       onchange="_setTuneActive(); sendFootImpactTune()">
+                       onchange="_setTuneActive(); sendFootImpactKey('enabled', this.checked ? 1 : 0)">
                 Enabled
             </label>
-            <button class="btn-spd-apply" id="fi-apply" onclick="sendFootImpactTune()">Apply</button>
+            <!-- "Apply" button retained as an explicit re-send for the operator;
+                 fans out every visible value as individual single-key sends so
+                 the firmware sees what the panel currently shows. -->
+            <button class="btn-spd-apply" id="fi-apply" onclick="
+                sendFootImpactKey('enabled', document.getElementById('fi-enabled').checked ? 1 : 0);
+                sendFootImpactKey('thr', parseFloat(document.getElementById('slFiThr').value).toFixed(3));
+                sendFootImpactKey('lpf', parseFloat(document.getElementById('slFiLpf').value).toFixed(3));
+                sendFootImpactKey('ref', parseInt(document.getElementById('slFiRef').value, 10));
+            ">Apply</button>
         </div>
         <div class="bal-tune-grid">
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Threshold (g)</span><span class="tune-val" id="tvFiThr">1.500</span></div>
                 <input type="range" id="slFiThr" min="0.05" max="20" step="0.05" value="1.5"
-                       oninput="updateFiLabel('thr', this.value); sendFootImpactTune()">
+                       oninput="updateFiLabel('thr', this.value); sendFootImpactKey('thr', parseFloat(this.value).toFixed(3))">
             </div>
             <div class="bal-tune-row">
                 <div class="tune-header"><span>LPF alpha</span><span class="tune-val" id="tvFiLpf">0.500</span></div>
                 <input type="range" id="slFiLpf" min="0.05" max="1.0" step="0.05" value="0.5"
-                       oninput="updateFiLabel('lpf', this.value); sendFootImpactTune()">
+                       oninput="updateFiLabel('lpf', this.value); sendFootImpactKey('lpf', parseFloat(this.value).toFixed(3))">
             </div>
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Refractory (ms)</span><span class="tune-val" id="tvFiRef">200</span></div>
                 <input type="range" id="slFiRef" min="0" max="2000" step="10" value="200"
-                       oninput="updateFiLabel('ref', this.value); sendFootImpactTune()">
+                       oninput="updateFiLabel('ref', this.value); sendFootImpactKey('ref', parseInt(this.value, 10))">
             </div>
         </div>
         <div class="imu-grid top-gap-sm">
@@ -769,37 +777,37 @@
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Kp</span><span class="tune-val" id="tvKp">8.00</span></div>
                 <input type="range" id="slKp" min="0" max="60" step="0.5" value="8"
-                       oninput="updateTuneLabel('Kp',this.value); sendTune()">
+                       oninput="updateTuneLabel('Kp',this.value); sendBalanceKey('Kp', this.value)">
             </div>
 
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Kd</span><span class="tune-val" id="tvKd">0.10</span></div>
                 <input type="range" id="slKd" min="0" max="3" step="0.02" value="0.1"
-                       oninput="updateTuneLabel('Kd',this.value); sendTune()">
+                       oninput="updateTuneLabel('Kd',this.value); sendBalanceKey('Kd', this.value)">
             </div>
 
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Setpoint (°)</span><span class="tune-val" id="tvSp">0.0</span></div>
                 <input type="range" id="slSp" min="-15" max="15" step="0.5" value="0"
-                       oninput="updateTuneLabel('setpoint',this.value); sendTune()">
+                       oninput="updateTuneLabel('setpoint',this.value); sendBalanceKey('setpoint', (this.value * Math.PI / 180).toFixed(5))">
             </div>
 
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Max correction (°)</span><span class="tune-val" id="tvMax">15</span></div>
                 <input type="range" id="slMax" min="1" max="30" step="1" value="15"
-                       oninput="updateTuneLabel('max',this.value); sendTune()">
+                       oninput="updateTuneLabel('max',this.value); sendBalanceKey('max', this.value)">
             </div>
 
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Ankle ratio</span><span class="tune-val" id="tvAnkle">1.00</span></div>
                 <input type="range" id="slAnkle" min="0" max="1" step="0.05" value="1"
-                       oninput="updateTuneLabel('ankle',this.value); sendTune()">
+                       oninput="updateTuneLabel('ankle',this.value); sendBalanceKey('ankle', this.value)">
             </div>
 
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Hip ratio</span><span class="tune-val" id="tvHip">0.00</span></div>
                 <input type="range" id="slHip" min="0" max="1" step="0.05" value="0"
-                       oninput="updateTuneLabel('hip',this.value); sendTune()">
+                       oninput="updateTuneLabel('hip',this.value); sendBalanceKey('hip', this.value)">
             </div>
 
             <div class="bal-tune-row">
@@ -810,7 +818,7 @@
                 -->
                 <div class="tune-header"><span>Torso ratio</span><span class="tune-val" id="tvTorso">0.00</span></div>
                 <input type="range" id="slTorso" min="0" max="1" step="0.05" value="0"
-                       oninput="updateTuneLabel('torso',this.value); sendTune()">
+                       oninput="updateTuneLabel('torso',this.value); sendBalanceKey('torso', this.value)">
             </div>
 
             <!-- Live read-out of correction_sign. The bring-up inversion buttons
@@ -838,7 +846,7 @@
         </div>
         <!-- slider in degrees; sent as radians -->
         <input type="range" id="slBoostThresh" min="1" max="20" step="0.5" value="5.7"
-               oninput="updateBoostLabel('boost_thresh', this.value); sendBoostTune()">
+               oninput="updateBoostLabel('boost_thresh', this.value); sendBalanceKey('boost_thresh', (this.value * Math.PI / 180).toFixed(5))">
         <div class="small-note">
             Above this error (°) the boost kicks in. Set > oscillation amplitude.
         </div>
@@ -849,7 +857,7 @@
             <span class="tune-val" id="tvBoostFactor">1.3</span>
         </div>
         <input type="range" id="slBoostFactor" min="1.0" max="4.0" step="0.1" value="1.3"
-               oninput="updateBoostLabel('boost_factor', this.value); sendBoostTune()">
+               oninput="updateBoostLabel('boost_factor', this.value); sendBalanceKey('boost_factor', this.value)">
         <div class="small-note">
             Kp multiplier at large errors. 1.0 = disabled. Start at 2.0.
         </div>
@@ -876,43 +884,43 @@
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Kp_roll</span><span class="tune-val" id="tvKp_r">15.00</span></div>
                 <input type="range" id="slKp_r" min="0" max="60" step="0.5" value="15"
-                       oninput="updateRollTuneLabel('Kp_r',this.value); sendRollTune()">
+                       oninput="updateRollTuneLabel('Kp_r',this.value); sendBalanceKey('Kp_r', this.value)">
             </div>
 
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Kd_roll</span><span class="tune-val" id="tvKd_r">0.20</span></div>
                 <input type="range" id="slKd_r" min="0" max="3" step="0.02" value="0.2"
-                       oninput="updateRollTuneLabel('Kd_r',this.value); sendRollTune()">
+                       oninput="updateRollTuneLabel('Kd_r',this.value); sendBalanceKey('Kd_r', this.value)">
             </div>
 
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Setpoint roll (°)</span><span class="tune-val" id="tvSp_r">0.0</span></div>
                 <input type="range" id="slSp_r" min="-10" max="10" step="0.5" value="0"
-                       oninput="updateRollTuneLabel('sp_r',this.value); sendRollTune()">
+                       oninput="updateRollTuneLabel('sp_r',this.value); sendBalanceKey('sp_r', (this.value * Math.PI / 180).toFixed(5))">
             </div>
 
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Max correction roll (°)</span><span class="tune-val" id="tvMax_r">8</span></div>
                 <input type="range" id="slMax_r" min="1" max="20" step="1" value="8"
-                       oninput="updateRollTuneLabel('max_r',this.value); sendRollTune()">
+                       oninput="updateRollTuneLabel('max_r',this.value); sendBalanceKey('max_r', this.value)">
             </div>
 
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Ankle roll ratio</span><span class="tune-val" id="tvAnkle_r">1.00</span></div>
                 <input type="range" id="slAnkle_r" min="0" max="1" step="0.05" value="1"
-                       oninput="updateRollTuneLabel('a_roll',this.value); sendRollTune()">
+                       oninput="updateRollTuneLabel('a_roll',this.value); sendBalanceKey('a_roll', this.value)">
             </div>
 
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Hip roll ratio</span><span class="tune-val" id="tvHip_r">0.00</span></div>
                 <input type="range" id="slHip_r" min="0" max="1" step="0.05" value="0"
-                       oninput="updateRollTuneLabel('h_roll',this.value); sendRollTune()">
+                       oninput="updateRollTuneLabel('h_roll',this.value); sendBalanceKey('h_roll', this.value)">
             </div>
 
             <div class="bal-tune-row">
                 <div class="tune-header"><span>Torso roll ratio</span><span class="tune-val" id="tvTorso_r">0.00</span></div>
                 <input type="range" id="slTorso_r" min="0" max="1" step="0.05" value="0"
-                       oninput="updateRollTuneLabel('t_roll',this.value); sendRollTune()">
+                       oninput="updateRollTuneLabel('t_roll',this.value); sendBalanceKey('t_roll', this.value)">
             </div>
 
             <!-- Live read-out only — see pitch comment above. Override via
@@ -973,7 +981,7 @@
                             <span class="tune-val" id="tvDxPerDeg">3.0</span>
                         </div>
                         <input type="range" id="slDxPerDeg" min="0.5" max="6.0" step="0.1" value="3.0"
-                               oninput="updateTsLabel('dx_per_deg',this.value); sendTsTune()">
+                               oninput="updateTsLabel('dx_per_deg',this.value); sendBalanceKey('dx_per_deg', this.value)">
                         <div class="small-note">
                             Pitch PD → foot x offset. Start low; increase if static balance undershoots.
                         </div>
@@ -984,7 +992,7 @@
                             <span class="tune-val" id="tvDyPerDeg">3.0</span>
                         </div>
                         <input type="range" id="slDyPerDeg" min="0.5" max="6.0" step="0.1" value="3.0"
-                               oninput="updateTsLabel('dy_per_deg',this.value); sendTsTune()">
+                               oninput="updateTsLabel('dy_per_deg',this.value); sendBalanceKey('dy_per_deg', this.value)">
                         <div class="small-note">
                             Roll PD → foot y offset. Tune after pitch confirmed stable.
                         </div>
@@ -1059,7 +1067,7 @@
                     <span class="tune-val" id="tvRcvPitch">11.5</span>
                 </div>
                 <input type="range" id="slRcvPitch" min="1" max="35" step="0.5" value="11.5"
-                       oninput="updateRcvLabel('rcv_pitch',this.value); sendRcvTune()">
+                       oninput="updateRcvLabel('rcv_pitch',this.value); sendRcvKey('rcv_pitch', (this.value * Math.PI / 180).toFixed(5))">
                 <div class="small-note">
                     Above this pitch angle triggers detection. Set well above normal walking range.
                 </div>
@@ -1070,7 +1078,7 @@
                     <span class="tune-val" id="tvRcvRoll">10.3</span>
                 </div>
                 <input type="range" id="slRcvRoll" min="1" max="35" step="0.5" value="10.3"
-                       oninput="updateRcvLabel('rcv_roll',this.value); sendRcvTune()">
+                       oninput="updateRcvLabel('rcv_roll',this.value); sendRcvKey('rcv_roll', (this.value * Math.PI / 180).toFixed(5))">
                 <div class="small-note">
                     Above this roll angle triggers detection. Set well above normal walking range.
                 </div>
@@ -1081,7 +1089,7 @@
                     <span class="tune-val" id="tvRcvSat">20</span>
                 </div>
                 <input type="range" id="slRcvSat" min="1" max="100" step="1" value="20"
-                       oninput="updateRcvLabel('rcv_sat',this.value); sendRcvTune()">
+                       oninput="updateRcvLabel('rcv_sat',this.value); sendRcvKey('rcv_sat', this.value)">
                 <div class="small-note">
                     PD output must be saturated for this many consecutive ticks (~2.5 ms each).
                 </div>
@@ -1092,7 +1100,7 @@
                     <span class="tune-val" id="tvRcvConf">10</span>
                 </div>
                 <input type="range" id="slRcvConf" min="1" max="50" step="1" value="10"
-                       oninput="updateRcvLabel('rcv_conf',this.value); sendRcvTune()">
+                       oninput="updateRcvLabel('rcv_conf',this.value); sendRcvKey('rcv_conf', this.value)">
                 <div class="small-note">
                     Conditions must hold for this many ticks before flag fires.
                 </div>
@@ -1191,7 +1199,7 @@
                 </div>
                 <!-- Slider in degrees for readability; converted to rad on send -->
                 <input type="range" id="slWsSp" min="0" max="8" step="0.1" value="2.9"
-                       oninput="updateWSTuneLabel('setpoint', this.value); sendWSTune()">
+                       oninput="updateWSTuneLabel('setpoint', this.value); sendWSKey('setpoint', (this.value * Math.PI / 180).toFixed(5))">
                 <div class="small-note">
                     Roll setpoint injected into balance controller. Leave at 0 for a no-motion baseline.
                 </div>
@@ -1203,7 +1211,7 @@
                     <span class="tune-val" id="tvWsRamp">500</span>
                 </div>
                 <input type="range" id="slWsRamp" min="100" max="2000" step="50" value="500"
-                       oninput="updateWSTuneLabel('ramp', this.value); sendWSTune()">
+                       oninput="updateWSTuneLabel('ramp', this.value); sendWSKey('ramp', this.value)">
                 <div class="small-note">
                     Start ≥ 500 ms; reduce only after shift is stable
                 </div>
@@ -1216,7 +1224,7 @@
                     <span class="tune-val" id="tvWsPhaseDelay">500</span>
                 </div>
                 <input type="range" id="slWsPhaseDelay" min="0" max="2000" step="50" value="500"
-                       oninput="updateWSTuneLabel('phase_delay', this.value); sendWSTune()">
+                       oninput="updateWSTuneLabel('phase_delay', this.value); sendWSKey('phase_delay', this.value)">
                 <div class="small-note">
                     Swing ankle starts first; stance ankle follows after this delay.
                     0 = simultaneous (no phasing).
@@ -1227,7 +1235,7 @@
                     <span class="tune-val" id="tvWsAnkle">15.5</span>
                 </div>
                 <input type="range" id="slWsAnkle" min="0" max="20" step="0.5" value="15.5"
-                       oninput="updateWSTuneLabel('ankle', this.value); sendWSTune()">
+                       oninput="updateWSTuneLabel('ankle', this.value); sendWSKey('ankle', this.value)">
                 <div class="small-note">
                     Primary shift driver. Set ankle_roll_ratio=0 in Balance panel first.
                     Start at 5°, verify direction, increase toward 13°.
@@ -1240,7 +1248,7 @@
                     <span class="tune-val" id="tvWsLateral">-20.0</span>
                 </div>
                 <input type="range" id="slWsLateral" min="-50" max="50" step="0.5" value="-20"
-                       oninput="updateWSTuneLabel('lateral_mm', this.value); sendWSTune()">
+                       oninput="updateWSTuneLabel('lateral_mm', this.value); sendWSKey('lateral_mm', this.value)">
                 <div class="small-note">
                     Body lateral shift (mm) at full progress. Negative values invert the left/right mapping for adduction tests.
                 </div>
@@ -1252,7 +1260,7 @@
                     <span class="tune-val" id="tvWsForward">5.0</span>
                 </div>
                 <input type="range" id="slWsForward" min="0" max="50" step="0.5" value="5"
-                       oninput="updateWSTuneLabel('forward_mm', this.value); sendWSTune()">
+                       oninput="updateWSTuneLabel('forward_mm', this.value); sendWSKey('forward_mm', this.value)">
                 <div class="small-note">
                     Body forward shift (mm) during shift. Folded into FootTarget.x_mm via IK.
                 </div>
@@ -1264,7 +1272,7 @@
                     <span class="tune-val" id="tvWsTorso">0.0</span>
                 </div>
                 <input type="range" id="slWsTorso" min="-20" max="20" step="0.5" value="0"
-                       oninput="updateWSTuneLabel('torso', this.value); sendWSTune()">
+                       oninput="updateWSTuneLabel('torso', this.value); sendWSKey('torso', this.value)">
                 <div class="small-note">
                     Direction unverified — keep 0 until torso_roll confirmed.
                 </div>
@@ -1440,7 +1448,7 @@
                     <span class="tune-val" id="tvTouchdownGate">0.70</span>
                 </div>
                 <input type="range" id="slTouchdownGate" min="0.30" max="0.99" step="0.01" value="0.70"
-                       oninput="updateTouchdownLabel(this.value); sendTouchdownTune()">
+                       oninput="updateTouchdownLabel(this.value); sendTouchdownKey('gatePhase', parseFloat(this.value).toFixed(2))">
                 <div class="small-note">
                     Detector events below this _halfPhase are ignored (treated as mid-swing noise).
                     Lower → more permissive (catches early touchdowns). Higher → stricter.
@@ -1460,7 +1468,7 @@
                     <span class="tune-val" id="tvGaitRate">0.30</span>
                 </div>
                 <input type="range" id="slGaitRate" min="0.05" max="1.0" step="0.05" value="0.30"
-                       oninput="updateGaitLabel('phaseRate', this.value); sendGaitTune()">
+                       oninput="updateGaitLabel('phaseRate', this.value); sendGaitKey('phaseRate', parseFloat(this.value).toFixed(3))">
                 <div class="small-note">
                     Cycle/sec. Start at 0.3. Raise only after stance confirmed.
                 </div>
@@ -1472,7 +1480,7 @@
                     <span class="tune-val" id="tvGaitGate">0.85</span>
                 </div>
                 <input type="range" id="slGaitGate" min="0.0" max="0.99" step="0.05" value="0.85"
-                       oninput="updateGaitLabel('liftGate', this.value); sendGaitTune()">
+                       oninput="updateGaitLabel('liftGate', this.value); sendGaitKey('liftGate', parseFloat(this.value).toFixed(3))">
                 <div class="small-note">
                     |WS progress| needed before foot can lift. Lower → lifts sooner.
                 </div>
@@ -1484,7 +1492,7 @@
                     <span class="tune-val" id="tvGaitWsThresh">5.7</span>
                 </div>
                 <input type="range" id="slGaitWsThresh" min="1" max="15" step="0.5" value="5.73"
-                       oninput="updateGaitLabel('wsThreshDeg', this.value); sendGaitTune()">
+                       oninput="updateGaitLabel('wsThreshDeg', this.value); sendGaitKey('wsThresh', (this.value * Math.PI / 180).toFixed(5))">
                 <div class="small-note">
                     IMU roll gate (Phase 2 only — logged but not active in Phase 1).
                 </div>
@@ -1496,7 +1504,7 @@
                     <span class="tune-val" id="tvGaitStep">15</span>
                 </div>
                 <input type="range" id="slGaitStep" min="5" max="55" step="1" value="15"
-                       oninput="updateGaitLabel('stepH', this.value); sendGaitTune()">
+                       oninput="updateGaitLabel('stepH', this.value); sendGaitKey('stepH_mm', this.value)">
                 <div class="small-note">
                     Swing foot clearance. Capped so peak swing height ≥ 130 mm.
                 </div>
@@ -1508,7 +1516,7 @@
                     <span class="tune-val" id="tvGaitStance">185</span>
                 </div>
                 <input type="range" id="slGaitStance" min="135" max="189" step="1" value="185"
-                       oninput="updateGaitLabel('stanceH', this.value); sendGaitTune()">
+                       oninput="updateGaitLabel('stanceH', this.value); sendGaitKey('stanceH_mm', this.value)">
                 <div class="small-note">
                     Hip-to-ankle vertical drop. Lower = deeper crouch.
                 </div>
@@ -1520,7 +1528,7 @@
                     <span class="tune-val" id="tvGaitStepLen">10</span>
                 </div>
                 <input type="range" id="slGaitStepLen" min="0" max="40" step="1" value="10"
-                       oninput="updateGaitLabel('stepLen', this.value); sendGaitTune()">
+                       oninput="updateGaitLabel('stepLen', this.value); sendGaitKey('stepLength_mm', this.value)">
                 <div class="small-note">
                     Phase 2: forward stride per cycle. 0 disables.
                     Hard-capped at stanceH × 0.20. Start at 10 mm.
@@ -1533,7 +1541,7 @@
                     <span class="tune-val" id="tvGaitComLatGate">14.0</span>
                 </div>
                 <input type="range" id="slGaitComLatGate" min="0" max="50" step="0.5" value="14"
-                       oninput="updateGaitLabel('comLatGate', this.value); sendGaitTune()">
+                       oninput="updateGaitLabel('comLatGate', this.value); sendGaitKey('comLatGateMm', parseFloat(this.value).toFixed(1))">
                 <div class="small-note">
                     Lateral COM displacement needed to open the lift gate. Small values move earlier.
                 </div>
@@ -1545,7 +1553,7 @@
                     <span class="tune-val" id="tvGaitTorsoNeutralRoll">0.000</span>
                 </div>
                 <input type="range" id="slGaitTorsoNeutralRoll" min="-0.20" max="0.20" step="0.005" value="0"
-                       oninput="updateGaitLabel('torsoNeutralRoll', this.value); sendGaitTune()">
+                       oninput="updateGaitLabel('torsoNeutralRoll', this.value); sendGaitKey('torsoNeutralRoll', parseFloat(this.value).toFixed(5))">
                 <div class="small-note">
                     Roll bias trimmed from current torso IMU before COM lateral gating.
                 </div>
@@ -1557,7 +1565,7 @@
                     <span class="tune-val" id="tvGaitTorsoNeutralPitch">0.000</span>
                 </div>
                 <input type="range" id="slGaitTorsoNeutralPitch" min="-0.20" max="0.20" step="0.005" value="0"
-                       oninput="updateGaitLabel('torsoNeutralPitch', this.value); sendGaitTune()">
+                       oninput="updateGaitLabel('torsoNeutralPitch', this.value); sendGaitKey('torsoNeutralPitch', parseFloat(this.value).toFixed(5))">
                 <div class="small-note">
                     Pitch bias stored for future sagittal support and gate trimming.
                 </div>
@@ -1569,7 +1577,7 @@
                     <span class="tune-val" id="tvGaitCapGain">0.60</span>
                 </div>
                 <input type="range" id="slGaitCapGain" min="0.0" max="1.5" step="0.05" value="0.6"
-                       oninput="updateGaitLabel('captureGain', this.value); sendGaitTune()">
+                       oninput="updateGaitLabel('captureGain', this.value); sendGaitKey('captureGain', parseFloat(this.value).toFixed(2))">
                 <div class="small-note">
                     LIP correction strength. 0 = disabled. 1.0 = full model. Start at 0.5.
                 </div>
@@ -1581,7 +1589,7 @@
                     <span class="tune-val" id="tvGaitCapMax">15</span>
                 </div>
                 <input type="range" id="slGaitCapMax" min="0" max="30" step="1" value="15"
-                       oninput="updateGaitLabel('captureMax', this.value); sendGaitTune()">
+                       oninput="updateGaitLabel('captureMax', this.value); sendGaitKey('captureMax', this.value)">
                 <div class="small-note">
                     Hard cap on capture offset (mm). Protects IK reach budget.
                 </div>
@@ -1643,7 +1651,7 @@
                     <span class="tune-val" id="tvLvlKpPitch">25</span>
                 </div>
                 <input type="range" id="slLvlKpPitch" min="0" max="120" step="1" value="25"
-                       oninput="updateLevelerLabel('kp_pitch', this.value); sendLevelerTune()">
+                       oninput="updateLevelerLabel('kp_pitch', this.value); sendLevelerKey('kp_pitch', parseFloat(this.value).toFixed(1))">
                 <div class="small-note">
                     Pitch correction gain. Verify sign in L0 before enabling.
                 </div>
@@ -1654,7 +1662,7 @@
                     <span class="tune-val" id="tvLvlKpRoll">25</span>
                 </div>
                 <input type="range" id="slLvlKpRoll" min="0" max="120" step="1" value="25"
-                       oninput="updateLevelerLabel('kp_roll', this.value); sendLevelerTune()">
+                       oninput="updateLevelerLabel('kp_roll', this.value); sendLevelerKey('kp_roll', parseFloat(this.value).toFixed(1))">
                 <div class="small-note">
                     Roll correction gain. Keep 0 until pitch sign is confirmed.
                 </div>
@@ -1842,6 +1850,44 @@
 </div>
 
 <script>
+// =============================================================================
+//  CONFIGURATION OWNERSHIP — READ BEFORE EDITING ANY SLIDER OR sendXKey()
+// =============================================================================
+//
+//  Firmware is the SINGLE source of truth for every tuning parameter:
+//    - project_wide_defs.h (compile-time defaults)
+//    - BalanceConfig / GaitConfig / WeightShiftConfig / FootContactConfig
+//      / FootImpactConfig / SwingFootLevelerConfig (runtime structs)
+//
+//  This UI is presentation only. Rules:
+//
+//  1. HTML `value="..."` attributes on sliders are RENDERING-SAFETY DEFAULTS
+//     ONLY. They are visible for under 50 ms until the first firmware
+//     broadcast (BALANCE: / GAIT: / WSHIFT_STATE: / FOOT_CONTACT: /
+//     FOOT_IMPACT:) overwrites every slider via _syncSlider(). They are
+//     never transmitted to firmware unless the user drags that specific
+//     slider — and even then only the touched key is sent (see rule 2).
+//
+//  2. Every slider's oninput sends EXACTLY ONE key=value to firmware via
+//     a sendXKey(key, val) helper. Bundled multi-key sends are FORBIDDEN.
+//     Bundled sends used to push every panel's hardcoded HTML defaults to
+//     firmware whenever the user touched any slider before the first
+//     broadcast finished syncing — silently corrupting firmware state with
+//     UI defaults. The string protocol in WebComm.cpp already parses keys
+//     individually, so one CMD per slider is the natural pattern.
+//
+//  3. To change a default, edit firmware. Do NOT change HTML `value="..."`
+//     attributes to match firmware — they will drift again on the next
+//     firmware tune. They exist only to give the slider element a sensible
+//     paint state before sync arrives.
+//
+//  4. Continuous broadcasts (BALANCE:, GAIT:) carry every slider's
+//     authoritative value. If you add a new slider, extend the matching
+//     broadcast in WebComm.cpp to include the new field AND extend the
+//     onmessage handler below to call _syncSlider() for it.
+//
+// =============================================================================
+
 // =============================================================================
 //  CONSTANTS  (must match firmware joint_config.h / servo_driver.h)
 // =============================================================================
@@ -2432,6 +2478,36 @@ function initWebSocket() {
                 _syncSlider("slTorso_r", "tvTorso_r", parseFloat(v["t_rr"]  || "0"),   2);
                 const signR = parseFloat(v["sgn_r"] || "-1");
                 document.getElementById("tvSign_r").textContent = signR >= 0 ? "+1" : "−1";
+
+                // Recovery thresholds — firmware ships radians; sliders are
+                // in degrees. Optional-chain the v[...] reads so older
+                // firmware that doesn't broadcast these fields leaves the
+                // slider untouched (rather than zeroing it).
+                if (v["rcv_pitch"] !== undefined) {
+                    _syncSlider("slRcvPitch", "tvRcvPitch",
+                                parseFloat(v["rcv_pitch"]) * 180 / Math.PI, 1);
+                }
+                if (v["rcv_roll"] !== undefined) {
+                    _syncSlider("slRcvRoll", "tvRcvRoll",
+                                parseFloat(v["rcv_roll"]) * 180 / Math.PI, 1);
+                }
+                if (v["rcv_sat"]  !== undefined) _syncSlider("slRcvSat",  "tvRcvSat",  parseFloat(v["rcv_sat"]),  0);
+                if (v["rcv_conf"] !== undefined) _syncSlider("slRcvConf", "tvRcvConf", parseFloat(v["rcv_conf"]), 0);
+
+                // Gain-boost (pitch only — UI has one boost panel today). Slider
+                // is in degrees; firmware emits radians.
+                if (v["boost_th"] !== undefined) {
+                    _syncSlider("slBoostThresh", "tvBoostThresh",
+                                parseFloat(v["boost_th"]) * 180 / Math.PI, 1);
+                }
+                if (v["boost_fc"] !== undefined) {
+                    _syncSlider("slBoostFactor", "tvBoostFactor",
+                                parseFloat(v["boost_fc"]), 1);
+                }
+
+                // Task-space dx/dy gains.
+                if (v["dx_pd"] !== undefined) _syncSlider("slDxPerDeg", "tvDxPerDeg", parseFloat(v["dx_pd"]), 1);
+                if (v["dy_pd"] !== undefined) _syncSlider("slDyPerDeg", "tvDyPerDeg", parseFloat(v["dy_pd"]), 1);
             }
             // Weight shift progress bar — driven by ws_prog field in BALANCE: packet.
             if (v["ws_prog"] !== undefined) {
@@ -2503,7 +2579,9 @@ function initWebSocket() {
         }
         else if (msg.startsWith("WSHIFT_STATE:")) {
             // Firmware source-of-truth sync on connect. Update sliders only —
-            // do NOT call sendWSTune() here; that would push stale values back.
+            // Update sliders only — do NOT call any sendWSKey() here; that
+            // would push freshly synced values right back at firmware as if
+            // the user had moved every slider.
             const v = {};
             msg.substring(13).split(",").forEach(pair => {
                 const eq = pair.indexOf("=");
@@ -2642,22 +2720,14 @@ function updateRcvLabel(id, rawVal) {
     }
 }
 
-// Debounced send — angle sliders are in degrees, firmware expects radians for tilt thresholds.
-function sendRcvTune() {
-    clearTimeout(sendRcvTune._t);
-    sendRcvTune._t = setTimeout(() => {
-        const pitchDeg = parseFloat(document.getElementById("slRcvPitch").value);
-        const rollDeg  = parseFloat(document.getElementById("slRcvRoll").value);
-        const sat      = document.getElementById("slRcvSat").value;
-        const conf     = document.getElementById("slRcvConf").value;
-        const pitchRad = (pitchDeg * Math.PI / 180).toFixed(5);
-        const rollRad  = (rollDeg  * Math.PI / 180).toFixed(5);
-        const msg = `CMD:RECOVERY_TUNE:rcv_pitch=${pitchRad},rcv_roll=${rollRad},rcv_sat=${sat},rcv_conf=${conf}`;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(msg);
-            console.log("[WS TX]", msg);
-        }
-    }, 80);
+// Single-key RECOVERY_TUNE send. Angle keys (rcv_pitch, rcv_roll) are
+// converted deg->rad at the oninput call site so the deg slider stays
+// human-readable while firmware keeps radians as its native unit.
+function sendRcvKey(key, val) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const msg = `CMD:RECOVERY_TUNE:${key}=${val}`;
+    ws.send(msg);
+    console.log("[WS TX]", msg);
 }
 
 function sendRcvSuppGait() {
@@ -2672,7 +2742,8 @@ function sendRcvSuppGait() {
 
 // Prevent incoming BALANCE: packets from resetting sliders while the user is dragging.
 // Set true on any slider interaction; cleared 1500ms after last interaction.
-// sendTune() debounces at 80ms, so this window comfortably covers the round-trip.
+// Single-key sends fire on every oninput tick (no debounce); the 1500 ms
+// window comfortably covers the few-ms round-trip to firmware and back.
 let _tuneActive = false;
 let _tuneActiveTimer = null;
 function _setTuneActive() {
@@ -2716,50 +2787,25 @@ function updateRollTuneLabel(id, rawVal) {
     if (m) document.getElementById(m.el).textContent = parseFloat(rawVal).toFixed(m.decimals);
 }
 
-// Roll tuning send (80ms debounce — mirrors sendTune pattern exactly).
-// Converts setpoint from degrees (slider) → radians (firmware expectation).
-function sendRollTune() {
-    clearTimeout(sendRollTune._t);
-    sendRollTune._t = setTimeout(() => {
-        const Kp_r   = document.getElementById("slKp_r").value;
-        const Kd_r   = document.getElementById("slKd_r").value;
-        const spDeg  = parseFloat(document.getElementById("slSp_r").value);
-        const spRad  = (spDeg * Math.PI / 180).toFixed(5);
-        const a_roll = document.getElementById("slAnkle_r").value;
-        const h_roll = document.getElementById("slHip_r").value;
-        const t_roll = document.getElementById("slTorso_r").value;
-        const max_r  = document.getElementById("slMax_r").value;
-        const msg = `CMD:BALANCE_TUNE:Kp_r=${Kp_r},Kd_r=${Kd_r},sp_r=${spRad},a_roll=${a_roll},h_roll=${h_roll},t_roll=${t_roll},max_r=${max_r}`;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(msg);
-            console.log("[WS TX]", msg);
-        }
-    }, 80);
-}
+// Roll tune is now folded into sendBalanceKey — every roll slider uses
+// the same single-key helper with its firmware-side key (Kp_r, Kd_r, sp_r,
+// a_roll, h_roll, t_roll, max_r). No separate sender needed.
 
-// ── Send tuning params to firmware (80ms debounce) ───────────────────────────
-// Converts setpoint from degrees (slider) → radians (firmware expectation).
-function sendTune() {
-    clearTimeout(sendTune._t);
-    sendTune._t = setTimeout(() => {
-        const Kp    = document.getElementById("slKp").value;
-        const Kd    = document.getElementById("slKd").value;
-        const spDeg = parseFloat(document.getElementById("slSp").value);
-        const spRad = (spDeg * Math.PI / 180).toFixed(5);
-        const ankle = document.getElementById("slAnkle").value;
-        const hip   = document.getElementById("slHip").value;
-        const torso = document.getElementById("slTorso").value;
-        const max   = document.getElementById("slMax").value;
-        // Update the formula's max clamp display immediately
-        document.getElementById("bfMax").textContent = max;
-        // Firmware normalises ankle + hip + torso = 1.0 on receipt.
-        // The post-normalisation values will sync back via the next BALANCE: packet.
-        const msg = `CMD:BALANCE_TUNE:Kp=${Kp},Kd=${Kd},setpoint=${spRad},ankle=${ankle},hip=${hip},torso=${torso},max=${max}`;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(msg);
-            console.log("[WS TX]", msg);
-        }
-    }, 80);
+// ── Single-key BALANCE_TUNE send (replaces the prior bundled sendTune). ──────
+// See "CONFIGURATION OWNERSHIP" header: one slider touch = one CMD, one key.
+// Bundled sends used to push every slider's HTML default to firmware on any
+// user interaction before the first sync completed; this form transmits ONLY
+// the field the user just moved. Firmware's BALANCE_TUNE parser accepts
+// partial key=value lists, so this is a drop-in pattern change.
+//
+// For deg-based pitch sliders (setpoint), the unit conversion is inlined at
+// the oninput call site (sendBalanceKey('setpoint', spDeg*Math.PI/180)) so
+// the converter is visible right next to the value source.
+function sendBalanceKey(key, val) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const msg = `CMD:BALANCE_TUNE:${key}=${val}`;
+    ws.send(msg);
+    console.log("[WS TX]", msg);
 }
 
 const _boostMap = {
@@ -2775,19 +2821,8 @@ function updateBoostLabel(id, val) {
         document.getElementById(m.el).textContent = parseFloat(val).toFixed(m.decimals);
     }
 }
-function sendBoostTune() {
-    clearTimeout(sendBoostTune._t);
-    sendBoostTune._t = setTimeout(() => {
-        const thresh  = parseFloat(document.getElementById("slBoostThresh").value);
-        const factor  = document.getElementById("slBoostFactor").value;
-        const threshRad = (thresh * Math.PI / 180).toFixed(5);
-        const msg = `CMD:BALANCE_TUNE:boost_thresh=${threshRad},boost_factor=${factor}`;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(msg);
-            console.log("[WS TX]", msg);
-        }
-    }, 80);
-}
+// Boost knobs fold into sendBalanceKey too. The slider for boost_thresh is
+// in degrees; the oninput call site does the deg->rad conversion inline.
 
 // ── Task-space mode (Stage 3) controls ───────────────────────────────────────
 function setTaskSpace(enable) {
@@ -2815,20 +2850,10 @@ function updateTsLabel(key, val) {
     if (key === "dx_per_deg") document.getElementById("tvDxPerDeg").textContent = parseFloat(val).toFixed(1);
     if (key === "dy_per_deg") document.getElementById("tvDyPerDeg").textContent = parseFloat(val).toFixed(1);
 }
-function sendTsTune() {
-    clearTimeout(sendTsTune._t);
-    sendTsTune._t = setTimeout(() => {
-        const dx = document.getElementById("slDxPerDeg").value;
-        const dy = document.getElementById("slDyPerDeg").value;
-        const msg = `CMD:BALANCE_TUNE:dx_per_deg=${dx},dy_per_deg=${dy}`;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(msg);
-            console.log("[WS TX]", msg);
-        }
-    }, 80);
-}
+// Task-space dx/dy fold into sendBalanceKey via dx_per_deg / dy_per_deg keys.
 
-// ── Sync a slider to firmware state without triggering sendTune() ─────────────
+// ── Sync a slider to firmware state. Programmatic .value writes do NOT
+//    fire oninput, so this cannot push the new value back to firmware. ──────
 // Only updates if the difference exceeds the slider's own step size.
 function _syncSlider(sliderId, labelId, newVal, decimals) {
     const sl   = document.getElementById(sliderId);
@@ -2995,31 +3020,19 @@ function setFcSignUI(sign) {
     document.getElementById("btnFcSignNeg").className = "btn-sign" + (!pos ? " btn-sign-active" : "");
 }
 
-function sendFcTune() {
-    clearTimeout(sendFcTune._t);
-    sendFcTune._t = setTimeout(() => {
-        const flatPdeg   = parseFloat(document.getElementById("slFcFlatP").value);
-        const flatRdeg   = parseFloat(document.getElementById("slFcFlatR").value);
-        const loadDevDeg = parseFloat(document.getElementById("slFcLoadDev").value);
-        const flatPrad   = (flatPdeg   * Math.PI / 180).toFixed(5);
-        const flatRrad   = (flatRdeg   * Math.PI / 180).toFixed(5);
-        const loadDevRad = (loadDevDeg * Math.PI / 180).toFixed(5);
-        const msg = `CMD:FOOT_CONTACT_TUNE:flatP=${flatPrad},flatR=${flatRrad},loadDev=${loadDevRad}`;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(msg);
-            console.log("[WS TX]", msg);
-        }
-    }, 80);
+// Single-key FOOT_CONTACT_TUNE send. Angle keys are deg->rad converted at
+// the oninput call site (see sendFcKey usage in the threshold sliders).
+function sendFcKey(key, val) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const msg = `CMD:FOOT_CONTACT_TUNE:${key}=${val}`;
+    ws.send(msg);
+    console.log("[WS TX]", msg);
 }
 
 function setFcSign(sign) {
     _setTuneActive();
     setFcSignUI(sign);
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        const msg = `CMD:FOOT_CONTACT_TUNE:loadSign=${sign > 0 ? "+1.0" : "-1.0"}`;
-        ws.send(msg);
-        console.log("[WS TX]", msg);
-    }
+    sendFcKey('loadSign', sign > 0 ? "+1.0" : "-1.0");
 }
 
 const _fiLastCount = { l: 0, r: 0 };
@@ -3039,38 +3052,21 @@ function updateFiLabel(id, rawVal) {
     }
 }
 
-function sendFootImpactTune() {
-    clearTimeout(sendFootImpactTune._t);
-    sendFootImpactTune._t = setTimeout(() => {
-        if (!(ws && ws.readyState === WebSocket.OPEN)) return;
-        const enabled = document.getElementById("fi-enabled").checked ? 1 : 0;
-        const thr = parseFloat(document.getElementById("slFiThr").value).toFixed(3);
-        const lpf = parseFloat(document.getElementById("slFiLpf").value).toFixed(3);
-        const ref = parseInt(document.getElementById("slFiRef").value, 10);
-        const msg = `CMD:FOOT_IMPACT_TUNE:enabled=${enabled},thr=${thr},lpf=${lpf},ref=${ref}`;
-        ws.send(msg);
-        console.log("[WS TX]", msg);
-    }, 80);
+// Single-key FOOT_IMPACT_TUNE send.
+function sendFootImpactKey(key, val) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const msg = `CMD:FOOT_IMPACT_TUNE:${key}=${val}`;
+    ws.send(msg);
+    console.log("[WS TX]", msg);
 }
 
-// Debounced send — converts setpoint from degrees to radians before sending.
-function sendWSTune() {
-    clearTimeout(sendWSTune._t);
-    sendWSTune._t = setTimeout(() => {
-        const spDeg  = parseFloat(document.getElementById("slWsSp").value);
-        const spRad  = (spDeg * Math.PI / 180).toFixed(5);
-        const ankle      = document.getElementById("slWsAnkle").value;
-        const lateral    = document.getElementById("slWsLateral").value;
-        const forward    = document.getElementById("slWsForward").value;
-        const torso      = document.getElementById("slWsTorso").value;
-        const ramp       = document.getElementById("slWsRamp").value;
-        const phaseDelay = document.getElementById("slWsPhaseDelay")?.value ?? "500";
-        const msg = `CMD:WEIGHT_SHIFT_TUNE:setpoint=${spRad},ankle=${ankle},lateral_mm=${lateral},forward_mm=${forward},torso=${torso},ramp=${ramp},phase_delay=${phaseDelay}`;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(msg);
-            console.log("[WS TX]", msg);
-        }
-    }, 80);
+// Single-key WEIGHT_SHIFT_TUNE send. setpoint is deg->rad converted at
+// the oninput call site.
+function sendWSKey(key, val) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const msg = `CMD:WEIGHT_SHIFT_TUNE:${key}=${val}`;
+    ws.send(msg);
+    console.log("[WS TX]", msg);
 }
 
 // Update progress bar from BALANCE: packet (ws_prog field) or any future WSHIFT: packet.
@@ -3124,30 +3120,13 @@ function updateGaitLabel(id, rawVal) {
         parseFloat(rawVal).toFixed(m.decimals);
 }
 
-function sendGaitTune() {
-    clearTimeout(sendGaitTune._t);
-    sendGaitTune._t = setTimeout(() => {
-        const rate      = parseFloat(document.getElementById("slGaitRate").value).toFixed(3);
-        const gate      = parseFloat(document.getElementById("slGaitGate").value).toFixed(3);
-        const wsThreshDeg = parseFloat(document.getElementById("slGaitWsThresh").value);
-        const wsThreshRad = (wsThreshDeg * Math.PI / 180).toFixed(5);
-        const stepH    = document.getElementById("slGaitStep").value;
-        const stanceH  = document.getElementById("slGaitStance").value;
-        const stepLen  = document.getElementById("slGaitStepLen").value;
-        const capGain  = parseFloat(document.getElementById("slGaitCapGain").value).toFixed(2);
-        const capMax   = document.getElementById("slGaitCapMax").value;
-        const comLatGate = parseFloat(document.getElementById("slGaitComLatGate").value).toFixed(1);
-        const torsoNeutralRoll = parseFloat(document.getElementById("slGaitTorsoNeutralRoll").value).toFixed(5);
-        const torsoNeutralPitch = parseFloat(document.getElementById("slGaitTorsoNeutralPitch").value).toFixed(5);
-        const msg = `CMD:GAIT_TUNE:phaseRate=${rate},liftGate=${gate},`
-                  + `wsThresh=${wsThreshRad},stepH_mm=${stepH},stanceH_mm=${stanceH},`
-                  + `stepLength_mm=${stepLen},captureGain=${capGain},captureMax=${capMax},`
-                  + `comLatGateMm=${comLatGate},torsoNeutralRoll=${torsoNeutralRoll},torsoNeutralPitch=${torsoNeutralPitch}`;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(msg);
-            console.log("[WS TX]", msg);
-        }
-    }, 80);
+// Single-key GAIT_TUNE send. wsThresh is deg->rad converted at the call
+// site; all other keys pass through unchanged.
+function sendGaitKey(key, val) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const msg = `CMD:GAIT_TUNE:${key}=${val}`;
+    ws.send(msg);
+    console.log("[WS TX]", msg);
 }
 
 function toggleCapture() {
@@ -3171,17 +3150,14 @@ function toggleTouchdown() {
     }
 }
 
-function sendTouchdownTune() {
+// Single-key TOUCHDOWN_TUNE send. Only one tunable knob today (gatePhase),
+// but the helper keeps the pattern symmetric with the other panels.
+function sendTouchdownKey(key, val) {
     _setTuneActive();
-    clearTimeout(sendTouchdownTune._t);
-    sendTouchdownTune._t = setTimeout(() => {
-        const gate = parseFloat(document.getElementById("slTouchdownGate").value).toFixed(2);
-        const msg  = `CMD:TOUCHDOWN_TUNE:gatePhase=${gate}`;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(msg);
-            console.log("[WS TX]", msg);
-        }
-    }, 80);
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const msg = `CMD:TOUCHDOWN_TUNE:${key}=${val}`;
+    ws.send(msg);
+    console.log("[WS TX]", msg);
 }
 
 function updateTouchdownLabel(rawVal) {
@@ -3391,6 +3367,22 @@ function parseGaitState(payload) {
         _syncSlider("slGaitComLatGate", "tvGaitComLatGate", comLatGate, 1);
         _syncSlider("slGaitTorsoNeutralRoll", "tvGaitTorsoNeutralRoll", trNeutR, 3);
         _syncSlider("slGaitTorsoNeutralPitch", "tvGaitTorsoNeutralPitch", trNeutP, 3);
+
+        // Sliders newly added to the GAIT broadcast (firmware ownership fix).
+        // Optional-chain the reads so an older firmware that hasn't been
+        // re-flashed leaves these sliders displaying their last-known value
+        // instead of zeroing them.
+        if (v["phaseRate"] !== undefined)
+            _syncSlider("slGaitRate", "tvGaitRate", parseFloat(v["phaseRate"]), 2);
+        if (v["liftGate"] !== undefined)
+            _syncSlider("slGaitGate", "tvGaitGate", parseFloat(v["liftGate"]), 2);
+        if (v["wsThresh"] !== undefined)
+            _syncSlider("slGaitWsThresh", "tvGaitWsThresh",
+                        parseFloat(v["wsThresh"]) * 180 / Math.PI, 1);
+        if (v["lvl_kpP"] !== undefined)
+            _syncSlider("slLvlKpPitch", "tvLvlKpPitch", parseFloat(v["lvl_kpP"]), 0);
+        if (v["lvl_kpR"] !== undefined)
+            _syncSlider("slLvlKpRoll",  "tvLvlKpRoll",  parseFloat(v["lvl_kpR"]), 0);
     }
 
     // Swing-foot leveler L0 telemetry
@@ -3505,17 +3497,12 @@ function updateLevelerLabel(id, rawVal) {
         parseFloat(rawVal).toFixed(m.decimals);
 }
 
-function sendLevelerTune() {
-    clearTimeout(sendLevelerTune._t);
-    sendLevelerTune._t = setTimeout(() => {
-        const kpP = parseFloat(document.getElementById("slLvlKpPitch").value).toFixed(1);
-        const kpR = parseFloat(document.getElementById("slLvlKpRoll").value).toFixed(1);
-        const msg = `CMD:SWING_LEVELER_TUNE:kp_pitch=${kpP},kp_roll=${kpR}`;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(msg);
-            console.log("[WS TX]", msg);
-        }
-    }, 80);
+// Single-key SWING_LEVELER_TUNE send.
+function sendLevelerKey(key, val) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const msg = `CMD:SWING_LEVELER_TUNE:${key}=${val}`;
+    ws.send(msg);
+    console.log("[WS TX]", msg);
 }
 
 function toggleLevelerEnable() {

@@ -377,8 +377,9 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
     _lastBalanceBroadcast_us = now;
 
     const BalanceConfig& cfg = _balCtrl->getConfig();
-    // buf sized for full pitch + roll + task-space + recovery telemetry (~480 chars).
-    char buf[600];
+    // buf sized for full pitch + roll + task-space + recovery telemetry
+    // + recovery thresholds + boost + dx/dy + iir config fields (~640 chars).
+    char buf[800];
     snprintf(buf, sizeof(buf),
         // Controller enable flags + overall active state
         "BALANCE:p_en=%d,r_en=%d,"
@@ -401,7 +402,16 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         "tb=%d,"
         // Stage 0: catch-step recovery detection telemetry.
         "rcv=%d,sat=%u,rdb=%u,"
-        "bias_l=%.2f,bias_r=%.2f",
+        "bias_l=%.2f,bias_r=%.2f,"
+        // Recovery detection thresholds (broadcast so UI sliders sync
+        // without a separate one-shot packet — see ownership rules in
+        // index.html). Units: pitch/roll in rad, sat/conf in ticks.
+        "rcv_pitch=%.4f,rcv_roll=%.4f,rcv_sat=%u,rcv_conf=%u,"
+        // Gain-boost (pitch + roll), task-space gain, output IIR. Required
+        // so the dedicated sliders on these knobs sync to firmware state
+        // and never push their HTML defaults back.
+        "boost_th=%.4f,boost_fc=%.2f,boost_thR=%.4f,boost_fcR=%.2f,"
+        "dx_pd=%.2f,dy_pd=%.2f,iir=%.3f",
         (int)cfg.pitch_enabled, (int)cfg.roll_enabled,
         state.effective_kp,
         state.effective_kp_roll,
@@ -428,7 +438,18 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         (unsigned)state.saturation_count,
         (unsigned)state.recovery_debounce,
         cfg.ankle_roll_bias_l_deg,
-        cfg.ankle_roll_bias_r_deg
+        cfg.ankle_roll_bias_r_deg,
+        cfg.recovery_tilt_pitch_rad,
+        cfg.recovery_tilt_roll_rad,
+        (unsigned)cfg.recovery_saturation_ticks,
+        (unsigned)cfg.recovery_confirm_ticks,
+        cfg.gain_boost_threshold_rad,
+        cfg.gain_boost_factor,
+        cfg.gain_boost_threshold_roll_rad,
+        cfg.gain_boost_factor_roll,
+        cfg.pitch_to_dx_mm_per_deg,
+        cfg.roll_to_dy_mm_per_deg,
+        cfg.output_iir_alpha
     );
     _sendFiltered(buf);
 }
@@ -482,10 +503,16 @@ void WebComm::broadcastGaitState() {
                                       ? _swingLeveler->getState()
                                       : SwingFootLevelerState{};
 
-    char buf[760];
+    char buf[900];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
+        // Gait config fields the UI sliders need to sync (firmware is source
+        // of truth). Single-key sends in the UI rely on these never being
+        // stale, so they live in the continuous broadcast.
+        "phaseRate=%.3f,liftGate=%.3f,wsThresh=%.4f,capMax=%.1f,"
+        // Swing-foot leveler kP fields. enabled is below as lvl_en.
+        "lvl_kpP=%.1f,lvl_kpR=%.1f,"
         "gateMode=%d,gImu=%d,gFlat=%d,gLoad=%d,gStanceL=%d,"
         "comLatMm=%.1f,gateComLat=%d,trNeutP=%.5f,trNeutR=%.5f,comLatGate=%.1f,"
         "rsub=%d,rdx=%d,rdy=%d,rms=%lu,"
@@ -514,6 +541,12 @@ void WebComm::broadcastGaitState() {
         _gaitCtrl->getConfig().stepHeightMm,
         _gaitCtrl->getConfig().stanceHeightMm,
         _gaitCtrl->getConfig().stepLengthMm,
+        _gaitCtrl->getConfig().phaseRateHz,
+        _gaitCtrl->getConfig().liftGateThreshold,
+        _gaitCtrl->getConfig().wsThresholdRad,
+        _gaitCtrl->getConfig().captureOffsetMaxMm,
+        _swingLeveler ? _swingLeveler->getConfig().kp_pitch_deg_per_rad : 0.0f,
+        _swingLeveler ? _swingLeveler->getConfig().kp_roll_deg_per_rad  : 0.0f,
         static_cast<int>(_gaitCtrl->getConfig().liftGateMode),
         static_cast<int>(s.gateImuRollOK),
         static_cast<int>(s.gateStanceFlat),
@@ -636,6 +669,14 @@ void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
             _lastFootImpactBroadcast_us = 0;
             broadcastFootImpact();
         }
+        // Force-arm the next tick of the foot-contact and gait broadcasts so
+        // their config fields (flat thresholds, gait params, leveler kP) reach
+        // a freshly connected client without waiting for the natural rate-
+        // limit interval. Firmware is the source of truth for these knobs;
+        // the UI sliders rely on these broadcasts to sync away from the
+        // (deliberately fallback-only) HTML defaults.
+        _lastFootContactBroadcast_us = 0;
+        _lastGaitBroadcast_us        = 0;
     }
     if (type == WS_EVT_DISCONNECT) {
         Serial.printf("[WebComm] Client #%u disconnected\n", client->id());

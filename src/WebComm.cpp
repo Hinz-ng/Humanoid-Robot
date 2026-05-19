@@ -102,6 +102,31 @@ void WebComm::init() {
 
 void WebComm::cleanupClients() { ws.cleanupClients(); }
 
+// ---------------------------------------------------------------------------
+//  _sendFiltered — per-client broadcast helper.
+//
+//  Iterates over connected clients and skips THIS client (continue) if its
+//  send queue depth exceeds the safety threshold. Replaces the prior pattern
+//  of scanning queue depth and returning globally on any backed-up client,
+//  which caused intermittent UI telemetry freezes: a single ungracefully
+//  disconnected client (laptop sleep, mobile background) would leave a
+//  zombie session whose queueLen never drained, blocking server->client
+//  broadcasts to every other client until cleanupClients() reaped it.
+//
+//  Applied to all char-buffer broadcasts (rate-limited telemetry + one-shot
+//  per-client responses like IK_RESULT, FOOT_PROBE, TORSO_TARE). String
+//  literals like "ESTOP:ACTIVE" and "ESTOP:CLEAR" still use ws.textAll —
+//  those are short, infrequent, and benign even on a backed-up client.
+// ---------------------------------------------------------------------------
+void WebComm::_sendFiltered(const char* msg) {
+    if (msg == nullptr) return;
+    for (auto& c : ws.getClients()) {
+        if (c.status() != WS_CONNECTED) continue;
+        if (c.queueLen() > 16) continue;   // skip THIS client, not all
+        c.text(msg);
+    }
+}
+
 // =============================================================================
 //  STATE BROADCAST
 //  Protocol: "STATE:<ch>=<pulse_us>:<deg>,..."
@@ -150,10 +175,6 @@ void WebComm::broadcastJointInfo() {
 
 void WebComm::broadcastIMU(RawIMUData data) {
     if (!data.valid || ws.count() == 0) return;
-    for (auto& c : ws.getClients()) {
-        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
-    }
-
     const uint32_t IMU_BROADCAST_INTERVAL_US = 50000; // 20 Hz
     uint32_t now = micros();
     if ((now - _lastIMUBroadcast_us) < IMU_BROADCAST_INTERVAL_US) return;
@@ -165,7 +186,7 @@ void WebComm::broadcastIMU(RawIMUData data) {
         data.accel_x, data.accel_y, data.accel_z,
         data.gyro_x,  data.gyro_y,  data.gyro_z
     );
-    ws.textAll(buf);
+    _sendFiltered(buf);
 }
 
 // =============================================================================
@@ -176,10 +197,6 @@ void WebComm::broadcastIMU(RawIMUData data) {
 
 void WebComm::broadcastEstimate(IMUState state) {
     if (!state.valid || ws.count() == 0) return;
-    for (auto& c : ws.getClients()) {
-        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
-    }
-
     const uint32_t INTERVAL_US = 50000; // 20 Hz
     uint32_t now = micros();
     if ((now - _lastEstimateBroadcast_us) < INTERVAL_US) return;
@@ -192,7 +209,7 @@ void WebComm::broadcastEstimate(IMUState state) {
         state.pitch, state.roll, state.pitchRate, state.rollRate,
         state.vx_CoM_mm_s, state.vy_CoM_mm_s
     );
-    ws.textAll(buf);
+    _sendFiltered(buf);
 }
 
 // =============================================================================
@@ -202,10 +219,6 @@ void WebComm::broadcastEstimate(IMUState state) {
 // =============================================================================
 void WebComm::broadcastFootIMU(const RawIMUData& left, const RawIMUData& right) {
     if (ws.count() == 0) return;
-    for (auto& c : ws.getClients()) {
-        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
-    }
-
     const uint32_t INTERVAL_US = 100000;  // 10 Hz
     uint32_t now = micros();
     if ((now - _lastFootIMUBroadcast_us) < INTERVAL_US) return;
@@ -223,7 +236,7 @@ void WebComm::broadcastFootIMU(const RawIMUData& left, const RawIMUData& right) 
         right.accel_x, right.accel_y, right.accel_z,
         right.gyro_x,  right.gyro_y,  right.gyro_z, (int)right.valid
     );
-    ws.textAll(buf);
+    _sendFiltered(buf);
 }
 
 // =============================================================================
@@ -234,10 +247,6 @@ void WebComm::broadcastFootIMU(const RawIMUData& left, const RawIMUData& right) 
 // =============================================================================
 void WebComm::broadcastFootEstimate(const IMUState& left, const IMUState& right) {
     if (ws.count() == 0) return;
-    for (auto& c : ws.getClients()) {
-        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
-    }
-
     const uint32_t INTERVAL_US = 100000;  // 10 Hz
     uint32_t now = micros();
     if ((now - _lastFootEstimateBroadcast_us) < INTERVAL_US) return;
@@ -250,7 +259,7 @@ void WebComm::broadcastFootEstimate(const IMUState& left, const IMUState& right)
         left.pitch,  left.roll,  left.pitchRate,  left.rollRate,  (int)left.valid,
         right.pitch, right.roll, right.pitchRate, right.rollRate, (int)right.valid
     );
-    ws.textAll(buf);
+    _sendFiltered(buf);
 }
 
 // =============================================================================
@@ -263,10 +272,6 @@ void WebComm::broadcastFootEstimate(const IMUState& left, const IMUState& right)
 // =============================================================================
 void WebComm::broadcastFootContact(const FootContactSnapshot* snap) {
     if (snap == nullptr || _footContactCfg == nullptr || ws.count() == 0) return;
-    for (auto& c : ws.getClients()) {
-        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
-    }
-
     const uint32_t INTERVAL_US = 100000;  // 10 Hz
     uint32_t now = micros();
     if ((now - _lastFootContactBroadcast_us) < INTERVAL_US) return;
@@ -290,7 +295,7 @@ void WebComm::broadcastFootContact(const FootContactSnapshot* snap) {
         cfg.loaded_pitch_deviation_rad,
         cfg.loaded_pitch_sign
     );
-    ws.textAll(buf);
+    _sendFiltered(buf);
 }
 
 // =============================================================================
@@ -300,10 +305,6 @@ void WebComm::broadcastFootContact(const FootContactSnapshot* snap) {
 // =============================================================================
 void WebComm::broadcastFootImpact() {
     if (_footImpact == nullptr || ws.count() == 0) return;
-    for (auto& c : ws.getClients()) {
-        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
-    }
-
     const uint32_t INTERVAL_US = 100000;  // 10 Hz
     uint32_t now = micros();
     if ((now - _lastFootImpactBroadcast_us) < INTERVAL_US) return;
@@ -327,7 +328,7 @@ void WebComm::broadcastFootImpact() {
         R.magnitude_g, R.delta_g, (unsigned long)R.detect_count,
         (unsigned long)R.ms_since_last, R.last_magnitude_g, R.last_delta_g
     );
-    ws.textAll(buf);
+    _sendFiltered(buf);
 }
 
 // =============================================================================
@@ -336,10 +337,6 @@ void WebComm::broadcastFootImpact() {
 
 void WebComm::broadcastCalibStatus(CalibState state, float progress) {
     if (ws.count() == 0) return;
-    for (auto& c : ws.getClients()) {
-        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
-    }
-
     // Rate-limit to 10 Hz. Always let CALIB_DONE through immediately (final packet).
     const uint32_t INTERVAL_US = 100000; // 10 Hz
     uint32_t now = micros();
@@ -365,7 +362,7 @@ void WebComm::broadcastCalibStatus(CalibState state, float progress) {
         "CALIB:state=%s,progress=%.2f,remaining=%.1f",
         stateStr, progress, remaining_s
     );
-    ws.textAll(buf);
+    _sendFiltered(buf);
 }
 
 // =============================================================================
@@ -374,10 +371,6 @@ void WebComm::broadcastCalibStatus(CalibState state, float progress) {
 
 void WebComm::broadcastBalanceState(const BalanceState& state) {
     if (ws.count() == 0 || _balCtrl == nullptr) return;
-    for (auto& c : ws.getClients()) {
-        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
-    }
-
     const uint32_t INTERVAL_US = 50000;  // 20 Hz
     uint32_t now = micros();
     if ((now - _lastBalanceBroadcast_us) < INTERVAL_US) return;
@@ -437,7 +430,7 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         cfg.ankle_roll_bias_l_deg,
         cfg.ankle_roll_bias_r_deg
     );
-    ws.textAll(buf);
+    _sendFiltered(buf);
 }
 // =============================================================================
 //  GAIT STATE BROADCAST
@@ -477,10 +470,6 @@ void WebComm::broadcastWeightShiftConfig(AsyncWebSocketClient* client) {
 
 void WebComm::broadcastGaitState() {
     if (!_gaitCtrl || ws.count() == 0) return;
-    for (auto& c : ws.getClients()) {
-        if (c.status() == WS_CONNECTED && c.queueLen() > 16) return;
-    }
-
     const uint32_t INTERVAL_US = 50000;  // 20 Hz
     uint32_t now = micros();
     if ((now - _lastGaitBroadcast_us) < INTERVAL_US) return;
@@ -580,7 +569,7 @@ void WebComm::broadcastGaitState() {
         static_cast<int>(s.touchdownSide),
         s.touchdownSwingX_mm
     );
-    ws.textAll(buf);
+    _sendFiltered(buf);
 }
 
 // =============================================================================
@@ -1034,7 +1023,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                 "R_who=0x%02X,R_c1=0x%02X,R_c2=0x%02X,R_c3=0x%02X,R_init=%d",
                 L.whoami, L.ctrl1, L.ctrl2, L.ctrl3, (int)L.initialized,
                 R.whoami, R.ctrl1, R.ctrl2, R.ctrl3, (int)R.initialized);
-            ws.textAll(buf);
+            _sendFiltered(buf);
             Serial.printf("[WebComm] %s\n", buf);
         }
         else if (cmd == "TORSO_TARE") {
@@ -1045,7 +1034,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                 snprintf(buf, sizeof(buf),
                     "TORSO_TARE:ok=%d,pitch=%.4f,roll=%.4f",
                     (int)ok, cfg.torsoPitchNeutralRad, cfg.torsoRollNeutralRad);
-                ws.textAll(buf);
+                _sendFiltered(buf);
                 Serial.printf("[WebComm] %s\n", buf);
             } else {
                 ws.textAll("TORSO_TARE:ok=0,err=not_wired");
@@ -1501,7 +1490,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     r.hip_roll_deg,  r.ankle_roll_deg,
                     r.sagittal_reach_pct, r.flat_foot_error_deg,
                     pos_err, static_cast<int>(submitted));
-                ws.textAll(buf);
+                _sendFiltered(buf);
             };
 
             // FK roundtrip position error helper.

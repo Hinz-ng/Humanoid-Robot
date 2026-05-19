@@ -93,6 +93,13 @@ private:
     
     void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
     void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
+
+    // Per-client filtered broadcast. Skips clients with backlog > queue
+    // threshold instead of short-circuiting for ALL clients. Replaces
+    // ws.textAll() in rate-limited telemetry broadcasts where a single
+    // zombie client (laptop sleep, mobile background) used to freeze
+    // telemetry to every connected client.
+    void _sendFiltered(const char* msg);
 };
 
 #endif

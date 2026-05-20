@@ -69,6 +69,15 @@ float ServoControl::getTargetAngle(uint8_t channel) {
     return _model.getAbsoluteAngle(channel);
 }
 
+// --- Runtime session neutral trim — pass-throughs to JointModel ---
+bool  ServoControl::captureSessionNeutral()       { return _model.captureSessionNeutral(); }
+void  ServoControl::clearSessionNeutral()         { _model.clearSessionNeutral(); }
+bool  ServoControl::hasSessionTrim()        const { return _model.hasSessionTrim(); }
+float ServoControl::maxSessionTrimDeg()     const { return _model.maxSessionTrimDeg(); }
+float ServoControl::getEffectiveNeutralDeg(uint8_t channel) const {
+    return _model.getEffectiveNeutralDeg(channel);
+}
+
 void ServoControl::setJointAngleDirect(uint8_t channel, float angleDeg) {
     _model.setJointAngle(channel, angleDeg, /*immediate=*/true);
 }

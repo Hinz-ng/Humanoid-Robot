@@ -55,14 +55,37 @@
 // TUNING NOTE (2026-04-xx): Reduced from 0.4 → 0.25 Hz to give the IMU roll
 // gate (wsThresholdRad) more time to satisfy before the half-cycle advances.
 // Return to 0.4 once stance loading is stable at the lower rate.
-constexpr float GAIT_PHASE_RATE_HZ          = 0.55f;  // cycles/sec
+constexpr float GAIT_PHASE_RATE_HZ          = 0.50f;  // cycles/sec
 
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
 // If drag returns at 15 mm, the root cause is the gate, not step height.
 constexpr float GAIT_STEP_HEIGHT_MM         = 12.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
-constexpr float GAIT_STEP_LENGTH_MM         = 35.0f;  // Phase 3+; forward stride
+constexpr float GAIT_STEP_LENGTH_MM         = 30.0f;  // Phase 3+; forward stride
+
+// Session neutral-trim safety gate (deg). JointModel::captureSessionNeutral()
+// rejects the whole capture if any joint is further than this from its factory
+// neutral — a guard against snapshotting a pose that was never posed near
+// neutral. Sized generously above real servo-neutral drift (~1–2° backlash)
+// plus a few degrees of operator correction. This bounds the runtime trim,
+// so the joint-limit soft window (neutral-relative) can only ride a few
+// degrees in servo space; the hard [0,270] clamp in jointAngleToPulse is the
+// final backstop. See JointModel — factory vs. runtime neutral.
+constexpr float NEUTRAL_TRIM_MAX_DEG = 8.0f;
+
+// W1 — swing-envelope apex fraction. _swingFrac() time-warps localPhase so
+// the vertical lift apex lands at this fraction of the swing instead of the
+// midpoint. 0.5 = symmetric raised cosine (legacy behaviour). Below 0.5 =
+// faster lift, slower descent — the foot spends more of the swing in the
+// descending half, lowering vertical speed through the touchdown approach.
+// Zero vertical velocity at lift-off / apex / touchdown is preserved for any
+// value. Clamped to [0.05, 0.95] in _swingFrac().
+//
+// TUNING NOTE 2026-05-20: hardware testing found a strongly front-loaded
+// apex (0.2) noticeably better than the symmetric 0.5 — the long, slow
+// descent visibly reduces touchdown disturbance. Default lowered 0.5 → 0.2.
+constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.2f;
 
 // TUNING NOTE: Reduced from 0.15 (~8.5°) → 0.10 (~5.7°). The previous value
 // was chosen conservatively for Phase 2 diagnostics. At 0.10 rad the gate opens
@@ -117,7 +140,7 @@ constexpr uint32_t GAIT_LIFT_DWELL_MS_DEFAULT = 80;
 // genuinely needs longer to settle; tune down to fail-fast in testing.
 //
 // 0 disables the timeout (wait indefinitely -- pre-Stage-2 behavior).
-constexpr uint32_t GAIT_WAIT_SHIFT_MAX_MS_DEFAULT = 2000;
+constexpr uint32_t GAIT_WAIT_SHIFT_MAX_MS_DEFAULT = 1500;
 
 // ============================================================
 // LATERAL CoM OBSERVATION GATE  (Stage 3)
@@ -136,7 +159,23 @@ constexpr uint32_t GAIT_WAIT_SHIFT_MAX_MS_DEFAULT = 2000;
 // before lift, with margin for IIR settling and sensor noise. Setting
 // too close to lateral_shift_mm makes the gate brittle to drift; setting
 // too low defeats the point of observation.
-constexpr float GAIT_COM_LATERAL_GATE_MM_DEFAULT = 14.0f;
+constexpr float GAIT_COM_LATERAL_GATE_MM_DEFAULT = 11.0f;
+
+// ============================================================
+// LATERAL CoM TRIM  (W2 — continuous foot-placement correction)
+// ============================================================
+// UVC-style continuous lateral trim. Every tick, the observed lateral CoM
+// displacement (H_COM_MM * (imuRoll - torsoRollNeutralRad)) is scaled by this
+// gain and added to BOTH feet's y_mm so the support polygon tracks under the
+// CoM. This is the continuous analog of the binary COM_LATERAL lift gate:
+// the gate is a one-shot permission check; this trim runs every tick.
+//
+// Gain is dimensionless — mm of foot trim per mm of observed CoM offset.
+// 0.30 corrects ~1/3 of a steady observed displacement. Start conservative;
+// raise toward 0.6 only after confirming the IK clamp rate does not rise.
+// The cap bounds a noisy-IMU spike from over-driving the feet in one tick.
+constexpr float GAIT_COM_LAT_TRIM_GAIN_DEFAULT   = 0.50f;
+constexpr float GAIT_COM_LAT_TRIM_MAX_MM_DEFAULT = 25.0f;
 
 // ============================================================
 // CAPTURE-POINT — Stage 2.2 (sagittal only)
@@ -151,7 +190,7 @@ constexpr float GAIT_CAPTURE_INV_OMEGA0_S = 0.1498f;
 // Capture-point default gain. 1.0 = full LIP correction.
 // Reduce toward 0.5 if hardware capture-point is hot. Increase only after
 // confirming the LIP model is conservative on this platform.
-constexpr float GAIT_CAPTURE_GAIN_DEFAULT = 0.25f;
+constexpr float GAIT_CAPTURE_GAIN_DEFAULT = 0.15f;
 
 // Hard cap on the capture offset's contribution to a single step (mm).
 // Must remain inside the IK reach budget after combining with stepLengthMm.
@@ -174,7 +213,7 @@ constexpr float GAIT_CAPTURE_OFFSET_MAX_MM = 15.0f;
 // --- Step magnitude caps (hard physical limits) ---
 constexpr float RECOVERY_STEP_LATERAL_MAX_MM     = 35.0f;  // was 30 fixed — now ceiling
 constexpr float RECOVERY_STEP_FORWARD_MAX_MM     = 35.0f;  // matches lateral cap
-constexpr float RECOVERY_STEP_HEIGHT_LATERAL_MM  = 0.0f;  // tune 18–25
+constexpr float RECOVERY_STEP_HEIGHT_LATERAL_MM  = 5.0f;  // tune 18–25
 constexpr float RECOVERY_STEP_HEIGHT_SAGITTAL_MM = 10.0f;  // tune 28–38
 
 // --- Magnitude scaling: simplified capture-point ---
@@ -275,7 +314,7 @@ constexpr bool FOOT_IMPACT_ENABLED_DEFAULT = true;
 // Threshold on |first-difference of LPF-smoothed |a||. Default is a
 // placeholder pending empirical characterization on real hardware.
 // Units: g.
-constexpr float FOOT_IMPACT_THRESHOLD_G_DEFAULT = 0.15f;
+constexpr float FOOT_IMPACT_THRESHOLD_G_DEFAULT = 0.05f;
 
 // First-order LPF coefficient on the magnitude stream before differencing.
 // alpha=1.0 disables smoothing; alpha<1.0 attenuates both noise and the
@@ -287,6 +326,25 @@ constexpr float FOOT_IMPACT_LPF_ALPHA_DEFAULT = 0.5f;
 constexpr uint32_t FOOT_IMPACT_REFRACTORY_MS_DEFAULT = 75;
 
 // ============================================================
+// TOUCHDOWN COMPLIANCE  (W4 — event-triggered geometric yield)
+// ============================================================
+// The early-contact / swing-truncation event (the touchdown latch in
+// GaitController::update()) also fires a brief stance-height yield: the
+// effective stance height is shortened by complianceDepthMm so both legs
+// flex a few mm and absorb the landing impulse, then the offset smoothsteps
+// back to nominal over complianceDecayMs. Transient and self-clearing — the
+// offset always returns to zero, so there is no persistent posture bias.
+//
+// Depth is intentionally small — a few mm of knee flex, not a squat. Start
+// conservative; raise only after confirming no oscillation. The decay window
+// smears the impulse across tens of ms instead of one tick; too short and
+// the recovery itself becomes a second transient, too long and it bleeds
+// into the next half-cycle's load transfer.
+constexpr bool     GAIT_TD_COMPLIANCE_ENABLED_DEFAULT  = true;
+constexpr float    GAIT_TD_COMPLIANCE_DEPTH_MM_DEFAULT = 4.0f;   // mm of yield
+constexpr uint32_t GAIT_TD_COMPLIANCE_DECAY_MS_DEFAULT = 200;    // recovery time
+
+// ============================================================
 // SWING-FOOT LEVELER (Section 14)
 // Closed-loop ankle pitch/roll correction during swing phase.
 // Reads swing-leg foot IMU; emits additive bias on top of IK angles.
@@ -296,8 +354,8 @@ constexpr uint32_t FOOT_IMPACT_REFRACTORY_MS_DEFAULT = 75;
 // P gain: deg of ankle correction per rad of foot tilt error.
 // 1 rad ~= 57 deg, so kp=25 -> ~0.44 deg per deg of foot tilt. Conservative
 // start; tune toward 0.7 on hardware during L1.
-constexpr float SWING_LEVELER_KP_PITCH_DEG_PER_RAD = 30.0f;
-constexpr float SWING_LEVELER_KP_ROLL_DEG_PER_RAD  = 30.0f;
+constexpr float SWING_LEVELER_KP_PITCH_DEG_PER_RAD = 50.0f;
+constexpr float SWING_LEVELER_KP_ROLL_DEG_PER_RAD  = 50.0f;
 
 // Bias clamps. Must remain inside IK ankle soft-limits with margin for the
 // IK-computed flat-foot value (which already consumes most of the range

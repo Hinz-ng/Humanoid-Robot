@@ -63,6 +63,18 @@ public:
     void  setTargetAngle(uint8_t channel, float absoluteDeg, bool immediate = false);
     float getTargetAngle(uint8_t channel);
 
+    // =========================================================================
+    //  RUNTIME SESSION NEUTRAL TRIM  —  thin pass-throughs to JointModel
+    // =========================================================================
+    //  Servo-drift compensation. The trim itself is owned and applied by
+    //  JointModel (the joint↔servo conversion boundary); these just expose it
+    //  to WebComm. Every command source already inherits the correction.
+    bool  captureSessionNeutral();                  // snapshot current pose as neutral
+    void  clearSessionNeutral();                    // revert to factory neutral
+    bool  hasSessionTrim()    const;                // any joint trimmed?
+    float maxSessionTrimDeg() const;                // largest |trim|, servo-deg
+    float getEffectiveNeutralDeg(uint8_t channel) const;  // factory neutral + trim
+
     // Immediate joint-relative write — bypasses smooth stepping.
     // Use ONLY from real-time control loops (balance controller).
     // angleDeg: degrees FROM neutral, same frame as setJointAngle().

@@ -14,6 +14,7 @@ JointModel::JointModel()
         _targetPulse[i]    = (uint16_t)SD_USMIN;
         _speedDegPerSec[i] = JOINT_SPEED_DEFAULT_DEG_S;
         deadband[i]        = 4.0f;  // µs — 0.54° for 270° servo, 0.36° for 180°
+        _sessionTrimDeg[i] = 0.0f;  // no runtime neutral correction until captured
     }
 }
 
@@ -199,19 +200,24 @@ void JointModel::update() {
     return angleDeg;
 }
 
-/*static*/ int JointModel::jointAngleToPulse(uint8_t jointId, float angleDeg) {
+int JointModel::jointAngleToPulse(uint8_t jointId, float angleDeg) const {
     // This is the core conversion formula.
     //
-    // Step 1: apply direction and offset from neutral to get absolute servo angle
-    //   servoAngle = neutralDeg + direction × jointAngle
+    // Step 1: apply direction and offset from the EFFECTIVE neutral to get the
+    //         absolute servo angle:
+    //   servoAngle = effectiveNeutral + direction × jointAngle
+    //   effectiveNeutral = JOINT_CONFIG.neutralDeg (factory) + sessionTrim
     //
     // Step 2: convert absolute servo angle to pulse width via ServoDriver math
     //
-    // NOTE: angleDeg should already be clamped before this is called.
+    // NOTE: angleDeg should already be clamped before this is called. The
+    // [0,270] hardware clamp below still bounds the result after the trim, so
+    // a session trim can never drive the servo past its physical envelope.
     if (jointId >= NUM_JOINTS) return SD_USMIN;
     const JointConfig& jc = JOINT_CONFIG[jointId];
 
-    float servoAngle = jc.neutralDeg + (float)jc.direction * angleDeg;
+    const float effectiveNeutral = jc.neutralDeg + _sessionTrimDeg[jointId];
+    float servoAngle = effectiveNeutral + (float)jc.direction * angleDeg;
 
     // Hardware bounds — servoAngle must stay within 0°–270°.
     if (servoAngle < 0.0f)           servoAngle = 0.0f;
@@ -220,13 +226,79 @@ void JointModel::update() {
     return ServoDriver::degToPulse(servoAngle);
 }
 
-/*static*/ float JointModel::absoluteDegToJointAngle(uint8_t jointId, float absoluteDeg) {
-    // Reverse of jointAngleToPulse (step 1 only):
-    //   servoAngle = neutral + direction × jointAngle
-    //   jointAngle = (servoAngle − neutral) × direction   [since direction = ±1]
+float JointModel::absoluteDegToJointAngle(uint8_t jointId, float absoluteDeg) const {
+    // Exact inverse of jointAngleToPulse step 1 — MUST use the same effective
+    // neutral, or the joint↔servo round trip would not be consistent:
+    //   servoAngle = effectiveNeutral + direction × jointAngle
+    //   jointAngle = (servoAngle − effectiveNeutral) × direction  [direction = ±1]
     if (jointId >= NUM_JOINTS) return 0.0f;
     const JointConfig& jc = JOINT_CONFIG[jointId];
-    return (absoluteDeg - jc.neutralDeg) * (float)jc.direction;
+    const float effectiveNeutral = jc.neutralDeg + _sessionTrimDeg[jointId];
+    return (absoluteDeg - effectiveNeutral) * (float)jc.direction;
+}
+
+// =============================================================================
+//  RUNTIME SESSION NEUTRAL TRIM
+//
+//  effectiveNeutral = JOINT_CONFIG[ch].neutralDeg (immutable factory cal)
+//                   + _sessionTrimDeg[ch]         (runtime, captured here)
+//
+//  The trim is defined in servo-degree space so a capture is a pure
+//  redefinition of the joint-coordinate origin: setting
+//    trim = currentCommandedServoAngle − factoryNeutral
+//  makes jointAngle 0 coincide with the present commanded pose. _targetPulse
+//  is not touched, so no servo moves — only the frame moves.
+// =============================================================================
+
+bool JointModel::captureSessionNeutral() {
+    // Pass 1 — validate. Every joint's current commanded servo angle must be
+    // within NEUTRAL_TRIM_MAX_DEG of its factory neutral. A joint far from it
+    // means the robot was not posed at neutral (or a controller is driving
+    // it); folding that into the trim would corrupt the frame. Reject whole.
+    float candidate[NUM_JOINTS];
+    for (uint8_t ch = 0; ch < NUM_JOINTS; ++ch) {
+        candidate[ch] = getAbsoluteAngle(ch) - JOINT_CONFIG[ch].neutralDeg;
+        if (fabsf(candidate[ch]) > NEUTRAL_TRIM_MAX_DEG) {
+            Serial.printf("[JointModel] CAPTURE_NEUTRAL rejected: ch=%d is %.1f° "
+                          "from factory neutral (max %.1f) — pose near neutral first.\n",
+                          ch, candidate[ch], (double)NEUTRAL_TRIM_MAX_DEG);
+            return false;
+        }
+    }
+    // Pass 2 — commit. jointAngle 0 now maps to the present pose for every
+    // joint; getJointAngle() will read ~0 immediately after, with no motion.
+    for (uint8_t ch = 0; ch < NUM_JOINTS; ++ch) _sessionTrimDeg[ch] = candidate[ch];
+    Serial.printf("[JointModel] Session neutral captured — max |trim| = %.2f°\n",
+                  (double)maxSessionTrimDeg());
+    return true;
+}
+
+void JointModel::clearSessionNeutral() {
+    for (uint8_t i = 0; i < NUM_JOINTS; ++i) _sessionTrimDeg[i] = 0.0f;
+    Serial.println("[JointModel] Session neutral trim cleared — factory neutral restored.");
+}
+
+float JointModel::getSessionTrim(uint8_t jointId) const {
+    if (jointId >= NUM_JOINTS) return 0.0f;
+    return _sessionTrimDeg[jointId];
+}
+
+float JointModel::getEffectiveNeutralDeg(uint8_t jointId) const {
+    if (jointId >= NUM_JOINTS) return 0.0f;
+    return JOINT_CONFIG[jointId].neutralDeg + _sessionTrimDeg[jointId];
+}
+
+bool JointModel::hasSessionTrim() const {
+    for (uint8_t i = 0; i < NUM_JOINTS; ++i)
+        if (fabsf(_sessionTrimDeg[i]) > 0.001f) return true;
+    return false;
+}
+
+float JointModel::maxSessionTrimDeg() const {
+    float m = 0.0f;
+    for (uint8_t i = 0; i < NUM_JOINTS; ++i)
+        if (fabsf(_sessionTrimDeg[i]) > m) m = fabsf(_sessionTrimDeg[i]);
+    return m;
 }
 
 // =============================================================================

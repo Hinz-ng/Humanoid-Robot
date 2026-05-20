@@ -72,6 +72,60 @@ void GaitController::_clearTouchdownLatch() {
 }
 
 // ---------------------------------------------------------------------------
+//  _resetCompliance — zero the W4 touchdown-compliance event state.
+//
+//  Called on mode entry (start), init, and recovery entry. NOT called at
+//  half-cycle boundaries: an in-progress compliance decay must be allowed to
+//  finish smoothly across the boundary rather than snapping to zero.
+// ---------------------------------------------------------------------------
+void GaitController::_resetCompliance() {
+    _complianceActive         = false;
+    _complianceStartMs        = 0;
+    _complianceOffsetMm       = 0.0f;
+    _state.complianceActive   = false;
+    _state.complianceOffsetMm = 0.0f;
+}
+
+// ---------------------------------------------------------------------------
+//  _updateCompliance — W4 per-tick touchdown-compliance offset update.
+//
+//  When a compliance event is active, the stance-height offset decays from
+//  -complianceDepthMm back to 0 over complianceDecayMs on a smoothstep
+//  profile (full yield at the event, easing recovery — no hard snap-back).
+//  The offset self-clears once the decay window elapses, so the behaviour is
+//  always transient and never leaves a persistent posture bias.
+//
+//  Time-based: the event records only a start timestamp; the offset is a
+//  pure function of elapsed time. This keeps the decay independent of FSM
+//  state, so it continues cleanly through STABILIZING and the next
+//  WAIT_SHIFT.
+// ---------------------------------------------------------------------------
+void GaitController::_updateCompliance() {
+    if (!_complianceActive) {
+        _complianceOffsetMm       = 0.0f;
+        _state.complianceOffsetMm = 0.0f;
+        _state.complianceActive   = false;
+        return;
+    }
+
+    const uint32_t decayMs = _cfg.complianceDecayMs;
+    const uint32_t elapsed = millis() - _complianceStartMs;
+
+    if (decayMs == 0 || elapsed >= decayMs) {
+        // Decay window elapsed (or decay disabled): event is over.
+        _resetCompliance();
+        return;
+    }
+
+    // Smoothstep recovery: ease = 1 at the event, 0 at the end of the window.
+    const float t    = static_cast<float>(elapsed) / static_cast<float>(decayMs);
+    const float ease = 1.0f - (t * t * (3.0f - 2.0f * t));
+    _complianceOffsetMm       = -_cfg.complianceDepthMm * ease;
+    _state.complianceOffsetMm = _complianceOffsetMm;
+    _state.complianceActive   = true;
+}
+
+// ---------------------------------------------------------------------------
 void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController* bal) {
     if (mm == nullptr) {
         Serial.println("[GaitCtrl] ERROR: MotionManager null — update() will no-op.");
@@ -92,6 +146,7 @@ void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController*
     _waitShiftStartMs = 0;
     _gateOkSinceMs    = 0;
     _clearTouchdownLatch();
+    _resetCompliance();
     _state.touchdownSide = 0;   // not cleared by _clearTouchdownLatch; explicit on init
     Serial.println("[GaitCtrl] Initialized.");
 }
@@ -138,6 +193,7 @@ void GaitController::start(GaitMode mode) {
         _state.rcvMagnitude  = 0.0f;
         _state.cycleXDispl_mm = 0.0f;
         _clearTouchdownLatch();
+        _resetCompliance();
         if (_ws) _ws->trigger(ShiftDirection::NONE);
         Serial.println("[GaitCtrl] IDLE — weight shift centered.");
         return;
@@ -158,6 +214,7 @@ void GaitController::start(GaitMode mode) {
     _waitShiftStartMs = millis();
     _gateOkSinceMs    = 0;
     _clearTouchdownLatch();
+    _resetCompliance();
     _triggerShiftForSwing(Side::LEFT);  // begin LEFT-swing shift immediately
 
     Serial.printf("[GaitCtrl] start mode=%d\n", static_cast<int>(mode));
@@ -228,14 +285,46 @@ void GaitController::_triggerShiftForSwing(Side swing) {
 }
 
 // ---------------------------------------------------------------------------
-//  _swingFrac  —  raised-cosine vertical lift fraction.
-//  localPhase ∈ [0, 1) → [0, 1]: 0 at start, 1.0 at midpoint, 0 at end.
+//  _swingFrac  —  raised-cosine vertical lift fraction, asymmetric-apex warp.
+//  localPhase ∈ [0, 1) → [0, 1]: 0 at start, 1.0 at the apex, 0 at end.
 //  Raised cosine (Hann window) gives zero vertical velocity at lift-off,
-//  mid-stance peak, and touchdown, reducing landing shock while preserving
-//  peak ascent/descent amplitude.
+//  apex, and touchdown, reducing landing shock while preserving peak
+//  ascent/descent amplitude.
+//
+//  W1 — asymmetric apex. localPhase is time-warped through a piecewise-linear
+//  remap so the apex lands at swingApexFrac instead of 0.5. apex < 0.5 makes
+//  the lift occupy a shorter time slice and the descent a longer one, so the
+//  foot moves slower vertically through the touchdown approach. The cosine
+//  still has zero derivative at warped {0, 0.5, 1}, so the zero-velocity
+//  property at lift-off / apex / touchdown holds for every apex value.
+//  apex == 0.5 reproduces the legacy symmetric raised cosine (warp = identity).
 // ---------------------------------------------------------------------------
 float GaitController::_swingFrac(float localPhase) const {
-    return 0.5f * (1.0f - cosf(localPhase * 2.0f * static_cast<float>(M_PI)));
+    const float a = constrain(_cfg.swingApexFrac, 0.05f, 0.95f);
+    const float warped = (localPhase < a)
+                       ? 0.5f * (localPhase / a)
+                       : 0.5f + 0.5f * ((localPhase - a) / (1.0f - a));
+    return 0.5f * (1.0f - cosf(warped * 2.0f * static_cast<float>(M_PI)));
+}
+
+// ---------------------------------------------------------------------------
+//  _comLateralTrimMm — W2 continuous lateral CoM foot-placement trim.
+//  See header for the sign convention and gating rationale.
+// ---------------------------------------------------------------------------
+float GaitController::_comLateralTrimMm() const {
+    if (!_cfg.comLatTrimEnabled)       return 0.0f;
+    // Trim is a gait foot-placement correction — it has no meaning when no
+    // gait is running. Returning 0 in IDLE keeps the idle pose clean and the
+    // telemetry mirror honest. The STOPPING ramp (mode still RUNNING here) is
+    // faded out separately via strideScale in _buildFootTarget().
+    if (_state.mode == GaitMode::IDLE) return 0.0f;
+    if (!_lastImuState.valid)          return 0.0f;
+    if (oe_is_estopped())              return 0.0f;
+
+    const float rollCorrected = _lastImuState.roll - _cfg.torsoRollNeutralRad;
+    const float comLat = H_COM_MM * rollCorrected;   // sin(x) ≈ x, small angle
+    const float trim   = comLat * _cfg.comLatTrimGain;
+    return constrain(trim, -_cfg.comLatTrimMaxMm, +_cfg.comLatTrimMaxMm);
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +400,15 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
         t.h_sagittal_mm = _cfg.stanceHeightMm - liftMm;
     }
 
+    // W4 — touchdown compliance: a brief negative stance-height offset that
+    // shortens the leg after an early-contact event, then decays smoothly
+    // back to zero (see _updateCompliance()). Applied to BOTH swing and
+    // stance legs so the body yields evenly downward — a small symmetric
+    // squat — with no lateral asymmetry. _complianceOffsetMm is <= 0 and is
+    // exactly 0 whenever no compliance event is active, so this line is a
+    // no-op on every normal tick.
+    t.h_sagittal_mm += _complianceOffsetMm;
+
     // Stage 3: smoothstep stride applied to BOTH legs.
     //   Swing  leg: x = (s - 0.5) × L + captureReal  → starts at -L/2, lands at +L/2
     //   Stance leg: x = (0.5 - s) × L           → starts at +L/2, retreats to -L/2
@@ -345,6 +443,22 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
         t.x_mm += wsX_mm;
         t.y_mm += wsY_mm;
     }
+
+    // W2: continuous lateral CoM trim. UVC-style — the observed lateral CoM
+    // displacement is fed into BOTH feet's y_mm every tick so the support
+    // polygon tracks under the CoM. Sign mirrors mergeBalanceCorrection's dy
+    // convention: CoM displaced to robot-right → right foot abducts (+y),
+    // left foot adducts (-y) → body translates right over the feet.
+    // Applied to swing and stance alike (UVC adds its dyi to the swing foot
+    // target too); the touchdown latch freezes only x and h, never y.
+    //
+    // Scaled by strideScale — identical to the forward stride and capture
+    // offset above. strideScale is 1.0 in active gait, ramps to 0 through
+    // STOPPING, and is 0 in IDLE / standing-stance submits. Without this
+    // factor the trim would survive as a static lateral offset layered over
+    // the idle pose after STOP (the W2 regression this fixes).
+    const float comLatTrim = _comLateralTrimMm() * strideScale;
+    t.y_mm += isRight ? +comLatTrim : -comLatTrim;
 
     // Stage 3: balance correction merges onto stance leg only.
     if (bc != nullptr && !isSwing) {
@@ -423,6 +537,9 @@ LegIKResult GaitController::_submitFootTargetIK(Side side,
     // _applyRollCorrection at SOURCE_BALANCE. Adding it here too would result
     // in zero contribution (overwritten by SOURCE_BALANCE), or in the rare
     // case the SOURCE_BALANCE path is silent, would double-count.
+    // Joint-frame submissions. Servo-neutral drift is corrected globally by
+    // JointModel's runtime session trim on the joint↔servo conversion — gait
+    // submits raw IK angles and inherits the correction downstream.
     const float pitch_bias = _swingLeveler ? _swingLeveler->anklePitchBiasFor(side) : 0.0f;
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_PITCH),   r.hip_pitch_deg);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::KNEE_PITCH),  r.knee_pitch_deg);
@@ -527,6 +644,16 @@ void GaitController::update(float dt_s, const IMUState& imuState,
                             const BalanceState* balState,
                             const FootContactSnapshot* footSnap) {
     _lastImuState = imuState;
+
+    // W2 telemetry mirror — refresh every tick so the UI sees the live trim
+    // on all paths (including IDLE stance refresh, which never reaches the
+    // active-gait telemetry block below).
+    _state.comLatTrimMm = _comLateralTrimMm();
+
+    // W4 — decay the touchdown-compliance offset every tick. Placed before
+    // the estop early-return so the decay is purely time-based and continues
+    // through any FSM path; _buildFootTarget reads _complianceOffsetMm.
+    _updateCompliance();
 
     // Publish swing-leg hint to WeightShift FIRST. Reflects last tick's
     // substate; consumed on next tick's WS update (2.5 ms staleness).
@@ -784,6 +911,21 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _state.touchdownSide      = static_cast<uint8_t>(_swingSide);
             _state.touchdownLocked    = true;
 
+            // W4 — touchdown compliance. The same early-contact event that
+            // latches the swing leg also fires a brief stance-height yield:
+            // both legs flex by complianceDepthMm to absorb the landing
+            // impulse, then recover smoothly (see _updateCompliance()). This
+            // reuses the touchdown event verbatim — no separate detection.
+            // The compliance timer is independent of the latch, so the yield
+            // decays cleanly even after the latch is cleared at _advanceHalf.
+            if (_cfg.complianceEnabled && _cfg.complianceDepthMm > 0.0f) {
+                _complianceStartMs  = millis();
+                _complianceActive   = true;
+                _complianceOffsetMm = -_cfg.complianceDepthMm;
+                _state.complianceOffsetMm = _complianceOffsetMm;
+                _state.complianceActive   = true;
+            }
+
             Serial.printf("[GaitCtrl] TOUCHDOWN  swing=%s  phase=%.3f  "
                           "x=%.1f mm  delta_g=%.3f\n",
                           sideName(_swingSide),
@@ -829,8 +971,10 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         _state.liftL_deg = leftIsSwing  ? rL.hip_pitch_deg : 0.0f;
         _state.liftR_deg = !leftIsSwing ? rR.hip_pitch_deg : 0.0f;
 
-        // Telemetry: applied capture also fades — surface the actual value.
-        _state.captureOffsetMm = _captureOffsetMm() * strideScale;
+        // Telemetry: applied capture + lateral trim also fade — surface the
+        // actual (faded) value, not the raw computation.
+        _state.captureOffsetMm = _captureOffsetMm()    * strideScale;
+        _state.comLatTrimMm    = _comLateralTrimMm()   * strideScale;
         _state.cycleXDispl_mm  = _halfPhase * _cfg.stepLengthMm * strideScale;
 
         if (elapsed >= GAIT_STOP_RAMP_MS / 2 && _ws && _lastShiftDir != ShiftDirection::NONE) {
@@ -855,8 +999,9 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _state.phase     = 0.0f;
             _state.wsProgress = wsSettled ? 0.0f : _state.wsProgress;
             _state.poseHold  = 0;
-            _state.captureOffsetMm = 0.0f;   // ADD
-            _state.cycleXDispl_mm  = 0.0f;   // ADD
+            _state.captureOffsetMm = 0.0f;
+            _state.comLatTrimMm    = 0.0f;
+            _state.cycleXDispl_mm  = 0.0f;
         }
         return;
     }
@@ -1129,6 +1274,11 @@ void GaitController::triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad) 
     // Clear it on entry so a residual lock from the previous gait swing does
     // not leak telemetry into the recovery panel.
     _clearTouchdownLatch();
+    // Recovery sets h_sagittal_mm directly in _runRecoveryStep() — it never
+    // calls _buildFootTarget — so the compliance offset would not affect the
+    // trajectory anyway. Reset it on entry purely so the telemetry panel does
+    // not show a stale decay carried over from the interrupted gait swing.
+    _resetCompliance();
 
     _state.mode    = GaitMode::RECOVERY_STEP;
     _state.running = true;
@@ -1165,6 +1315,11 @@ bool GaitController::tareToTorso(const IMUState& imuState) {
                   _cfg.torsoPitchNeutralRad, _cfg.torsoRollNeutralRad);
     return true;
 }
+
+// NOTE: the gait-local neutral trim was removed in the 2026-05-20 migration.
+// Servo-neutral drift is now compensated globally by JointModel's runtime
+// session trim (see JointModel::captureSessionNeutral) — gait submits raw IK
+// angles and inherits the correction at the joint↔servo conversion boundary.
 
 // ---------------------------------------------------------------------------
 void GaitController::_enterRcvSub(RecoverySubState s) {

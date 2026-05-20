@@ -503,7 +503,7 @@ void WebComm::broadcastGaitState() {
                                       ? _swingLeveler->getState()
                                       : SwingFootLevelerState{};
 
-    char buf[900];
+    char buf[1152];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
@@ -529,7 +529,18 @@ void WebComm::broadcastGaitState() {
         //   tdPh   - _halfPhase at first gated detection
         //   tdSide - 0=LEFT 1=RIGHT (matches Side enum)
         //   tdX    - swing-leg stride x snapshot (mm) at detection
-        "tdEn=%d,tdGate=%.2f,tdSeen=%d,tdLkd=%d,tdPh=%.3f,tdSide=%d,tdX=%.1f",
+        "tdEn=%d,tdGate=%.2f,tdSeen=%d,tdLkd=%d,tdPh=%.3f,tdSide=%d,tdX=%.1f,"
+        // W1 swing-envelope apex fraction (config echo for slider sync).
+        // W2 lateral CoM trim — config echoes (enable / gain / cap) plus the
+        // live applied trim (comLatTrimMm) for the source-of-truth UI sync.
+        "swingApex=%.3f,comLatTrim=%d,comLatGain=%.2f,comLatMax=%.1f,comLatTrimMm=%.1f,"
+        // W4 touchdown compliance — config echoes (enable / depth / decay)
+        // plus live telemetry (cmpOff = signed offset applied this tick,
+        // cmpAct = decay in progress).
+        "cmpEn=%d,cmpDepth=%.1f,cmpDecay=%lu,cmpOff=%.2f,cmpAct=%d,"
+        // Session neutral trim — ntActive (any channel trimmed) + ntMax
+        // (largest |trim|, deg). Lets the UI hold a persistent status line.
+        "ntActive=%d,ntMax=%.2f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -600,7 +611,24 @@ void WebComm::broadcastGaitState() {
         static_cast<int>(s.touchdownLocked),
         s.touchdownPhase,
         static_cast<int>(s.touchdownSide),
-        s.touchdownSwingX_mm
+        s.touchdownSwingX_mm,
+        // W1 / W2 config echoes + W2 live trim.
+        _gaitCtrl->getConfig().swingApexFrac,
+        static_cast<int>(_gaitCtrl->getConfig().comLatTrimEnabled),
+        _gaitCtrl->getConfig().comLatTrimGain,
+        _gaitCtrl->getConfig().comLatTrimMaxMm,
+        s.comLatTrimMm,
+        // W4 touchdown compliance — config + live telemetry.
+        static_cast<int>(_gaitCtrl->getConfig().complianceEnabled),
+        _gaitCtrl->getConfig().complianceDepthMm,
+        (unsigned long)_gaitCtrl->getConfig().complianceDecayMs,
+        s.complianceOffsetMm,
+        static_cast<int>(s.complianceActive),
+        // Runtime session neutral trim — owned by JointModel, surfaced via
+        // ServoControl. Rides the GAIT packet purely as transport (the UI
+        // panel lives in the gait tab); it is not a gait-owned value.
+        static_cast<int>(_servoCtrl && _servoCtrl->hasSessionTrim()),
+        _servoCtrl ? _servoCtrl->maxSessionTrimDeg() : 0.0f
     );
     _sendFiltered(buf);
 }
@@ -735,9 +763,13 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         }
         if (!skip) {
             if (_motionManager) {
+                // SOURCE_UI submits absolute servo degrees. Use the EFFECTIVE
+                // neutral (factory + runtime session trim) so RESETP returns to
+                // the same corrected neutral every other path references — not
+                // the raw factory pose. With no trim captured these are equal.
                 _motionManager->submit(SOURCE_UI,
                                        static_cast<uint8_t>(i),
-                                       JOINT_CONFIG[i].neutralDeg);
+                                       _servoCtrl->getEffectiveNeutralDeg(i));
             } else {
                 _servoCtrl->setGaitOffset(i, 0.0f);
             }
@@ -1081,6 +1113,52 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                 ws.textAll("TORSO_TARE:ok=0,err=not_wired");
             }
         }
+        // ─────────────────────────────────────────────────────────────────────
+        //  CAPTURE_NEUTRAL — snapshot the current commanded pose as the runtime
+        //  session neutral (servo-drift compensation). The trim is owned and
+        //  applied globally by JointModel, so every command source inherits it.
+        //  CLEAR_NEUTRAL reverts to factory neutral. Both reply with a
+        //  NEUTRAL_TRIM: message the UI uses for accept/reject feedback.
+        //
+        //  Gated here because WebComm is the layer that knows controller state:
+        //  capture is meaningful only when the joints hold the operator's manual
+        //  pose — i.e. gait IDLE and balance disarmed — not a controller's output.
+        // ─────────────────────────────────────────────────────────────────────
+        else if (cmd == "CAPTURE_NEUTRAL") {
+            if (_servoCtrl) {
+                const bool gaitIdle = !_gaitCtrl
+                    || _gaitCtrl->getState().mode == GaitMode::IDLE;
+                bool balanceArmed = false;
+                if (_balCtrl) {
+                    const BalanceConfig bc = _balCtrl->getConfig();
+                    balanceArmed = bc.pitch_enabled || bc.roll_enabled;
+                }
+                bool ok = false;
+                if (!gaitIdle) {
+                    Serial.println("[WebComm] CAPTURE_NEUTRAL rejected: gait not IDLE.");
+                } else if (balanceArmed) {
+                    Serial.println("[WebComm] CAPTURE_NEUTRAL rejected: balance armed "
+                                   "— disarm it so the joints hold the manual pose.");
+                } else {
+                    ok = _servoCtrl->captureSessionNeutral();
+                }
+                char buf[96];
+                snprintf(buf, sizeof(buf), "NEUTRAL_TRIM:ok=%d,active=%d,max=%.2f",
+                         (int)ok, (int)_servoCtrl->hasSessionTrim(),
+                         _servoCtrl->maxSessionTrimDeg());
+                _sendFiltered(buf);
+                Serial.printf("[WebComm] %s\n", buf);
+            } else {
+                ws.textAll("NEUTRAL_TRIM:ok=0,active=0,max=0.00");
+            }
+        }
+        else if (cmd == "CLEAR_NEUTRAL") {
+            if (_servoCtrl) {
+                _servoCtrl->clearSessionNeutral();
+                _sendFiltered("NEUTRAL_TRIM:ok=1,active=0,max=0.00");
+                Serial.println("[WebComm] CLEAR_NEUTRAL");
+            }
+        }
         else if (cmd.startsWith("BALANCE_TUNE:")) {
             if (_balCtrl) {
                 BalanceConfig cfg = _balCtrl->getConfig();
@@ -1406,6 +1484,46 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                               cfg.touchdownGatePhase);
             }
         }
+        // ---------------------------------------------------------------------
+        //  W4 touchdown-compliance tuning.
+        //  Protocol: CMD:COMPLIANCE_TUNE:enabled=1,depthMm=4.0,decayMs=180
+        //
+        //  Its own command (a sibling of TOUCHDOWN_TUNE) so the compliance
+        //  knobs stay discoverable. Fields are validated and clamped here.
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("COMPLIANCE_TUNE:")) {
+            if (_gaitCtrl) {
+                GaitConfig cfg = _gaitCtrl->getConfig();
+                String params = cmd.substring(16);
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    String pair = (comma == -1) ? params.substring(start)
+                                                : params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq != -1) {
+                        String key = pair.substring(0, eq);
+                        String val = pair.substring(eq + 1);
+                        if      (key == "enabled") cfg.complianceEnabled = (val.toInt() != 0);
+                        // Depth capped at 15 mm: beyond a small knee-flex this
+                        // stops being a compliance smear and becomes a squat
+                        // that fights the balance controller. Floor 0 = off.
+                        else if (key == "depthMm") cfg.complianceDepthMm = constrain(val.toFloat(), 0.0f, 15.0f);
+                        // Decay window 20-800 ms. Below 20 ms the recovery is
+                        // itself a transient; above 800 ms it bleeds into the
+                        // next half-cycle's load transfer.
+                        else if (key == "decayMs") cfg.complianceDecayMs =
+                                     (uint32_t)constrain(val.toFloat(), 20.0f, 800.0f);
+                    }
+                    start = (comma == -1) ? params.length() : comma + 1;
+                }
+                _gaitCtrl->setConfig(cfg);
+                Serial.printf("[WebComm] COMPLIANCE_TUNE: en=%d depth=%.1f mm decay=%lu ms\n",
+                              (int)cfg.complianceEnabled,
+                              cfg.complianceDepthMm,
+                              (unsigned long)cfg.complianceDecayMs);
+            }
+        }
         else if (cmd.startsWith("GAIT_TUNE:")) {
             if (_gaitCtrl) {
                 GaitConfig cfg = _gaitCtrl->getConfig();
@@ -1472,6 +1590,25 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             // and the gate effectively never opens.
                             cfg.comLateralGateMm = constrain(val, 0.0f, 50.0f);
                         }
+                        else if (key == "swingApex") {
+                            // W1 — swing-envelope apex fraction. [0.05, 0.95]
+                            // matches the clamp inside _swingFrac() so the UI
+                            // slider and firmware never disagree.
+                            cfg.swingApexFrac = constrain(val, 0.05f, 0.95f);
+                        }
+                        else if (key == "comLatTrim") cfg.comLatTrimEnabled = (val > 0.5f);
+                        else if (key == "comLatGain") {
+                            // W2 — lateral trim gain. 0 nulls the trim (same
+                            // as the toggle off). 1.5 cap: past full LIP
+                            // correction the trim over-drives the feet.
+                            cfg.comLatTrimGain = constrain(val, 0.0f, 1.5f);
+                        }
+                        else if (key == "comLatMax") {
+                            // W2 — per-tick trim cap. 40 mm hard ceiling so
+                            // the trim alone cannot approach the lateral IK
+                            // reach budget on any stance height.
+                            cfg.comLatTrimMaxMm = constrain(val, 0.0f, 40.0f);
+                        }
                         else if (key == "torsoNeutralRoll") {
                             // +/-0.20 rad (~11 deg) hard cap. Anything larger
                             // indicates mounting/hardware fault that the
@@ -1487,12 +1624,15 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                 _gaitCtrl->setConfig(cfg);
                 Serial.printf("[WebComm] GAIT_TUNE: rate=%.2f Hz  gate=%.2f  wsThresh=%.3f rad  "
                               "stepH=%.1f mm  stanceH=%.1f mm  stepLen=%.1f mm  capEn=%d capGain=%.2f capMax=%.1f  "
-                              "dwell=%lu waitMax=%lu comLat=%.1f trP=%.4f trR=%.4f\n",
+                              "dwell=%lu waitMax=%lu comLat=%.1f trP=%.4f trR=%.4f  "
+                              "swingApex=%.3f comLatTrim=%d comLatGain=%.2f comLatMax=%.1f\n",
                               cfg.phaseRateHz, cfg.liftGateThreshold, cfg.wsThresholdRad,
                               cfg.stepHeightMm, cfg.stanceHeightMm, cfg.stepLengthMm,
                               (int)cfg.captureEnabled, cfg.captureGain, cfg.captureOffsetMaxMm,
                               (unsigned long)cfg.liftDwellMs, (unsigned long)cfg.waitShiftMaxMs,
-                              cfg.comLateralGateMm, cfg.torsoPitchNeutralRad, cfg.torsoRollNeutralRad);
+                              cfg.comLateralGateMm, cfg.torsoPitchNeutralRad, cfg.torsoRollNeutralRad,
+                              cfg.swingApexFrac, (int)cfg.comLatTrimEnabled,
+                              cfg.comLatTrimGain, cfg.comLatTrimMaxMm);
             }
         }
 

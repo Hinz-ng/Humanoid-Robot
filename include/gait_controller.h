@@ -178,7 +178,26 @@ struct GaitConfig {
     // ramp 0 → 10 → 15 → 20 mm in 5 mm increments. Watch lastReachPctL/R
     // and IK status — stop on first LIMIT_CLAMPED. Do not raise phaseRateHz
     // and stepLengthMm in the same session.
-    float stepLengthMm = 30.0f;
+    float stepLengthMm = GAIT_STEP_LENGTH_MM;
+
+    // W1 — swing-envelope apex fraction. _swingFrac() warps localPhase so the
+    // vertical lift apex lands here instead of at 0.5. Below 0.5 = faster
+    // lift, slower descent (lower vertical speed approaching touchdown).
+    // 0.5 reproduces the legacy symmetric raised cosine exactly. Clamped to
+    // [0.05, 0.95] in _swingFrac(). WS key: "swingApex".
+    float swingApexFrac = GAIT_SWING_APEX_FRAC_DEFAULT;
+
+    // W2 — continuous lateral CoM trim. When enabled, observed lateral CoM
+    // displacement is added to both feet's y_mm every tick (see
+    // _comLateralTrimMm()). Independent of LiftGateMode::COM_LATERAL, which
+    // is a one-shot gate; this trim is a continuous foot-placement correction.
+    //   comLatTrimEnabled — master enable. Default ON: the trim is the W2
+    //                       headline. Toggle OFF for A/B baseline runs.
+    //   comLatTrimGain    — mm of foot trim per mm of observed CoM offset.
+    //   comLatTrimMaxMm   — per-tick cap on the applied trim magnitude.
+    bool  comLatTrimEnabled = true;                            // WS: "comLatTrim"
+    float comLatTrimGain    = GAIT_COM_LAT_TRIM_GAIN_DEFAULT;   // WS: "comLatGain"
+    float comLatTrimMaxMm   = GAIT_COM_LAT_TRIM_MAX_MM_DEFAULT; // WS: "comLatMax"
 
     // Stage 2.2 — sagittal capture-point step placement.
     // When enabled, swing leg's stride x_mm is augmented by:
@@ -240,6 +259,30 @@ struct GaitConfig {
     // -----------------------------------------------------------------------
     bool  touchdownEnabled   = true;
     float touchdownGatePhase = 0.7f;  // [0..1)
+
+    // -----------------------------------------------------------------------
+    // W4 — Touchdown compliance.
+    //
+    // Event-triggered geometric yield. When the early-contact / swing-
+    // truncation latch fires (see touchdown-awareness block in update()),
+    // the effective stance height is briefly shortened by a small offset so
+    // both legs flex slightly and absorb the touchdown impulse, then the
+    // offset decays smoothly back to zero. Transient and self-clearing — no
+    // persistent posture bias, no force-control loop, no new sensing.
+    //
+    // This reuses the existing touchdown event verbatim: compliance fires
+    // from the same `if (imp.detected)` branch that sets the latch. It does
+    // NOT add a detection path of its own.
+    //
+    //   complianceEnabled — master enable. Default ON. Toggle OFF for A/B
+    //                       baseline runs.
+    //   complianceDepthMm — magnitude of the (negative) stance-height offset
+    //                       applied at the event, in mm. Applied as -depth.
+    //   complianceDecayMs — time over which the offset smoothsteps back to
+    //                       zero after the event.
+    bool     complianceEnabled = GAIT_TD_COMPLIANCE_ENABLED_DEFAULT;  // WS: "enabled"
+    float    complianceDepthMm = GAIT_TD_COMPLIANCE_DEPTH_MM_DEFAULT; // WS: "depthMm"
+    uint32_t complianceDecayMs = GAIT_TD_COMPLIANCE_DECAY_MS_DEFAULT; // WS: "decayMs"
 };
 
 // ---------------------------------------------------------------------------
@@ -297,6 +340,11 @@ struct GaitState {
     //   gateComLateralOK: |comLateralMm * expectedSign| >= comLateralGateMm.
     float comLateralMm     = 0.0f;
     bool  gateComLateralOK = false;
+
+    // W2 — lateral CoM trim actually applied to each foot's y_mm this tick
+    // (signed magnitude; the per-leg sign flip happens in _buildFootTarget).
+    // Zero when comLatTrimEnabled is false, IMU invalid, or estopped.
+    float comLatTrimMm     = 0.0f;
 
     // Stage 1 IK telemetry. Updated each tick by _submitFootTargetIK().
     uint8_t      lastIKStatusL = 0;   // IKStatus enum value
@@ -359,6 +407,19 @@ struct GaitState {
     uint8_t touchdownSide      = 0;
     bool    touchdownLocked    = false;
 
+    // ------------------------------------------------------------------
+    // W4 — Touchdown-compliance telemetry. Telemetry-only — the control
+    // stack reads the private _complianceOffsetMm member, not these.
+    //
+    //   complianceActive    true while a compliance event is decaying
+    //                        (offset non-zero this tick).
+    //   complianceOffsetMm  signed stance-height offset applied this tick
+    //                        (<= 0). Added to BOTH legs' h_sagittal_mm in
+    //                        _buildFootTarget. 0 when no event is active.
+    // ------------------------------------------------------------------
+    bool    complianceActive   = false;
+    float   complianceOffsetMm = 0.0f;
+
 };
 
 // ---------------------------------------------------------------------------
@@ -402,6 +463,11 @@ public:
     GaitConfig       getConfig() const          { return _cfg; }
     void             setConfig(const GaitConfig& cfg) { _cfg = cfg; }
     const GaitState& getState()  const          { return _state; }
+
+    // NOTE: servo-neutral drift compensation is NOT a gait concern. It lives
+    // in JointModel as a runtime session trim on the joint↔servo conversion,
+    // so every command source (UI / gait / balance / recovery) inherits it
+    // through one path. See JointModel::captureSessionNeutral().
 
     // Wire swing-foot leveler. Call once in setup() after leveler.init().
     // When wired, _submitFootTargetIK applies leveler bias on the swing leg.
@@ -504,6 +570,37 @@ private:
     // semantics tight.
     void _clearTouchdownLatch();
 
+    // -----------------------------------------------------------------------
+    // W4 — Touchdown-compliance event state.
+    //
+    // The applied offset is recomputed every tick from the time elapsed
+    // since the triggering event, so only the start timestamp + active flag
+    // are stored. Deliberately INDEPENDENT of the touchdown latch (separate
+    // timer, not cleared by _clearTouchdownLatch()) so the offset keeps
+    // decaying smoothly across the half-cycle boundary instead of snapping
+    // to zero when the next swing begins.
+    //
+    //   _complianceStartMs   millis() at the triggering event.
+    //   _complianceOffsetMm  cached offset for this tick (<= 0). Read by the
+    //                        const _buildFootTarget(); recomputed by
+    //                        _updateCompliance().
+    //   _complianceActive    true while the decay is in progress.
+    // -----------------------------------------------------------------------
+    uint32_t _complianceStartMs  = 0;
+    float    _complianceOffsetMm = 0.0f;
+    bool     _complianceActive   = false;
+
+    // Recompute the touchdown-compliance stance-height offset for this tick.
+    // Smoothstep decay from -complianceDepthMm to 0 over complianceDecayMs;
+    // self-clears once the decay window elapses. Updates _complianceOffsetMm
+    // and the GaitState telemetry mirror. Call once per tick in update().
+    void _updateCompliance();
+
+    // Zero the compliance event state + telemetry mirror. Call on mode entry
+    // (start), init, and recovery entry — NOT at half-cycle boundaries, where
+    // the offset must be allowed to keep decaying.
+    void _resetCompliance();
+
     void _enterRcvSub(RecoverySubState s);
     // imuState required by COMPLETE case to decide whether to chain a second step.
     void _runRecoveryStep(float dt_s, const IMUState& imuState);
@@ -547,6 +644,23 @@ private:
     //  IK status path — this function is intentionally pure-math.
     // -----------------------------------------------------------------------
     float _captureOffsetMm() const;
+
+    // -----------------------------------------------------------------------
+    //  _comLateralTrimMm — W2 continuous lateral CoM foot-placement trim.
+    //
+    //  Returns the signed mm trim to add to each foot's y_mm. Sign convention:
+    //    CoM displaced to robot-right (comLateral > 0) → positive return →
+    //    right foot abducts (+y), left foot adducts (-y) in _buildFootTarget
+    //    → body translates right over the feet (feet track under the CoM).
+    //
+    //  Returns 0 when comLatTrimEnabled is false, the controller is IDLE, the
+    //  IMU is invalid, or estopped. The IDLE gate keeps the trim from layering
+    //  a static lateral offset over the idle pose; the STOPPING ramp is faded
+    //  separately by strideScale in _buildFootTarget(). Computed from
+    //  _lastImuState (not _state.comLateralMm), so it is consistent on every
+    //  _buildFootTarget path. Intentionally pure-math.
+    // -----------------------------------------------------------------------
+    float _comLateralTrimMm() const;
 
     // Build the FootTarget for one leg this tick.
     //   Stance leg: y_mm=0, x_mm=0, h_sagittal_mm = stanceHeightMm.

@@ -39,7 +39,24 @@
 //    - setAbsoluteAngle() / getAbsoluteAngle() are the bridge.
 //
 //  Conversion (from joint_config.h):
-//    servoAngle = neutralDeg + direction × jointAngle
+//    servoAngle = effectiveNeutral + direction × jointAngle
+//
+//  FACTORY NEUTRAL vs. RUNTIME SESSION TRIM
+//  ─────────────────────────────────────────
+//    factory neutral  : JOINT_CONFIG[ch].neutralDeg — the immutable
+//                       compile-time calibration constant. Never written
+//                       at runtime.
+//    session trim     : _sessionTrimDeg[ch] — a per-joint runtime offset
+//                       (servo degrees), zero at boot, that compensates
+//                       servo-neutral drift between power cycles. Set by
+//                       captureSessionNeutral(); not persisted.
+//    effective neutral: factory neutral + session trim. This is what the
+//                       conversion above actually uses.
+//
+//  The trim lives here because JointModel is the single joint↔servo
+//  conversion boundary — applying it in jointAngleToPulse() and its inverse
+//  means every command source (UI, gait, balance, recovery, IK) inherits
+//  the correction through one code path, with no controller-local offsets.
 //
 //  SMOOTH STEPPING
 //  ───────────────
@@ -107,6 +124,33 @@ public:
     int   getServoPulse(uint8_t jointId) const;
 
     // =========================================================================
+    //  RUNTIME SESSION NEUTRAL TRIM  —  servo-drift compensation
+    // =========================================================================
+    //  A per-joint runtime offset (servo degrees) added to the factory neutral
+    //  at the joint↔servo conversion. Compensates servo-neutral drift between
+    //  power cycles WITHOUT mutating the JOINT_CONFIG calibration constants.
+    //  Every command source inherits it automatically. Session-scoped — zero
+    //  at boot, not persisted across reboots.
+
+    // Snapshot the current commanded pose as the new neutral: for each joint,
+    // sets trim = (current commanded servo angle − factory neutral), so the
+    // present physical pose becomes jointAngle 0. No servo motion — it is a
+    // pure reference-frame redefinition. Rejected (returns false, trim
+    // untouched) if any joint is further than NEUTRAL_TRIM_MAX_DEG from its
+    // factory neutral — a guard against capturing a non-neutral pose.
+    // Caller must ensure no controller is actively driving the joints.
+    bool  captureSessionNeutral();
+
+    // Zero every joint's session trim — revert to pure factory neutral.
+    void  clearSessionNeutral();
+
+    // Session-trim queries (telemetry / UI).
+    float getSessionTrim(uint8_t jointId)     const;  // signed servo-deg, one joint
+    float getEffectiveNeutralDeg(uint8_t jointId) const;  // factory neutral + trim
+    bool  hasSessionTrim()    const;  // true if any joint's trim is non-zero
+    float maxSessionTrimDeg() const;  // largest |trim| across all joints
+
+    // =========================================================================
     //  SMOOTH STEPPING LOOP  —  call once per loop()
     // =========================================================================
 
@@ -157,18 +201,30 @@ private:
 
     unsigned long _lastUpdateMs;  // For rate limiting in update()
 
+    // Per-joint runtime session trim (servo degrees). effectiveNeutral =
+    // JOINT_CONFIG[ch].neutralDeg + _sessionTrimDeg[ch]. Zero at boot; set
+    // only by captureSessionNeutral() / cleared by clearSessionNeutral().
+    // See the factory-vs-runtime block at the top of this file.
+    float _sessionTrimDeg[NUM_JOINTS];
+
     // -------------------------------------------------------------------------
-    //  Private helpers  (all static — they depend only on JOINT_CONFIG data)
+    //  Private helpers
+    //
+    //  clampToLimits is static — it depends only on JOINT_CONFIG limit fields.
+    //  jointAngleToPulse / absoluteDegToJointAngle are instance methods: they
+    //  read _sessionTrimDeg so the conversion uses the effective neutral.
     // -------------------------------------------------------------------------
 
     // Clamp angleDeg to the joint's configured [minAngle, maxAngle].
     static float clampToLimits(uint8_t jointId, float angleDeg);
 
     // Full pipeline: joint angle → safe servo angle → pulse.
-    static int   jointAngleToPulse(uint8_t jointId, float angleDeg);
+    // Uses effectiveNeutral (factory neutral + session trim).
+    int   jointAngleToPulse(uint8_t jointId, float angleDeg) const;
 
     // Inverse: absolute servo degrees → joint-relative degrees.
-    static float absoluteDegToJointAngle(uint8_t jointId, float absoluteDeg);
+    // Uses effectiveNeutral — the exact inverse of jointAngleToPulse's step 1.
+    float absoluteDegToJointAngle(uint8_t jointId, float absoluteDeg) const;
 };
 
 #endif // JOINT_MODEL_H

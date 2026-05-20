@@ -1330,6 +1330,9 @@
             <button class="btn-gait-step" id="btnGaitCapToggle" onclick="toggleCapture()">
                 Capture: OFF
             </button>
+            <button class="btn-gait-step" id="btnGaitLatTrimToggle" onclick="toggleLatTrim()">
+                Lat Trim: ON
+            </button>
             <button class="btn-gait-step"  onclick="sendCmd('TORSO_TARE')">🎯 Torso Tare</button>
             <button class="btn-gait-step"  onclick="sendCmd('GAIT_STEP')">↷ Single Step</button>
             <button class="btn-gait-wshift" onclick="sendCmd('GAIT_WSHIFT')">⇆ W-Shift Only</button>
@@ -1408,6 +1411,10 @@
                 <div class="bal-out-lbl">Capture (mm)</div>
                 <div class="bal-out-val" id="gaitTelemCapture">0.0</div>
             </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Lat trim (mm)</div>
+                <div class="bal-out-val" id="gaitTelemLatTrim">0.0</div>
+            </div>
         </div>
 
         <!-- Touchdown-awareness panel (Stage 0/1).
@@ -1453,6 +1460,86 @@
                     Detector events below this _halfPhase are ignored (treated as mid-swing noise).
                     Lower → more permissive (catches early touchdowns). Higher → stricter.
                 </div>
+            </div>
+        </div>
+
+        <!-- Touchdown-compliance panel (W4).
+             Reuses the touchdown event: on an early-contact latch, both legs
+             flex a few mm to absorb the landing impulse, then recover smoothly.
+             Own section so the knobs stay discoverable. -->
+        <div class="panel-subtitle-divider">
+            Touchdown compliance (W4)
+            <span id="cmpEnBadge" class="gait-mode-badge gait-mode-run" style="margin-left:8px;">ENABLED</span>
+        </div>
+        <div class="gait-btn-row">
+            <button class="btn-gait-step" id="btnComplianceToggle" onclick="toggleCompliance()">
+                Compliance: ON
+            </button>
+        </div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Compliance state</div>
+                <div class="bal-out-val" id="cmpActiveCell">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Active offset (mm)</div>
+                <div class="bal-out-val" id="cmpOffsetCell">0.00</div>
+            </div>
+        </div>
+        <div class="gait-tune-grid">
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Compliance depth (mm)</span>
+                    <span class="tune-val" id="tvComplianceDepth">4.0</span>
+                </div>
+                <input type="range" id="slComplianceDepth" min="0" max="15" step="0.5" value="4"
+                       oninput="updateComplianceLabel('tvComplianceDepth', this.value, 1); sendComplianceKey('depthMm', parseFloat(this.value).toFixed(1))">
+                <div class="small-note">
+                    Stance-height yield applied at touchdown. Start small (3–5 mm).
+                    Raise only after confirming no oscillation.
+                </div>
+            </div>
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Recovery time (ms)</span>
+                    <span class="tune-val" id="tvComplianceDecay">180</span>
+                </div>
+                <input type="range" id="slComplianceDecay" min="20" max="800" step="10" value="180"
+                       oninput="updateComplianceLabel('tvComplianceDecay', this.value, 0); sendComplianceKey('decayMs', parseInt(this.value))">
+                <div class="small-note">
+                    Smoothstep decay window back to nominal height. Too short →
+                    recovery is itself a transient; too long → bleeds into the next step.
+                </div>
+            </div>
+        </div>
+
+        <!-- Runtime session neutral trim — global servo-drift compensation. -->
+        <div class="panel-subtitle-divider">
+            Session neutral trim (servo-drift)
+            <span id="ntActiveBadge" class="gait-mode-badge gait-mode-idle" style="margin-left:8px;">NONE</span>
+        </div>
+        <div class="small-note" style="margin-bottom:8px;">
+            A global runtime correction for servo-neutral drift between power
+            cycles, applied at the joint↔servo conversion — UI, gait, balance and
+            recovery all inherit it. Factory calibration is untouched. Workflow:
+            <b>Reset Pose</b> so the robot sits at neutral, nudge any drooping
+            joints in the Named Movement panel to correct them, then <b>Capture</b>
+            — this redefines the present pose as neutral (no servo motion).
+            Rejected if gait is not IDLE, balance is armed, or a joint is more
+            than 8° off its factory neutral. Not saved across reboots.
+        </div>
+        <div class="gait-btn-row">
+            <button class="btn-gait-step" onclick="captureGaitNeutral()">📌 Capture Gait Neutral</button>
+            <button class="btn-gait-step" onclick="clearGaitNeutral()">Clear</button>
+        </div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Trim state</div>
+                <div class="bal-out-val" id="ntStateCell">none</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Max trim (°)</div>
+                <div class="bal-out-val" id="ntMaxCell">0.00</div>
             </div>
         </div>
 
@@ -1592,6 +1679,46 @@
                        oninput="updateGaitLabel('captureMax', this.value); sendGaitKey('captureMax', this.value)">
                 <div class="small-note">
                     Hard cap on capture offset (mm). Protects IK reach budget.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Swing apex fraction (W1)</span>
+                    <span class="tune-val" id="tvGaitSwingApex">0.20</span>
+                </div>
+                <input type="range" id="slGaitSwingApex" min="0.05" max="0.95" step="0.05" value="0.2"
+                       oninput="updateGaitLabel('swingApex', this.value); sendGaitKey('swingApex', parseFloat(this.value).toFixed(2))">
+                <div class="small-note">
+                    Vertical lift apex time. 0.50 = symmetric. Below 0.50 = faster lift,
+                    slower descent (lower vertical speed into touchdown). Default 0.20 —
+                    hardware testing found the front-loaded apex clearly better.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Lateral CoM trim gain (W2)</span>
+                    <span class="tune-val" id="tvGaitComLatGain">0.30</span>
+                </div>
+                <input type="range" id="slGaitComLatGain" min="0.0" max="1.5" step="0.05" value="0.3"
+                       oninput="updateGaitLabel('comLatGain', this.value); sendGaitKey('comLatGain', parseFloat(this.value).toFixed(2))">
+                <div class="small-note">
+                    mm of foot trim per mm of observed CoM offset. 0 = no trim.
+                    Start at 0.30; raise toward 0.6 only if IK clamp rate stays flat.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Lateral CoM trim cap (mm)</span>
+                    <span class="tune-val" id="tvGaitComLatMax">25</span>
+                </div>
+                <input type="range" id="slGaitComLatMax" min="0" max="40" step="1" value="25"
+                       oninput="updateGaitLabel('comLatMax', this.value); sendGaitKey('comLatMax', this.value)">
+                <div class="small-note">
+                    Per-tick cap on the lateral trim. Bounds a noisy-IMU spike from
+                    over-driving the feet. Toggle the trim with the Lat Trim button.
                 </div>
             </div>
 
@@ -2378,6 +2505,9 @@ function initWebSocket() {
         else if (msg.startsWith("GAIT_INFO:")) {
             // Legacy format — kept for backward compat; no-op in Phase 1.
         }
+        else if (msg.startsWith("NEUTRAL_TRIM:")) {
+            parseNeutralTrim(msg.substring(13));
+        }
         else if (msg.startsWith("GAIT:")) {
             parseGaitState(msg.substring(5));
         }
@@ -3108,6 +3238,9 @@ const _gaitTuneMap = {
     stepLen:    { el: "tvGaitStepLen",  decimals: 0 },
     captureGain: { el: "tvGaitCapGain", decimals: 2 },
     captureMax:  { el: "tvGaitCapMax",  decimals: 0 },
+    swingApex:   { el: "tvGaitSwingApex",  decimals: 2 },
+    comLatGain:  { el: "tvGaitComLatGain", decimals: 2 },
+    comLatMax:   { el: "tvGaitComLatMax",  decimals: 0 },
     comLatGate: { el: "tvGaitComLatGate", decimals: 1 },
     torsoNeutralRoll:  { el: "tvGaitTorsoNeutralRoll",  decimals: 3 },
     torsoNeutralPitch: { el: "tvGaitTorsoNeutralPitch", decimals: 3 },
@@ -3139,6 +3272,51 @@ function toggleCapture() {
     // Button text syncs from broadcast — see parseGaitState extension below.
 }
 
+// Runtime session neutral trim — global servo-drift compensation, applied by
+// JointModel at the joint↔servo conversion. Capture snapshots the current
+// commanded pose as the new neutral; the firmware rejects it (NEUTRAL_TRIM:
+// ok=0) if gait is not IDLE, balance is armed, or a joint sits more than 8°
+// off its factory neutral. Status syncs from the GAIT: broadcast.
+function captureGaitNeutral() {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send('CMD:CAPTURE_NEUTRAL');
+}
+function clearGaitNeutral() {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send('CMD:CLEAR_NEUTRAL');
+}
+function _applyNeutralTrimStatus(active, maxDeg) {
+    const badge = document.getElementById("ntActiveBadge");
+    if (badge) {
+        badge.textContent = active ? "ACTIVE" : "NONE";
+        badge.className = "gait-mode-badge " + (active ? "gait-mode-run" : "gait-mode-idle");
+    }
+    const st = document.getElementById("ntStateCell");
+    if (st) st.textContent = active ? "active" : "none";
+    const mx = document.getElementById("ntMaxCell");
+    if (mx) mx.textContent = maxDeg.toFixed(2);
+}
+function parseNeutralTrim(payload) {
+    const v = {};
+    payload.split(",").forEach(p => { const kv = p.split("="); v[kv[0]] = kv[1]; });
+    const ok = (v["ok"] === "1");
+    if (!ok) {
+        alert("Neutral capture rejected.\n\nGait must be IDLE, balance disarmed, "
+            + "and every joint within 8° of its factory neutral. Reset the pose "
+            + "to neutral, nudge joints to correct drift, then capture.");
+    }
+    _applyNeutralTrimStatus(v["active"] === "1", parseFloat(v["max"] || "0"));
+}
+
+// W2 — continuous lateral CoM trim master toggle. Default ON in firmware;
+// this only flips it for A/B baseline measurements. Button text syncs from
+// the GAIT: broadcast (comLatTrim field).
+function toggleLatTrim() {
+    const btn = document.getElementById('btnGaitLatTrimToggle');
+    const enable = btn && btn.textContent.indexOf('OFF') !== -1;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(`CMD:GAIT_TUNE:comLatTrim=${enable ? 1 : 0}`);
+    }
+}
+
 // Touchdown-awareness controls (Stage 0/1).
 // Master enable toggle and gate-phase slider live on their own command
 // (CMD:TOUCHDOWN_TUNE) so the policy knob stays discoverable.
@@ -3164,6 +3342,30 @@ function updateTouchdownLabel(rawVal) {
     _setTuneActive();
     const el = document.getElementById("tvTouchdownGate");
     if (el) el.textContent = parseFloat(rawVal).toFixed(2);
+}
+
+// Touchdown-compliance controls (W4). Master enable + depth/decay knobs live
+// on their own command (CMD:COMPLIANCE_TUNE) so they stay discoverable.
+function toggleCompliance() {
+    const btn = document.getElementById('btnComplianceToggle');
+    const enable = btn && btn.textContent.indexOf('OFF') !== -1;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(`CMD:COMPLIANCE_TUNE:enabled=${enable ? 1 : 0}`);
+    }
+}
+
+function sendComplianceKey(key, val) {
+    _setTuneActive();
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const msg = `CMD:COMPLIANCE_TUNE:${key}=${val}`;
+    ws.send(msg);
+    console.log("[WS TX]", msg);
+}
+
+function updateComplianceLabel(elId, rawVal, decimals) {
+    _setTuneActive();
+    const el = document.getElementById(elId);
+    if (el) el.textContent = parseFloat(rawVal).toFixed(decimals);
 }
 
 function setGateMode(mode) {
@@ -3340,6 +3542,17 @@ function parseGaitState(payload) {
 
     set("gaitTelemCapture", capOffset.toFixed(1));
 
+    // W2 — lateral CoM trim toggle + live applied trim.
+    const latTrimEn = (v["comLatTrim"] === "1");
+    const latTrimMm = parseFloat(v["comLatTrimMm"] || "0");
+    const ltBtn = document.getElementById('btnGaitLatTrimToggle');
+    if (ltBtn) {
+        ltBtn.textContent = latTrimEn
+            ? `Lat Trim: ON (${latTrimMm.toFixed(1)}mm)` : "Lat Trim: OFF";
+        ltBtn.style.background = latTrimEn ? "#1565c0" : "#e65100";
+    }
+    set("gaitTelemLatTrim", latTrimMm.toFixed(1));
+
     if (!_tuneActive) {
         _syncSlider("slGaitCapGain", "tvGaitCapGain", capGain, 2);
     }
@@ -3383,6 +3596,15 @@ function parseGaitState(payload) {
             _syncSlider("slLvlKpPitch", "tvLvlKpPitch", parseFloat(v["lvl_kpP"]), 0);
         if (v["lvl_kpR"] !== undefined)
             _syncSlider("slLvlKpRoll",  "tvLvlKpRoll",  parseFloat(v["lvl_kpR"]), 0);
+
+        // W1 / W2 — swing-apex and lateral-trim sliders. Optional-chained so
+        // an un-reflashed firmware leaves them at their last-known value.
+        if (v["swingApex"] !== undefined)
+            _syncSlider("slGaitSwingApex", "tvGaitSwingApex", parseFloat(v["swingApex"]), 2);
+        if (v["comLatGain"] !== undefined)
+            _syncSlider("slGaitComLatGain", "tvGaitComLatGain", parseFloat(v["comLatGain"]), 2);
+        if (v["comLatMax"] !== undefined)
+            _syncSlider("slGaitComLatMax", "tvGaitComLatMax", parseFloat(v["comLatMax"]), 0);
     }
 
     // Swing-foot leveler L0 telemetry
@@ -3478,6 +3700,51 @@ function parseGaitState(payload) {
         if (!_tuneActive) {
             _syncSlider("slTouchdownGate", "tvTouchdownGate", tdGate, 2);
         }
+    }
+
+    // Touchdown-compliance panel (W4).
+    // Fields: cmpEn (config), cmpDepth (config), cmpDecay (config),
+    //         cmpOff (live offset this tick), cmpAct (decay in progress).
+    {
+        const cmpEn    = (v["cmpEn"]  === "1");
+        const cmpAct   = (v["cmpAct"] === "1");
+        const cmpOff   = parseFloat(v["cmpOff"]   || "0");
+        const cmpDepth = parseFloat(v["cmpDepth"] || "4");
+        const cmpDecay = parseFloat(v["cmpDecay"] || "180");
+
+        const enBadge = document.getElementById("cmpEnBadge");
+        if (enBadge) {
+            enBadge.textContent = cmpEn ? "ENABLED" : "DISABLED";
+            enBadge.className   = "gait-mode-badge " + (cmpEn ? "gait-mode-run" : "gait-mode-idle");
+        }
+        const cmpBtn = document.getElementById("btnComplianceToggle");
+        if (cmpBtn) {
+            cmpBtn.textContent = cmpEn ? "Compliance: ON" : "Compliance: OFF";
+            cmpBtn.style.background = cmpEn ? "#1565c0" : "#e65100";
+        }
+
+        // Active-state indicator + live offset.
+        const actEl = document.getElementById("cmpActiveCell");
+        if (actEl) {
+            actEl.textContent = cmpAct ? "YIELDING" : "—";
+            actEl.style.color = cmpAct ? "#ffc107" : "#888";
+        }
+        const offEl = document.getElementById("cmpOffsetCell");
+        if (offEl) {
+            offEl.textContent = cmpOff.toFixed(2);
+            offEl.style.color = cmpAct ? "#ffc107" : "#888";
+        }
+
+        // Depth / decay slider sync (guarded while user is dragging).
+        if (!_tuneActive) {
+            _syncSlider("slComplianceDepth", "tvComplianceDepth", cmpDepth, 1);
+            _syncSlider("slComplianceDecay", "tvComplianceDecay", cmpDecay, 0);
+        }
+    }
+
+    // Session neutral-trim status (continuous sync from the GAIT: broadcast).
+    if (v["ntActive"] !== undefined) {
+        _applyNeutralTrimStatus(v["ntActive"] === "1", parseFloat(v["ntMax"] || "0"));
     }
 }
 

@@ -60,7 +60,7 @@ constexpr float GAIT_PHASE_RATE_HZ          = 0.50f;  // cycles/sec
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
 // If drag returns at 15 mm, the root cause is the gate, not step height.
-constexpr float GAIT_STEP_HEIGHT_MM         = 12.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 10.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 30.0f;  // Phase 3+; forward stride
 
@@ -83,9 +83,9 @@ constexpr float NEUTRAL_TRIM_MAX_DEG = 8.0f;
 // value. Clamped to [0.05, 0.95] in _swingFrac().
 //
 // TUNING NOTE 2026-05-20: hardware testing found a strongly front-loaded
-// apex (0.2) noticeably better than the symmetric 0.5 — the long, slow
-// descent visibly reduces touchdown disturbance. Default lowered 0.5 → 0.2.
-constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.2f;
+// apex (0.1) noticeably better than the symmetric 0.5 — the long, slow
+// descent visibly reduces touchdown disturbance. Default lowered 0.5 → 0.1.
+constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.10f;
 
 // TUNING NOTE: Reduced from 0.15 (~8.5°) → 0.10 (~5.7°). The previous value
 // was chosen conservatively for Phase 2 diagnostics. At 0.10 rad the gate opens
@@ -174,8 +174,37 @@ constexpr float GAIT_COM_LATERAL_GATE_MM_DEFAULT = 11.0f;
 // 0.30 corrects ~1/3 of a steady observed displacement. Start conservative;
 // raise toward 0.6 only after confirming the IK clamp rate does not rise.
 // The cap bounds a noisy-IMU spike from over-driving the feet in one tick.
-constexpr float GAIT_COM_LAT_TRIM_GAIN_DEFAULT   = 0.50f;
-constexpr float GAIT_COM_LAT_TRIM_MAX_MM_DEFAULT = 25.0f;
+constexpr float GAIT_COM_LAT_TRIM_GAIN_DEFAULT   = 0.40f;
+constexpr float GAIT_COM_LAT_TRIM_MAX_MM_DEFAULT = 20.0f;
+
+// ------------------------------------------------------------
+// W5 — velocity-damping extension of the lateral CoM trim.
+// ------------------------------------------------------------
+// The W2 trim above is displacement-only (a position term, Kp). W5 adds a
+// velocity-damping term (Kd): the filtered torso roll RATE is converted to a
+// lateral CoM velocity (H_COM_MM * rollRate_filt, units mm/s) and scaled by
+// comLatTrimKd to produce extra foot trim. Final trim, before the cap:
+//
+//   trim = comLatDisp * comLatTrimGain      (W2 — displacement / Kp)
+//        + comLatVel  * comLatTrimKd        (W5 — velocity     / Kd)
+//
+// comLatTrimKd units: mm of foot trim per (mm/s) of CoM velocity = seconds.
+// DEFAULT 0.0 — W5 is INERT until tuned, so out of the box the trim is
+// bit-identical to W2. Raise in small steps (try 0.02 .. 0.15 s) and stop
+// at the first sign of servo buzz or new oscillation.
+//
+// The roll rate is low-pass filtered before the Kd term uses it: raw BMI160
+// rollRate carries high-frequency gyro hiss that a Kd term would amplify
+// straight into the servos. Alpha is the IIR retention factor:
+//
+//   rollRate_filt = alpha * rollRate_filt + (1 - alpha) * rollRate
+//
+// alpha = 0.0  → no filtering (raw rate, noisy).
+// alpha → 1.0  → heavy smoothing (quiet, but more phase lag → less damping).
+// DEFAULT 0.70 — moderate smoothing: kills hiss while keeping enough
+// bandwidth for the damping to act at stepping cadence.
+constexpr float GAIT_COM_LAT_TRIM_KD_DEFAULT     = 0.01f;
+constexpr float GAIT_COM_LAT_TRIM_RATE_LPF_ALPHA = 0.70f;
 
 // ============================================================
 // CAPTURE-POINT — Stage 2.2 (sagittal only)
@@ -343,6 +372,30 @@ constexpr uint32_t FOOT_IMPACT_REFRACTORY_MS_DEFAULT = 75;
 constexpr bool     GAIT_TD_COMPLIANCE_ENABLED_DEFAULT  = true;
 constexpr float    GAIT_TD_COMPLIANCE_DEPTH_MM_DEFAULT = 4.0f;   // mm of yield
 constexpr uint32_t GAIT_TD_COMPLIANCE_DECAY_MS_DEFAULT = 200;    // recovery time
+
+// ============================================================
+// TOUCHDOWN TRIM SUPPRESSION  (phase-gate of the W2/W5 lateral trim)
+// ============================================================
+// The W2/W5 lateral CoM trim (_comLateralTrimMm) is driven by torso roll. At
+// touchdown the foot-strike injects a short roll transient into the IMU that
+// is NOT a real CoM excursion — feeding it into the trim makes the support
+// polygon chase a phantom. This suppression freezes (or zeroes) the trim while
+// the touchdown latch is held, and for a short hold window afterward, so the
+// transient never reaches the foot-placement correction.
+//
+//   ENABLED_DEFAULT — master enable. Default ON: the transient leak is real
+//                     and the suppression is conservative (it only ever
+//                     reduces trim authority during the touchdown window).
+//   HOLD_MS_DEFAULT — ms the suppression extends past the moment the latch
+//                     clears, so the post-strike roll ring-down is also
+//                     rejected. 60 ms ≈ a few control ticks past _advanceHalf.
+//   FREEZE_DEFAULT  — suppression mode. true = freeze the trim at its last
+//                     clean (pre-touchdown) value; false = force trim to 0.
+//                     Default true (freeze): holds the correction the robot
+//                     already needs instead of introducing a step to zero.
+constexpr bool     GAIT_TD_TRIM_SUPPRESS_ENABLED_DEFAULT = true;
+constexpr uint32_t GAIT_TD_TRIM_HOLD_MS_DEFAULT          = 60;   // post-latch hold
+constexpr bool     GAIT_TD_TRIM_FREEZE_DEFAULT           = true; // freeze vs. zero
 
 // ============================================================
 // SWING-FOOT LEVELER (Section 14)

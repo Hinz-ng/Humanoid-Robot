@@ -63,12 +63,12 @@ struct WeightShiftConfig {
     // SOURCE_GAIT. Set ankle_roll_ratio=0 in BalanceConfig to prevent the
     // balance loop from fighting its own baseline. 15.5 deg is the post-tuning
     // working default; override via WEIGHT_SHIFT_TUNE:ankle=...
-    float ankle_shift_deg = 14.5f;
+    float ankle_shift_deg = 15.0f;
     
     // TASK-2: Phase delay between swing and stance ankle ramps (ms).
     // Swing ankle starts immediately; stance starts after this delay.
     // Set to 0 for simultaneous ramp (disables phasing).
-    float shift_phase_delay_ms = 500.0f;
+    float shift_phase_delay_ms = 100.0f;
 
     // Stage 2: Body lateral shift (mm) at progress = ±1.
     // SIGN CONVENTION (current default is negative — adduction strategy):
@@ -84,12 +84,12 @@ struct WeightShiftConfig {
     // TUNING NOTE: Increased magnitude from -10 → -15 mm. More CoM transfer
     // means more weight on the stance leg at gate-open time, reducing drag risk.
     // If the robot leans excessively to one side, reduce toward -12 mm.
-    float lateral_shift_mm = -20.50f;
+    float lateral_shift_mm = -20.0f;
 
     // Stage 2: Body forward shift (mm) at |progress| = 1. Replaces ankle_pitch_tilt_deg.
     // Both feet receive an x_mm offset of -|progress| × forward_lean_mm so the foot
     // sits behind the hip pitch axis when the body leans forward. 0 = disabled.
-    float forward_lean_mm = 5.0f;
+    float forward_lean_mm = 1.0f;
 
     // IIR smoothing factor for the forward-lean ramp (was ankle_tilt_smooth_alpha).
     // Applied as: smoothed = alpha*smoothed + (1-alpha)*raw. The lateral path uses
@@ -106,11 +106,11 @@ struct WeightShiftConfig {
     // more time to execute the commanded bias under load. The IMU gate blocks
     // foot lift regardless of ramp completion, so a longer ramp here only costs
     // per-step time, not stability. Reduce back toward 500 after first stable steps.
-    float ramp_ms = 400.0f;
+    float ramp_ms = 450.0f;
 
     // Minimum dwell at progress = ±1 before an opposite-direction trigger is
     // honoured. 0 disables the gate (legacy behaviour).
-    float min_dwell_ms = 250.0f;
+    float min_dwell_ms = 300.0f;
 };
 
 // ---------------------------------------------------------------------------

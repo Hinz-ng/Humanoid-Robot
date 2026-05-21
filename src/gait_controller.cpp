@@ -126,6 +126,69 @@ void GaitController::_updateCompliance() {
 }
 
 // ---------------------------------------------------------------------------
+//  _resetTrimSuppression — zero the touchdown trim-suppression state.
+//
+//  Called on mode entry (start) and init. NOT called at half-cycle
+//  boundaries: the post-latch hold window must be allowed to keep running
+//  across _advanceHalf so the post-strike roll ring-down is still rejected.
+// ---------------------------------------------------------------------------
+void GaitController::_resetTrimSuppression() {
+    _trimSuppressUntilMs      = 0;
+    _trimSuppressActive       = false;
+    _trimLastValidMm          = 0.0f;
+    _state.trimSuppressActive = false;
+}
+
+// ---------------------------------------------------------------------------
+//  _updateTrimSuppression — per-tick phase-gate of the W2/W5 lateral trim.
+//
+//  The foot-strike at touchdown injects a short torso-roll transient that is
+//  not a real CoM excursion. This decides, once per tick, whether the lateral
+//  trim should be suppressed so that transient never reaches _buildFootTarget.
+//
+//  Window: open while the touchdown latch is held, and for touchdownTrimHoldMs
+//  after it clears (the deadline is refreshed every latched tick, so the hold
+//  always measures from the LAST latched tick). millis() wrap is handled by
+//  the signed-difference comparison.
+//
+//  Freeze snapshot: whenever suppression is NOT active, _trimLastValidMm is
+//  refreshed with the current raw trim, so the value held during the next
+//  suppression episode is the most recent clean (pre-touchdown) trim.
+//
+//  Must run once per update(), before the trim telemetry mirror and before
+//  any _buildFootTarget() call — _comLateralTrimMm() only reads the result.
+//  Reads _touchdownLocked as of the previous tick (the latch is set later in
+//  update()); the one-tick lag is covered by the hold window and is the same
+//  staleness contract as _publishSwingLegMaskToWS().
+// ---------------------------------------------------------------------------
+void GaitController::_updateTrimSuppression() {
+    const uint32_t now = millis();
+
+    // Refresh the post-latch deadline every tick the latch is held.
+    if (_touchdownLocked) {
+        _trimSuppressUntilMs = now + _cfg.touchdownTrimHoldMs;
+    }
+
+    // Window open while latched OR still inside the post-latch hold span.
+    // The signed cast makes the comparison wrap-safe.
+    const bool windowOpen = _touchdownLocked
+                          || (int32_t)(_trimSuppressUntilMs - now) > 0;
+
+    // Suppression is a no-op unless the trim is actually live this tick —
+    // gating it on _comLatTrimActive() keeps the freeze snapshot meaningful.
+    _trimSuppressActive = _cfg.touchdownTrimSuppressEnabled
+                        && _comLatTrimActive()
+                        && windowOpen;
+
+    // Outside the window, keep the freeze snapshot tracking the clean trim.
+    if (!_trimSuppressActive) {
+        _trimLastValidMm = _comLateralTrimRawMm();
+    }
+
+    _state.trimSuppressActive = _trimSuppressActive;
+}
+
+// ---------------------------------------------------------------------------
 void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController* bal) {
     if (mm == nullptr) {
         Serial.println("[GaitCtrl] ERROR: MotionManager null — update() will no-op.");
@@ -147,6 +210,7 @@ void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController*
     _gateOkSinceMs    = 0;
     _clearTouchdownLatch();
     _resetCompliance();
+    _resetTrimSuppression();
     _state.touchdownSide = 0;   // not cleared by _clearTouchdownLatch; explicit on init
     Serial.println("[GaitCtrl] Initialized.");
 }
@@ -194,6 +258,7 @@ void GaitController::start(GaitMode mode) {
         _state.cycleXDispl_mm = 0.0f;
         _clearTouchdownLatch();
         _resetCompliance();
+        _resetTrimSuppression();
         if (_ws) _ws->trigger(ShiftDirection::NONE);
         Serial.println("[GaitCtrl] IDLE — weight shift centered.");
         return;
@@ -215,6 +280,7 @@ void GaitController::start(GaitMode mode) {
     _gateOkSinceMs    = 0;
     _clearTouchdownLatch();
     _resetCompliance();
+    _resetTrimSuppression();
     _triggerShiftForSwing(Side::LEFT);  // begin LEFT-swing shift immediately
 
     Serial.printf("[GaitCtrl] start mode=%d\n", static_cast<int>(mode));
@@ -308,23 +374,82 @@ float GaitController::_swingFrac(float localPhase) const {
 }
 
 // ---------------------------------------------------------------------------
-//  _comLateralTrimMm — W2 continuous lateral CoM foot-placement trim.
-//  See header for the sign convention and gating rationale.
+//  _updateRollRateFilter — W5: advance the roll-rate LPF by one tick.
+//
+//  Single-pole IIR:  filt = alpha*filt + (1-alpha)*rollRate.
+//  alpha is clamped to [0, 0.99]: 0 = pass-through, 0.99 = near-frozen. The
+//  filter is zeroed on an invalid IMU so a stale rate from before a dropout
+//  cannot re-enter the Kd term once the IMU comes back.
+//
+//  Must run exactly once per update() — see header. The const trim helpers
+//  only READ _rollRateFilt; stepping it here keeps that contract intact.
 // ---------------------------------------------------------------------------
-float GaitController::_comLateralTrimMm() const {
-    if (!_cfg.comLatTrimEnabled)       return 0.0f;
-    // Trim is a gait foot-placement correction — it has no meaning when no
-    // gait is running. Returning 0 in IDLE keeps the idle pose clean and the
-    // telemetry mirror honest. The STOPPING ramp (mode still RUNNING here) is
-    // faded out separately via strideScale in _buildFootTarget().
-    if (_state.mode == GaitMode::IDLE) return 0.0f;
-    if (!_lastImuState.valid)          return 0.0f;
-    if (oe_is_estopped())              return 0.0f;
+void GaitController::_updateRollRateFilter(const IMUState& imuState) {
+    if (!imuState.valid) { _rollRateFilt = 0.0f; return; }
+    const float alpha = constrain(_cfg.comLatTrimRateLpfAlpha, 0.0f, 0.99f);
+    _rollRateFilt = alpha * _rollRateFilt + (1.0f - alpha) * imuState.rollRate;
+}
+
+// ---------------------------------------------------------------------------
+//  _comLatTrimActive — W5: shared gate predicate for the lateral CoM trim.
+//  Trim is a gait foot-placement correction — meaningless when no gait is
+//  running, so IDLE returns false (keeps the idle pose clean). The STOPPING
+//  ramp (mode still RUNNING here) is faded out separately via strideScale in
+//  _buildFootTarget().
+// ---------------------------------------------------------------------------
+bool GaitController::_comLatTrimActive() const {
+    return _cfg.comLatTrimEnabled
+        && _state.mode != GaitMode::IDLE
+        && _lastImuState.valid
+        && !oe_is_estopped();
+}
+
+// ---------------------------------------------------------------------------
+//  _comLatVelTrimMm — W5: velocity (Kd) contribution alone, pre-clamp.
+//  Telemetry only. comLatVel = H_COM_MM * rollRate_filt is the lateral CoM
+//  velocity (mm/s); times comLatTrimKd (s) gives mm of foot trim.
+// ---------------------------------------------------------------------------
+float GaitController::_comLatVelTrimMm() const {
+    if (!_comLatTrimActive()) return 0.0f;
+    const float comLatVel = H_COM_MM * _rollRateFilt;   // mm/s
+    return comLatVel * _cfg.comLatTrimKd;
+}
+
+// ---------------------------------------------------------------------------
+//  _comLateralTrimMm — W2+W5 continuous lateral CoM foot-placement trim.
+//  See header for the sign convention and gating rationale.
+//
+//  W2 (displacement / Kp):  comLatDisp = H_COM_MM * (roll - rollNeutral)
+//  W5 (velocity     / Kd):  comLatVel  = H_COM_MM * rollRate_filt
+//      trim = comLatDisp*comLatTrimGain + comLatVel*comLatTrimKd, then clamped.
+//  comLatTrimKd defaults to 0, so by default this is exactly the W2 trim.
+// ---------------------------------------------------------------------------
+float GaitController::_comLateralTrimRawMm() const {
+    if (!_comLatTrimActive()) return 0.0f;
 
     const float rollCorrected = _lastImuState.roll - _cfg.torsoRollNeutralRad;
-    const float comLat = H_COM_MM * rollCorrected;   // sin(x) ≈ x, small angle
-    const float trim   = comLat * _cfg.comLatTrimGain;
+    const float comLatDisp = H_COM_MM * rollCorrected;   // mm  (sin x ≈ x)
+    const float comLatVel  = H_COM_MM * _rollRateFilt;   // mm/s
+
+    const float dispTrim = comLatDisp * _cfg.comLatTrimGain;  // W2 — Kp term
+    const float velTrim  = comLatVel  * _cfg.comLatTrimKd;    // W5 — Kd term
+    const float trim     = dispTrim + velTrim;
+
     return constrain(trim, -_cfg.comLatTrimMaxMm, +_cfg.comLatTrimMaxMm);
+}
+
+float GaitController::_comLateralTrimMm() const {
+    if (!_comLatTrimActive()) return 0.0f;
+
+    // Touchdown trim suppression. While the suppression window is open (set
+    // once per tick by _updateTrimSuppression), reject the live roll signal —
+    // it carries the foot-strike transient — and instead either hold the last
+    // clean trim (freeze mode) or contribute nothing (zero mode).
+    if (_trimSuppressActive) {
+        return _cfg.touchdownTrimFreezeHold ? _trimLastValidMm : 0.0f;
+    }
+
+    return _comLateralTrimRawMm();
 }
 
 // ---------------------------------------------------------------------------
@@ -645,10 +770,26 @@ void GaitController::update(float dt_s, const IMUState& imuState,
                             const FootContactSnapshot* footSnap) {
     _lastImuState = imuState;
 
-    // W2 telemetry mirror — refresh every tick so the UI sees the live trim
+    // W5 — advance the roll-rate LPF exactly once per tick, BEFORE any trim
+    // helper reads _rollRateFilt. Runs ahead of the estop early-return below
+    // so the filter keeps tracking (and the telemetry stays live) on every
+    // path, the same way _updateCompliance() does.
+    _updateRollRateFilter(imuState);
+
+    // Touchdown trim suppression — decide ONCE per tick whether the W2/W5
+    // lateral trim is gated this tick. Must run after _updateRollRateFilter
+    // (the freeze snapshot reads the raw trim, which uses _rollRateFilt) and
+    // before the trim telemetry mirror + any _buildFootTarget call, so every
+    // _comLateralTrimMm() read this tick sees the same suppression decision.
+    _updateTrimSuppression();
+
+    // W2/W5 telemetry mirror — refresh every tick so the UI sees the live trim
     // on all paths (including IDLE stance refresh, which never reaches the
-    // active-gait telemetry block below).
-    _state.comLatTrimMm = _comLateralTrimMm();
+    // active-gait telemetry block below). comLatTrimMm is the final applied
+    // trim (Kp+Kd, clamped); the other two break out the W5 damping signal.
+    _state.comLatTrimMm       = _comLateralTrimMm();
+    _state.comLatRollRateFilt = _rollRateFilt;
+    _state.comLatTrimVelMm    = _comLatVelTrimMm();
 
     // W4 — decay the touchdown-compliance offset every tick. Placed before
     // the estop early-return so the decay is purely time-based and continues

@@ -199,6 +199,17 @@ struct GaitConfig {
     float comLatTrimGain    = GAIT_COM_LAT_TRIM_GAIN_DEFAULT;   // WS: "comLatGain"
     float comLatTrimMaxMm   = GAIT_COM_LAT_TRIM_MAX_MM_DEFAULT; // WS: "comLatMax"
 
+    // W5 — velocity-damping extension of the lateral CoM trim.
+    //   comLatTrimKd       — Kd: mm of foot trim per (mm/s) of lateral CoM
+    //                        velocity (units = seconds). Default 0 → W5 inert,
+    //                        trim stays bit-identical to displacement-only W2.
+    //   comLatTrimRateLpfAlpha — IIR retention factor for the roll-rate LPF.
+    //                        0 = raw rate (noisy); →1 = heavy smoothing (laggy).
+    //                        The LPF is mandatory — raw gyro rate would feed
+    //                        high-frequency hiss straight into the Kd term.
+    float comLatTrimKd            = GAIT_COM_LAT_TRIM_KD_DEFAULT;     // WS: "comLatKd"
+    float comLatTrimRateLpfAlpha  = GAIT_COM_LAT_TRIM_RATE_LPF_ALPHA; // WS: "comLatRateLpf"
+
     // Stage 2.2 — sagittal capture-point step placement.
     // When enabled, swing leg's stride x_mm is augmented by:
     //   capture_offset = clamp(vx_CoM × inv_omega0 × captureGain,
@@ -283,6 +294,31 @@ struct GaitConfig {
     bool     complianceEnabled = GAIT_TD_COMPLIANCE_ENABLED_DEFAULT;  // WS: "enabled"
     float    complianceDepthMm = GAIT_TD_COMPLIANCE_DEPTH_MM_DEFAULT; // WS: "depthMm"
     uint32_t complianceDecayMs = GAIT_TD_COMPLIANCE_DECAY_MS_DEFAULT; // WS: "decayMs"
+
+    // -----------------------------------------------------------------------
+    // Touchdown trim suppression — phase-gate of the W2/W5 lateral CoM trim.
+    //
+    // The foot-strike at touchdown injects a short torso-roll transient into
+    // the IMU that is not a real CoM excursion. Without gating, it leaks into
+    // _comLateralTrimMm() and the support polygon chases a phantom. When this
+    // suppression is active the trim is held (or zeroed — see freeze flag)
+    // while the touchdown latch is set and for touchdownTrimHoldMs afterward.
+    //
+    //   touchdownTrimSuppressEnabled — master enable. Default ON. Toggle OFF
+    //                       to restore the pre-suppression trim behaviour
+    //                       exactly (A/B baseline).
+    //   touchdownTrimHoldMs — ms the suppression extends past the moment the
+    //                       touchdown latch clears, so the post-strike roll
+    //                       ring-down is rejected too. 0 = suppress only while
+    //                       the latch itself is held.
+    //   touchdownTrimFreezeHold — suppression mode. true = freeze the trim at
+    //                       its last clean (pre-touchdown) value; false =
+    //                       force the trim output to 0 during the window.
+    //                       UI exposes a button to flip this live.
+    // -----------------------------------------------------------------------
+    bool     touchdownTrimSuppressEnabled = GAIT_TD_TRIM_SUPPRESS_ENABLED_DEFAULT;
+    uint32_t touchdownTrimHoldMs          = GAIT_TD_TRIM_HOLD_MS_DEFAULT;
+    bool     touchdownTrimFreezeHold      = GAIT_TD_TRIM_FREEZE_DEFAULT;
 };
 
 // ---------------------------------------------------------------------------
@@ -344,7 +380,21 @@ struct GaitState {
     // W2 — lateral CoM trim actually applied to each foot's y_mm this tick
     // (signed magnitude; the per-leg sign flip happens in _buildFootTarget).
     // Zero when comLatTrimEnabled is false, IMU invalid, or estopped.
+    // W5: comLatTrimMm now includes BOTH the displacement (Kp) and velocity
+    // (Kd) contributions; the two fields below break it apart for tuning.
     float comLatTrimMm     = 0.0f;
+
+    // W5 — velocity-damping telemetry. Both are diagnostic only; nothing in
+    // the control stack reads them.
+    //   comLatRollRateFilt  filtered torso roll rate (rad/s) feeding the Kd
+    //                       term. Mirrors the live LPF state every tick, even
+    //                       in IDLE, so the UI can show how quiet the signal is
+    //                       before the operator raises Kd.
+    //   comLatTrimVelMm     the velocity contribution alone (mm, pre-clamp):
+    //                       H_COM_MM * rollRate_filt * comLatTrimKd. Zero when
+    //                       the trim is inactive or comLatTrimKd is 0.
+    float comLatRollRateFilt = 0.0f;
+    float comLatTrimVelMm    = 0.0f;
 
     // Stage 1 IK telemetry. Updated each tick by _submitFootTargetIK().
     uint8_t      lastIKStatusL = 0;   // IKStatus enum value
@@ -419,6 +469,17 @@ struct GaitState {
     // ------------------------------------------------------------------
     bool    complianceActive   = false;
     float   complianceOffsetMm = 0.0f;
+
+    // ------------------------------------------------------------------
+    // Touchdown trim-suppression telemetry. Telemetry-only — the control
+    // stack reads the private _trimSuppressActive member, not this.
+    //
+    //   trimSuppressActive   true on any tick the W2/W5 lateral trim is
+    //                        being suppressed (latch held or inside the
+    //                        post-latch hold window). Recomputed every
+    //                        tick by _updateTrimSuppression().
+    // ------------------------------------------------------------------
+    bool    trimSuppressActive = false;
 
 };
 
@@ -506,6 +567,12 @@ private:
     ShiftDirection _lastShiftDir = ShiftDirection::NONE;
 
     IMUState _lastImuState{};   // cached at top of update() for trajectory helpers
+
+    // W5 — low-pass-filtered torso roll rate (rad/s). Single IIR state, advanced
+    // once per tick by _updateRollRateFilter(); read (never written) by the
+    // const trim helpers. Kept as a member because _comLateralTrimMm() is const
+    // and runs several times per tick — the filter must step exactly once.
+    float _rollRateFilt = 0.0f;
 
     // POSE_STEP pause state.
     // 0 = not paused. 1 = held at gate-open. 2 = held at peak. 3 = held at landing.
@@ -601,6 +668,37 @@ private:
     // the offset must be allowed to keep decaying.
     void _resetCompliance();
 
+    // -----------------------------------------------------------------------
+    // Touchdown trim suppression — phase-gate state for the W2/W5 trim.
+    //
+    // _comLateralTrimMm() is const and runs several times per tick, so the
+    // suppression decision is made ONCE per tick by _updateTrimSuppression()
+    // and cached here; the const trim helper only reads these members. This
+    // mirrors the _rollRateFilt / _updateRollRateFilter() pattern.
+    //
+    //   _trimSuppressUntilMs  millis() deadline through which suppression
+    //                         stays active after the touchdown latch clears.
+    //                         Refreshed every tick the latch is held.
+    //   _trimSuppressActive   true on any tick the trim is suppressed (latch
+    //                         held OR now < _trimSuppressUntilMs). Read by
+    //                         _comLateralTrimMm().
+    //   _trimLastValidMm      last un-suppressed raw trim (mm). Held and
+    //                         returned by _comLateralTrimMm() in freeze mode.
+    // -----------------------------------------------------------------------
+    uint32_t _trimSuppressUntilMs = 0;
+    bool     _trimSuppressActive  = false;
+    float    _trimLastValidMm     = 0.0f;
+
+    // Recompute the touchdown trim-suppression decision for this tick and keep
+    // the freeze snapshot fresh. Must run once per update(), before any trim
+    // helper or _buildFootTarget() reads the result.
+    void _updateTrimSuppression();
+
+    // Zero the trim-suppression state + telemetry mirror. Call on mode entry
+    // (start), init — NOT at half-cycle boundaries, where the post-latch hold
+    // window must be allowed to keep running.
+    void _resetTrimSuppression();
+
     void _enterRcvSub(RecoverySubState s);
     // imuState required by COMPLETE case to decide whether to chain a second step.
     void _runRecoveryStep(float dt_s, const IMUState& imuState);
@@ -646,21 +744,55 @@ private:
     float _captureOffsetMm() const;
 
     // -----------------------------------------------------------------------
-    //  _comLateralTrimMm — W2 continuous lateral CoM foot-placement trim.
+    //  _comLateralTrimMm — W2+W5 continuous lateral CoM foot-placement trim.
     //
     //  Returns the signed mm trim to add to each foot's y_mm. Sign convention:
     //    CoM displaced to robot-right (comLateral > 0) → positive return →
     //    right foot abducts (+y), left foot adducts (-y) in _buildFootTarget
     //    → body translates right over the feet (feet track under the CoM).
     //
+    //  W5: the return value is now displacement (Kp) PLUS velocity (Kd):
+    //    trim = comLatDisp * comLatTrimGain + comLatVel * comLatTrimKd
+    //  with comLatVel derived from the filtered roll rate (_rollRateFilt).
+    //  When comLatTrimKd == 0 the velocity term vanishes and the result is
+    //  bit-identical to the displacement-only W2 trim.
+    //
     //  Returns 0 when comLatTrimEnabled is false, the controller is IDLE, the
     //  IMU is invalid, or estopped. The IDLE gate keeps the trim from layering
     //  a static lateral offset over the idle pose; the STOPPING ramp is faded
     //  separately by strideScale in _buildFootTarget(). Computed from
-    //  _lastImuState (not _state.comLateralMm), so it is consistent on every
-    //  _buildFootTarget path. Intentionally pure-math.
+    //  _lastImuState / _rollRateFilt (not _state.*), so it is consistent on
+    //  every _buildFootTarget path. Intentionally pure-math.
+    //
+    //  Touchdown trim suppression: when _trimSuppressActive is set this tick,
+    //  this returns either the frozen last-clean trim or 0 (per the freeze
+    //  config flag) instead of the live computation — see _comLateralTrimRawMm
+    //  and _updateTrimSuppression().
     // -----------------------------------------------------------------------
     float _comLateralTrimMm() const;
+
+    // W2/W5 — the raw lateral trim computation (displacement + velocity, then
+    // clamped), with NO touchdown suppression applied. _comLateralTrimMm()
+    // wraps this with the suppression gate; _updateTrimSuppression() reads it
+    // to keep the freeze snapshot fresh. Intentionally pure-math.
+    float _comLateralTrimRawMm() const;
+
+    // W5 — true when the lateral CoM trim is live this tick (enabled, not IDLE,
+    // IMU valid, not estopped). Single predicate shared by _comLateralTrimMm()
+    // and _comLatVelTrimMm() so their gating can never drift apart.
+    bool  _comLatTrimActive() const;
+
+    // W5 — the velocity (Kd) contribution to the trim, in mm, BEFORE the shared
+    // ±comLatTrimMaxMm clamp. Telemetry only: lets the UI show how much of the
+    // applied trim is damping vs. displacement. Returns 0 when the trim is
+    // inactive or comLatTrimKd is 0.
+    float _comLatVelTrimMm() const;
+
+    // W5 — advance the roll-rate low-pass filter by one tick. Must be called
+    // exactly once per update(), before any trim helper runs. Zeroes the
+    // filter state when the IMU is invalid so a stale rate cannot survive an
+    // IMU dropout and re-enter the Kd term on the next valid tick.
+    void  _updateRollRateFilter(const IMUState& imuState);
 
     // Build the FootTarget for one leg this tick.
     //   Stance leg: y_mm=0, x_mm=0, h_sagittal_mm = stanceHeightMm.

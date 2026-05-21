@@ -1415,6 +1415,14 @@
                 <div class="bal-out-lbl">Lat trim (mm)</div>
                 <div class="bal-out-val" id="gaitTelemLatTrim">0.0</div>
             </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Roll rate (rad/s)</div>
+                <div class="bal-out-val" id="gaitTelemRollRate">0.000</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Lat vel (mm)</div>
+                <div class="bal-out-val" id="gaitTelemLatVel">0.0</div>
+            </div>
         </div>
 
         <!-- Touchdown-awareness panel (Stage 0/1).
@@ -1461,6 +1469,55 @@
                     Lower → more permissive (catches early touchdowns). Higher → stricter.
                 </div>
             </div>
+        </div>
+
+        <!-- Touchdown trim-suppression sub-panel.
+             Phase-gates the W2/W5 lateral CoM trim around touchdown so the
+             foot-strike roll transient cannot leak into the trim. -->
+        <div class="panel-subtitle-divider">
+            Lateral trim suppression (W2/W5)
+            <span id="tdTrimSupBadge" class="gait-mode-badge gait-mode-run" style="margin-left:8px;">ENABLED</span>
+        </div>
+        <div class="small-note" style="margin-bottom:8px;">
+            The foot-strike at touchdown injects a short torso-roll transient
+            that is not a real CoM excursion. When enabled, the lateral trim is
+            held (or zeroed) while the touchdown latch is set and for the hold
+            window afterward, so the transient never reaches foot placement.
+        </div>
+        <div class="gait-btn-row">
+            <button class="btn-gait-step" id="btnTrimSuppressToggle" onclick="toggleTrimSuppress()">
+                Trim suppress: ON
+            </button>
+            <button class="btn-gait-step" id="btnTrimFreezeToggle" onclick="toggleTrimFreezeMode()">
+                Mode: FREEZE
+            </button>
+        </div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Suppression state</div>
+                <div class="bal-out-val" id="tdTrimSupActCell">—</div>
+            </div>
+        </div>
+        <div class="gait-tune-grid">
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Post-latch hold window (ms)</span>
+                    <span class="tune-val" id="tvTrimHold">60</span>
+                </div>
+                <input type="range" id="slTrimHold" min="0" max="400" step="10" value="60"
+                       oninput="updateTrimHoldLabel(this.value); sendTouchdownKey('trimHoldMs', parseInt(this.value))">
+                <div class="small-note">
+                    How long suppression extends past the moment the touchdown
+                    latch clears, to also reject the post-strike roll ring-down.
+                    0 = suppress only while the latch is held.
+                </div>
+            </div>
+        </div>
+        <div class="small-note" style="margin-bottom:8px;">
+            <b>Mode</b> — FREEZE holds the trim at its last clean (pre-touchdown)
+            value through the window; ZERO forces the trim output to 0. FREEZE
+            keeps the correction the robot already needs; ZERO is the stricter
+            "contribute nothing while uncertain" option.
         </div>
 
         <!-- Touchdown-compliance panel (W4).
@@ -1719,6 +1776,36 @@
                 <div class="small-note">
                     Per-tick cap on the lateral trim. Bounds a noisy-IMU spike from
                     over-driving the feet. Toggle the trim with the Lat Trim button.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Lateral CoM trim Kd (W5)</span>
+                    <span class="tune-val" id="tvGaitComLatKd">0.000</span>
+                </div>
+                <input type="range" id="slGaitComLatKd" min="0.0" max="0.5" step="0.005" value="0.0"
+                       oninput="updateGaitLabel('comLatKd', this.value); sendGaitKey('comLatKd', parseFloat(this.value).toFixed(3))">
+                <div class="small-note">
+                    Velocity damping (seconds). mm of foot trim per mm/s of lateral
+                    CoM velocity. 0 = displacement-only (pure W2). Raise in small
+                    steps 0.02 → 0.15; stop at the first servo buzz or new
+                    oscillation. Watch the "Lat vel (mm)" and IK clamp telemetry.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Roll-rate LPF alpha (W5)</span>
+                    <span class="tune-val" id="tvGaitComLatRateLpf">0.70</span>
+                </div>
+                <input type="range" id="slGaitComLatRateLpf" min="0.0" max="0.95" step="0.05" value="0.7"
+                       oninput="updateGaitLabel('comLatRateLpf', this.value); sendGaitKey('comLatRateLpf', parseFloat(this.value).toFixed(2))">
+                <div class="small-note">
+                    Smoothing on the torso roll rate feeding the Kd term. 0 = raw
+                    (noisy), higher = smoother but more lag (less effective damping).
+                    Default 0.70. If "Roll rate (rad/s)" looks jittery at rest,
+                    raise this before raising Kd.
                 </div>
             </div>
 
@@ -3241,6 +3328,8 @@ const _gaitTuneMap = {
     swingApex:   { el: "tvGaitSwingApex",  decimals: 2 },
     comLatGain:  { el: "tvGaitComLatGain", decimals: 2 },
     comLatMax:   { el: "tvGaitComLatMax",  decimals: 0 },
+    comLatKd:      { el: "tvGaitComLatKd",      decimals: 3 },
+    comLatRateLpf: { el: "tvGaitComLatRateLpf", decimals: 2 },
     comLatGate: { el: "tvGaitComLatGate", decimals: 1 },
     torsoNeutralRoll:  { el: "tvGaitTorsoNeutralRoll",  decimals: 3 },
     torsoNeutralPitch: { el: "tvGaitTorsoNeutralPitch", decimals: 3 },
@@ -3342,6 +3431,31 @@ function updateTouchdownLabel(rawVal) {
     _setTuneActive();
     const el = document.getElementById("tvTouchdownGate");
     if (el) el.textContent = parseFloat(rawVal).toFixed(2);
+}
+
+// Touchdown trim-suppression controls (W2/W5 phase-gate). All ride the
+// TOUCHDOWN_TUNE command — trim suppression is touchdown-window policy.
+function toggleTrimSuppress() {
+    const btn = document.getElementById('btnTrimSuppressToggle');
+    const enable = btn && btn.textContent.indexOf('OFF') !== -1;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(`CMD:TOUCHDOWN_TUNE:trimSuppress=${enable ? 1 : 0}`);
+    }
+}
+
+// Flip the suppression mode: FREEZE (hold last clean trim) ↔ ZERO (force 0).
+function toggleTrimFreezeMode() {
+    const btn = document.getElementById('btnTrimFreezeToggle');
+    const freeze = btn && btn.textContent.indexOf('ZERO') !== -1;  // currently ZERO → go FREEZE
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(`CMD:TOUCHDOWN_TUNE:trimFreeze=${freeze ? 1 : 0}`);
+    }
+}
+
+function updateTrimHoldLabel(rawVal) {
+    _setTuneActive();
+    const el = document.getElementById("tvTrimHold");
+    if (el) el.textContent = parseInt(rawVal);
 }
 
 // Touchdown-compliance controls (W4). Master enable + depth/decay knobs live
@@ -3553,6 +3667,14 @@ function parseGaitState(payload) {
     }
     set("gaitTelemLatTrim", latTrimMm.toFixed(1));
 
+    // W5 — velocity-damping telemetry. Roll rate is the filtered signal that
+    // feeds the Kd term; Lat vel is that term's contribution to the trim (mm,
+    // pre-clamp). comLatTrimMm above already includes it.
+    const comLatRollRate = parseFloat(v["comLatRollRate"] || "0");
+    const comLatTrimVel  = parseFloat(v["comLatTrimVel"]  || "0");
+    set("gaitTelemRollRate", comLatRollRate.toFixed(3));
+    set("gaitTelemLatVel",   comLatTrimVel.toFixed(1));
+
     if (!_tuneActive) {
         _syncSlider("slGaitCapGain", "tvGaitCapGain", capGain, 2);
     }
@@ -3605,6 +3727,13 @@ function parseGaitState(payload) {
             _syncSlider("slGaitComLatGain", "tvGaitComLatGain", parseFloat(v["comLatGain"]), 2);
         if (v["comLatMax"] !== undefined)
             _syncSlider("slGaitComLatMax", "tvGaitComLatMax", parseFloat(v["comLatMax"]), 0);
+        // W5 — velocity-damping sliders. Optional-chained like W1/W2 so an
+        // un-reflashed firmware leaves them at their last-known value.
+        if (v["comLatKd"] !== undefined)
+            _syncSlider("slGaitComLatKd", "tvGaitComLatKd", parseFloat(v["comLatKd"]), 3);
+        if (v["comLatRateLpf"] !== undefined)
+            _syncSlider("slGaitComLatRateLpf", "tvGaitComLatRateLpf",
+                        parseFloat(v["comLatRateLpf"]), 2);
     }
 
     // Swing-foot leveler L0 telemetry
@@ -3699,6 +3828,41 @@ function parseGaitState(payload) {
         // Gate slider sync (guarded while user is dragging).
         if (!_tuneActive) {
             _syncSlider("slTouchdownGate", "tvTouchdownGate", tdGate, 2);
+        }
+
+        // Touchdown trim-suppression sub-panel (W2/W5 phase-gate).
+        // Fields: tdTrimSup (config enable), tdTrimHold (config ms),
+        //         tdTrimFrz (config mode), tdTrimSupAct (live this tick).
+        const tdTrimSup    = (v["tdTrimSup"]    === "1");
+        const tdTrimFrz    = (v["tdTrimFrz"]    === "1");
+        const tdTrimSupAct = (v["tdTrimSupAct"] === "1");
+        const tdTrimHold   = parseFloat(v["tdTrimHold"] || "60");
+
+        const supBadge = document.getElementById("tdTrimSupBadge");
+        if (supBadge) {
+            supBadge.textContent = tdTrimSup ? "ENABLED" : "DISABLED";
+            supBadge.className   = "gait-mode-badge " + (tdTrimSup ? "gait-mode-run" : "gait-mode-idle");
+        }
+        const supBtn = document.getElementById("btnTrimSuppressToggle");
+        if (supBtn) {
+            supBtn.textContent = tdTrimSup ? "Trim suppress: ON" : "Trim suppress: OFF";
+            supBtn.style.background = tdTrimSup ? "#1565c0" : "#e65100";
+        }
+        const frzBtn = document.getElementById("btnTrimFreezeToggle");
+        if (frzBtn) {
+            frzBtn.textContent = tdTrimFrz ? "Mode: FREEZE" : "Mode: ZERO";
+        }
+        // Live suppression indicator. Only meaningful while suppression is
+        // enabled; shows "—" when disabled so a stale ACTIVE never lingers.
+        const supActEl = document.getElementById("tdTrimSupActCell");
+        if (supActEl) {
+            const active = tdTrimSup && tdTrimSupAct;
+            supActEl.textContent = !tdTrimSup ? "—" : (active ? "SUPPRESSING" : "passthrough");
+            supActEl.style.color = active ? "#ffc107" : "#888";
+        }
+        // Hold-window slider sync (guarded while user is dragging).
+        if (!_tuneActive) {
+            _syncSlider("slTrimHold", "tvTrimHold", tdTrimHold, 0);
         }
     }
 

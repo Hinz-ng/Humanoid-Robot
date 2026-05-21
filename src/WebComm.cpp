@@ -503,7 +503,7 @@ void WebComm::broadcastGaitState() {
                                       ? _swingLeveler->getState()
                                       : SwingFootLevelerState{};
 
-    char buf[1152];
+    char buf[1360];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
@@ -530,10 +530,21 @@ void WebComm::broadcastGaitState() {
         //   tdSide - 0=LEFT 1=RIGHT (matches Side enum)
         //   tdX    - swing-leg stride x snapshot (mm) at detection
         "tdEn=%d,tdGate=%.2f,tdSeen=%d,tdLkd=%d,tdPh=%.3f,tdSide=%d,tdX=%.1f,"
+        // Touchdown trim suppression (W2/W5 phase-gate) — config echoes plus
+        // the live suppression-active flag.
+        //   tdTrimSup    - master enable (config)
+        //   tdTrimHold   - post-latch hold window, ms (config)
+        //   tdTrimFrz    - mode: 1=freeze last clean trim, 0=force zero (config)
+        //   tdTrimSupAct - suppression active this tick (telemetry)
+        "tdTrimSup=%d,tdTrimHold=%lu,tdTrimFrz=%d,tdTrimSupAct=%d,"
         // W1 swing-envelope apex fraction (config echo for slider sync).
         // W2 lateral CoM trim — config echoes (enable / gain / cap) plus the
         // live applied trim (comLatTrimMm) for the source-of-truth UI sync.
         "swingApex=%.3f,comLatTrim=%d,comLatGain=%.2f,comLatMax=%.1f,comLatTrimMm=%.1f,"
+        // W5 lateral-trim velocity damping — config echoes (Kd, roll-rate LPF
+        // alpha) plus live telemetry (filtered roll rate rad/s, velocity
+        // contribution mm pre-clamp).
+        "comLatKd=%.3f,comLatRateLpf=%.2f,comLatRollRate=%.4f,comLatTrimVel=%.1f,"
         // W4 touchdown compliance — config echoes (enable / depth / decay)
         // plus live telemetry (cmpOff = signed offset applied this tick,
         // cmpAct = decay in progress).
@@ -612,12 +623,22 @@ void WebComm::broadcastGaitState() {
         s.touchdownPhase,
         static_cast<int>(s.touchdownSide),
         s.touchdownSwingX_mm,
+        // Touchdown trim suppression — config + live suppression flag.
+        static_cast<int>(_gaitCtrl->getConfig().touchdownTrimSuppressEnabled),
+        (unsigned long)_gaitCtrl->getConfig().touchdownTrimHoldMs,
+        static_cast<int>(_gaitCtrl->getConfig().touchdownTrimFreezeHold),
+        static_cast<int>(s.trimSuppressActive),
         // W1 / W2 config echoes + W2 live trim.
         _gaitCtrl->getConfig().swingApexFrac,
         static_cast<int>(_gaitCtrl->getConfig().comLatTrimEnabled),
         _gaitCtrl->getConfig().comLatTrimGain,
         _gaitCtrl->getConfig().comLatTrimMaxMm,
         s.comLatTrimMm,
+        // W5 — velocity-damping config echoes + live telemetry.
+        _gaitCtrl->getConfig().comLatTrimKd,
+        _gaitCtrl->getConfig().comLatTrimRateLpfAlpha,
+        s.comLatRollRateFilt,
+        s.comLatTrimVelMm,
         // W4 touchdown compliance — config + live telemetry.
         static_cast<int>(_gaitCtrl->getConfig().complianceEnabled),
         _gaitCtrl->getConfig().complianceDepthMm,
@@ -1475,13 +1496,26 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         // Ceiling at 0.99: a sub-tick window before phase
                         // wraps is still meaningful at 400 Hz.
                         else if (key == "gatePhase") cfg.touchdownGatePhase = constrain(val.toFloat(), 0.30f, 0.99f);
+                        // Trim suppression (W2/W5 phase-gate). Folded into this
+                        // command since it is touchdown-window policy.
+                        else if (key == "trimSuppress") cfg.touchdownTrimSuppressEnabled = (val.toInt() != 0);
+                        // Hold window 0-400 ms. 0 = suppress only while the
+                        // latch is held; above 400 ms it would bleed well into
+                        // the next half-cycle's clean trim region.
+                        else if (key == "trimHoldMs")   cfg.touchdownTrimHoldMs =
+                                     (uint32_t)constrain(val.toFloat(), 0.0f, 400.0f);
+                        else if (key == "trimFreeze")   cfg.touchdownTrimFreezeHold = (val.toInt() != 0);
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
                 _gaitCtrl->setConfig(cfg);
-                Serial.printf("[WebComm] TOUCHDOWN_TUNE: en=%d gatePhase=%.2f\n",
+                Serial.printf("[WebComm] TOUCHDOWN_TUNE: en=%d gatePhase=%.2f "
+                              "trimSup=%d trimHold=%lu trimFrz=%d\n",
                               (int)cfg.touchdownEnabled,
-                              cfg.touchdownGatePhase);
+                              cfg.touchdownGatePhase,
+                              (int)cfg.touchdownTrimSuppressEnabled,
+                              (unsigned long)cfg.touchdownTrimHoldMs,
+                              (int)cfg.touchdownTrimFreezeHold);
             }
         }
         // ---------------------------------------------------------------------
@@ -1609,6 +1643,19 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             // reach budget on any stance height.
                             cfg.comLatTrimMaxMm = constrain(val, 0.0f, 40.0f);
                         }
+                        else if (key == "comLatKd") {
+                            // W5 — velocity-damping gain (seconds). 0 = no
+                            // damping (pure W2). 0.5 s cap: well past any
+                            // useful value — beyond ~0.15 s the Kd term tends
+                            // to amplify gyro noise faster than it damps.
+                            cfg.comLatTrimKd = constrain(val, 0.0f, 0.5f);
+                        }
+                        else if (key == "comLatRateLpf") {
+                            // W5 — roll-rate LPF retention factor. Clamp to
+                            // [0, 0.99]: 0 = raw rate (noisy), 0.99 = nearly
+                            // frozen. Mirrors the clamp in _updateRollRateFilter.
+                            cfg.comLatTrimRateLpfAlpha = constrain(val, 0.0f, 0.99f);
+                        }
                         else if (key == "torsoNeutralRoll") {
                             // +/-0.20 rad (~11 deg) hard cap. Anything larger
                             // indicates mounting/hardware fault that the
@@ -1625,14 +1672,16 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                 Serial.printf("[WebComm] GAIT_TUNE: rate=%.2f Hz  gate=%.2f  wsThresh=%.3f rad  "
                               "stepH=%.1f mm  stanceH=%.1f mm  stepLen=%.1f mm  capEn=%d capGain=%.2f capMax=%.1f  "
                               "dwell=%lu waitMax=%lu comLat=%.1f trP=%.4f trR=%.4f  "
-                              "swingApex=%.3f comLatTrim=%d comLatGain=%.2f comLatMax=%.1f\n",
+                              "swingApex=%.3f comLatTrim=%d comLatGain=%.2f comLatMax=%.1f "
+                              "comLatKd=%.3f comLatRateLpf=%.2f\n",
                               cfg.phaseRateHz, cfg.liftGateThreshold, cfg.wsThresholdRad,
                               cfg.stepHeightMm, cfg.stanceHeightMm, cfg.stepLengthMm,
                               (int)cfg.captureEnabled, cfg.captureGain, cfg.captureOffsetMaxMm,
                               (unsigned long)cfg.liftDwellMs, (unsigned long)cfg.waitShiftMaxMs,
                               cfg.comLateralGateMm, cfg.torsoPitchNeutralRad, cfg.torsoRollNeutralRad,
                               cfg.swingApexFrac, (int)cfg.comLatTrimEnabled,
-                              cfg.comLatTrimGain, cfg.comLatTrimMaxMm);
+                              cfg.comLatTrimGain, cfg.comLatTrimMaxMm,
+                              cfg.comLatTrimKd, cfg.comLatTrimRateLpfAlpha);
             }
         }
 

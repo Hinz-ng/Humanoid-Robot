@@ -659,7 +659,7 @@ LegIKResult GaitController::_submitFootTargetIK(Side side,
     //
     // Roll leveler bias is NOT added here — it's plumbed through
     // BalanceController via setSwingLevelerRollBias(), composed additively in
-    // _applyRollCorrection at SOURCE_BALANCE. Adding it here too would result
+    // _submitAnkleRollBias at SOURCE_BALANCE. Adding it here too would result
     // in zero contribution (overwritten by SOURCE_BALANCE), or in the rare
     // case the SOURCE_BALANCE path is silent, would double-count.
     // Joint-frame submissions. Servo-neutral drift is corrected globally by
@@ -845,11 +845,10 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         // 2), which always fires during walking because WeightShift keeps the
         // stance-side bias non-zero. One side always returns 0 (non-swing).
         //
-        // PITCH bias is NOT plumbed this way — pitch path through SOURCE_GAIT
-        // still works because _applyPitchCorrection only submits when pitch
-        // balance is enabled, which it isn't during typical leveler testing.
-        // If pitch balance is enabled later, this asymmetry will need to be
-        // resolved by mirroring this plumbing for pitch.
+        // PITCH bias is NOT plumbed this way and does not need to be: leg pitch
+        // balance is task-space (dx_mm merged into the FootTarget), so
+        // BalanceController never submits ankle-pitch joints — the leveler's
+        // SOURCE_GAIT pitch bias is never overwritten by SOURCE_BALANCE.
         if (_bal) {
             _bal->setSwingLevelerRollBias(
                 Side::LEFT,  _swingLeveler->ankleRollBiasFor(Side::LEFT));

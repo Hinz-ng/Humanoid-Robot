@@ -38,18 +38,12 @@ struct FootTarget {
     bool  valid         = true;
 };
 
-// BalanceCorrection — task-space corrections from BalanceController, to be
+// BalanceCorrection — task-space leg-balance correction from BalanceController,
 // added to the FootTarget by the merge step BEFORE LegIK::solve().
-//
-//   Stage 3 only — unused in Stage 1. Defined here so the GaitController
-//   interface accepting FootTarget can later accept (FootTarget + correction)
-//   without renaming.
 struct BalanceCorrection {
-    float dx_mm      = 0.0f;
-    float dy_mm      = 0.0f;
-    float dPitch_deg = 0.0f;  // reserved for future trunk-trim; unused in Stage 3
-    float dRoll_deg  = 0.0f;  // reserved for future trunk-trim; unused in Stage 3
-    bool  valid      = false;
+    float dx_mm = 0.0f;
+    float dy_mm = 0.0f;
+    bool  valid = false;
 };
 
 // mergeBalanceCorrection — apply a BalanceCorrection to a FootTarget in place.
@@ -62,7 +56,6 @@ struct BalanceCorrection {
 //                  right leg: y_mm increases (right foot moves outward / abduction)
 //                  left  leg: y_mm decreases (left  foot moves inward  / adduction)
 //                Net effect: body translates right relative to feet.
-//   dPitch_deg, dRoll_deg — reserved, not applied in Stage 3.
 //
 // Returns true if the correction was applied.
 // Returns false (no-op) when bc.valid == false.

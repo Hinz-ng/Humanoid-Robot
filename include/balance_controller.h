@@ -52,10 +52,6 @@ struct BalanceConfig {
     float derivative_lpf_alpha     = 0.85f;   // [0,1). WS: "d_lpf"
     float servo_lag_compensation_s = 0.030f;  // s. WS: "tau"
 
-    float ankle_ratio = 1.0f;  // WS: "ankle"
-    float hip_ratio   = 0.0f;  // WS: "hip"
-    float torso_ratio = 0.0f;  // WS: "torso"
-
     float correction_sign    = 1.0f;   // ±1. WS: "sign"
     float max_correction_deg = 15.0f;  // deg. WS: "max"
 
@@ -89,10 +85,6 @@ struct BalanceConfig {
     float roll_setpoint_rad    = 0.0f;  // rad. Injected by WeightShift. WS: "sp_r"
     float roll_correction_sign = -1.0f;  // ±1. WS: "sign_r"
 
-    float ankle_roll_ratio = 1.0f;  // WS: "a_roll"
-    float hip_roll_ratio   = 0.0f;  // WS: "h_roll"
-    float torso_roll_ratio = 0.0f;  // WS: "t_roll"
-
     // DEFAULT CHANGE: max_roll_correction_deg 10.0 → 8.0. WS: "max_r"
     float max_roll_correction_deg   = 8.0f;   // deg. Previous: 10.0
     float roll_deadband_rad         = 0.035f; // rad. WS: "roll_db"
@@ -100,7 +92,7 @@ struct BalanceConfig {
 
     // --- TASK-2: Ankle roll bias from WeightShift ---
     // Set each tick by WeightShift::update() through the dedicated setters below.
-    // _applyRollCorrection() adds these AFTER the IIR smoother — additive to
+    // _submitAnkleRollBias() adds these AFTER the IIR smoother — additive to
     // the shaped balance correction, not replacing it.
     // Applied even when roll_enabled=false (C-02 fix — see update()).
     // Sign: LEFT body tilt → bias_l > 0, bias_r < 0 (matches balance convention).
@@ -111,7 +103,7 @@ struct BalanceConfig {
     // --- Swing-foot leveler ankle ROLL bias ---
     // Pushed each tick from GaitController via setSwingLevelerRollBias()
     // after SwingFootLeveler::update() runs. ADDED to ankle roll at submission
-    // time in _applyRollCorrection() — composes additively with the WeightShift
+    // time in _submitAnkleRollBias() — composes additively with the WeightShift
     // ankle_roll_bias_l/r_deg field (different concerns, different sources).
     //
     // Sign convention matches the leveler's internal convention: a single signed
@@ -125,25 +117,6 @@ struct BalanceConfig {
     // MUST NOT be set from WebSocket. Only GaitController writes via setter.
     float swing_leveler_roll_bias_l_deg = 0.0f;
     float swing_leveler_roll_bias_r_deg = 0.0f;
-
-    // --- Stage 3: Task-space output mode ---
-    //   false (default): legacy joint-space. _applyPitchCorrection / _applyRollCorrection
-    //                    submit to MotionManager as before.
-    //   true:  task-space. computeCorrection() populates _lastCorrection. Leg joints
-    //                      are NOT submitted by BalanceController. Torso pitch and
-    //                      torso roll continue to submit (not in the IK chain).
-    // WS: "task_space"
-    bool task_space_output = false;
-
-    // --- Joint-space torso balance toggle ---
-    // Independently gates the torso_pitch and torso_roll submissions emitted by
-    // BalanceController. When false, the PD output still drives ankle/hip (legacy)
-    // and dx/dy (task-space) but the torso joints are left to other authorities.
-    // Decoupled from task_space_output so torso balance can run in BOTH modes.
-    // The ankle:hip:torso ratio sliders still scale the per-joint contribution;
-    // this flag is the master enable for the torso channel.
-    // WS: "torso_bal"
-    bool torso_balance_enabled = true;
 
     // Conversion gain: PD output (deg) → task-space body shift (mm).
     // At h_sagittal ≈ 185 mm: 1° ≈ 3.2 mm. Default 3.0 is conservative.
@@ -212,6 +185,19 @@ struct BalanceState {
     uint16_t recovery_debounce = 0;      // current debounce streak (ticks)
 };
 
+// Snapshot of BalanceController's PD output, consumed by TorsoStabilizer.
+// computeCorrection() caches the clamped pitch/roll PD output each tick; the
+// torso controller scales these rather than running its own PD (parity).
+struct BalancePDOutput {
+    float pitch_u_clamped = 0.0f;  // clamped pitch PD output (deg)
+    float roll_u_clamped  = 0.0f;  // clamped roll PD output (deg)
+    float pitch_rate_filt = 0.0f;  // filtered pitch rate (rad/s)
+    float roll_rate_filt  = 0.0f;  // filtered roll rate (rad/s)
+    bool  pitch_active    = false; // pitch PD enabled this tick
+    bool  roll_active     = false; // roll PD enabled this tick
+    bool  valid           = false; // false until update() passes all gates
+};
+
 class BalanceController {
 public:
     explicit BalanceController(ServoControl* servo = nullptr);
@@ -255,16 +241,20 @@ public:
     }
     void                 setRollSetpointRad(float rad) { _cfg.roll_setpoint_rad = rad; }
 
-    // Stage 3: Task-space output API.
+    // Task-space output API.
     // computeCorrection() runs the pitch + roll PD in mm space. Pure computation —
-    // does NOT submit to any joints. Called from update() when task_space_output=true.
+    // does NOT submit to any joints. Called every tick from update().
     // Intermediate clamped-degree values are cached in _ts_pitch_u_clamped /
-    // _ts_roll_u_clamped for the torso submission that update() handles separately.
+    // _ts_roll_u_clamped and exposed via getPDOutput() for TorsoStabilizer.
     BalanceCorrection computeCorrection(const IMUState& state);
 
-    // Returns the most recent correction. Valid=false until update() runs at least
-    // once with task_space_output=true.
+    // Returns the most recent correction. Valid=false until update() has run once.
     BalanceCorrection getLastCorrection() const { return _lastCorrection; }
+
+    // Returns the clamped pitch/roll PD output (deg) + filtered rates from the
+    // last update(). TorsoStabilizer consumes this instead of running its own
+    // PD. .valid is false until update() has run once past all gates.
+    BalancePDOutput getPDOutput() const;
 
 private:
     ServoControl*    _servo;
@@ -283,13 +273,15 @@ private:
     static float _computeEffectiveKp(float absError, float baseKp,
                                      float threshold, float boostFactor);
 
-    void _applyPitchCorrection(float ankle_deg, float hip_deg,
-                               float torso_deg, float pitchRate_rs);
-    void _applyRollCorrection(float ankle_deg, float hip_deg,
-                              float torso_deg, float rollRate_rs);
+    // Submits the WeightShift / swing-leveler ankle-roll bias — the only
+    // joint-space leg output BalanceController still owns. Leg pitch/roll
+    // balance is task-space (computeCorrection → dx_mm/dy_mm); torso pitch/roll
+    // are submitted directly by update().
+    void _submitAnkleRollBias();
 
-    // Stage 3: task-space filter state.
+    // Task-space filter state.
     BalanceCorrection _lastCorrection;
+    bool              _pdValid = false;  // PD output valid (update passed gates)
     float _dx_filtered_mm    = 0.0f;
     float _dy_filtered_mm    = 0.0f;
     // Intermediate PD values cached by computeCorrection so update()

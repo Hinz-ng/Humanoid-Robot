@@ -174,9 +174,9 @@ constexpr float GAIT_COM_LATERAL_GATE_MM_DEFAULT = 11.0f;
 // 0.30 corrects ~1/3 of a steady observed displacement. Start conservative;
 // raise toward 0.6 only after confirming the IK clamp rate does not rise.
 // The cap bounds a noisy-IMU spike from over-driving the feet in one tick.
-constexpr float GAIT_COM_LAT_TRIM_GAIN_DEFAULT   = 0.40f;
+constexpr float GAIT_COM_LAT_TRIM_GAIN_DEFAULT   = 0.20f;
 constexpr float GAIT_COM_LAT_TRIM_MAX_MM_DEFAULT = 20.0f;
-
+ 
 // ------------------------------------------------------------
 // W5 — velocity-damping extension of the lateral CoM trim.
 // ------------------------------------------------------------
@@ -394,7 +394,7 @@ constexpr uint32_t GAIT_TD_COMPLIANCE_DECAY_MS_DEFAULT = 200;    // recovery tim
 //                     Default true (freeze): holds the correction the robot
 //                     already needs instead of introducing a step to zero.
 constexpr bool     GAIT_TD_TRIM_SUPPRESS_ENABLED_DEFAULT = true;
-constexpr uint32_t GAIT_TD_TRIM_HOLD_MS_DEFAULT          = 60;   // post-latch hold
+constexpr uint32_t GAIT_TD_TRIM_HOLD_MS_DEFAULT          = 80;   // post-latch hold
 constexpr bool     GAIT_TD_TRIM_FREEZE_DEFAULT           = true; // freeze vs. zero
 
 // ============================================================

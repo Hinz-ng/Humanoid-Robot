@@ -8,7 +8,7 @@
 //   2. Ankle roll conflict fix: SOURCE_GAIT ankle roll removed. Bias injected
 //      into BalanceConfig so balance controller layers additively on top.
 //   3. Same-direction shift: both ankles tilt in same physical direction.
-//      Sign convention matches balance controller's _applyRollCorrection.
+//      Sign convention matches balance controller's _submitAnkleRollBias.
 //   4. Per-ankle progress: _rightAnkleProgress / _leftAnkleProgress track
 //      each ankle independently with separate delay timers.
 //
@@ -54,21 +54,21 @@ enum class SwingLeg : int8_t {
 
 // ---------------------------------------------------------------------------
 struct WeightShiftConfig {
-    // Roll setpoint injected into BalanceConfig (rad, magnitude).
-    // 0.050 rad ~= 2.9 deg. Active immediately on first left/right trigger;
-    // suppressed when balance is in task_space_output mode.
+    // DEAD (consolidation refactor): the WeightShift roll-setpoint injection
+    // path was removed — lateral CoM control flows through FootTarget.y_mm.
+    // This field is no longer read; retained only so the WS "setpoint" UI
+    // slider and WEIGHT_SHIFT_TUNE:setpoint key still parse without error.
     float setpoint_shift_rad = 0.050f;
 
-    // Ankle roll amplitude (deg). Injected as bias into BalanceConfig, not via
-    // SOURCE_GAIT. Set ankle_roll_ratio=0 in BalanceConfig to prevent the
-    // balance loop from fighting its own baseline. 15.5 deg is the post-tuning
-    // working default; override via WEIGHT_SHIFT_TUNE:ankle=...
+    // Ankle roll amplitude (deg). Injected as an ankle-roll bias into
+    // BalanceConfig (not via SOURCE_GAIT). 15.0 deg is the post-tuning working
+    // default; override via WEIGHT_SHIFT_TUNE:ankle=...
     float ankle_shift_deg = 15.0f;
     
     // TASK-2: Phase delay between swing and stance ankle ramps (ms).
     // Swing ankle starts immediately; stance starts after this delay.
     // Set to 0 for simultaneous ramp (disables phasing).
-    float shift_phase_delay_ms = 100.0f;
+    float shift_phase_delay_ms = 50.0f;
 
     // Stage 2: Body lateral shift (mm) at progress = ±1.
     // SIGN CONVENTION (current default is negative — adduction strategy):
@@ -89,7 +89,7 @@ struct WeightShiftConfig {
     // Stage 2: Body forward shift (mm) at |progress| = 1. Replaces ankle_pitch_tilt_deg.
     // Both feet receive an x_mm offset of -|progress| × forward_lean_mm so the foot
     // sits behind the hip pitch axis when the body leans forward. 0 = disabled.
-    float forward_lean_mm = 1.0f;
+    float forward_lean_mm = 3.0f;
 
     // IIR smoothing factor for the forward-lean ramp (was ankle_tilt_smooth_alpha).
     // Applied as: smoothed = alpha*smoothed + (1-alpha)*raw. The lateral path uses
@@ -178,7 +178,6 @@ private:
     float _targetProgress[SIDE_COUNT]    = { 0.0f, 0.0f };
     float _delayRemaining_ms[SIDE_COUNT] = { 0.0f, 0.0f };
 
-    float _lastInjectedSetpointRad = 0.0f;
     uint32_t _settledAtMs = 0;
 
     // Stage 2: IIR-smoothed body forward offset in mm. Was _ankleTiltCmdSmoothed

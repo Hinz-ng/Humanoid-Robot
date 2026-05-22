@@ -46,6 +46,7 @@ void BalanceController::resetOutputState() {
     _ts_pitch_error      = 0.0f;
     _ts_roll_error       = 0.0f;
     _lastCorrection      = {};
+    _pdValid             = false;
     _cfg.swing_leveler_roll_bias_l_deg = 0.0f;
     _cfg.swing_leveler_roll_bias_r_deg = 0.0f;
 
@@ -152,6 +153,7 @@ float BalanceController::_shapeOutput(uint8_t jIdx, float rawCmd,
 // ---------------------------------------------------------------------------
 BalanceState BalanceController::update(const IMUState& state) {
     BalanceState out = {};
+    _pdValid = false;  // set true only after all gates pass (see end of fn)
 
     // =========================================================================
     //  FALL DETECTION
@@ -216,7 +218,7 @@ BalanceState BalanceController::update(const IMUState& state) {
              fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f ||
              fabsf(_cfg.swing_leveler_roll_bias_l_deg) > 0.01f ||
              fabsf(_cfg.swing_leveler_roll_bias_r_deg) > 0.01f)) {
-            _applyRollCorrection(0.0f, 0.0f, 0.0f, 0.0f);
+            _submitAnkleRollBias();
         }
         _lastState = out; return out;
     }
@@ -226,171 +228,54 @@ BalanceState BalanceController::update(const IMUState& state) {
     if (oe_is_estopped()) { _lastState = out; return out; }
 
     // =========================================================================
-    //  STAGE 3: TASK-SPACE OUTPUT BRANCH
-    //  When task_space_output=true, balance PD outputs dx_mm/dy_mm that the
-    //  GaitController merges into FootTargets before LegIK::solve(). Leg joints
-    //  (ankle pitch, knee, hip pitch, hip roll, ankle roll) are NOT submitted here.
-    //  Torso pitch and torso roll remain joint-space (not in the IK chain).
+    //  TASK-SPACE LEG STABILISATION
+    //  computeCorrection() runs the pitch + roll PD and outputs dx_mm/dy_mm,
+    //  which GaitController merges into FootTargets before LegIK::solve(). Leg
+    //  joints are NOT submitted here. The WeightShift ankle-roll bias is
+    //  submitted via _submitAnkleRollBias(). Torso pitch/roll are joint-space
+    //  and live in TorsoStabilizer, which consumes getPDOutput() after this.
     // =========================================================================
-    if (_cfg.task_space_output) {
-        _lastCorrection = computeCorrection(state);
+    _lastCorrection = computeCorrection(state);
 
-        // Torso pitch — joint-space submission, runs alongside dx/dy task-space.
-        // Gated by torso_balance_enabled so the user can disable torso balance
-        // without zeroing torso_ratio (which still scales the contribution).
-        if (_motionManager && _cfg.pitch_enabled && _cfg.torso_balance_enabled
-            && _cfg.torso_ratio > 0.001f) {
-            float torso_cmd = _ts_pitch_u_clamped * _cfg.torso_ratio;
-            float shaped    = _shapeOutput(BJI_TORSO_PITCH, -torso_cmd,
-                                           _pitchRateFiltered);
-            _motionManager->submit(SOURCE_BALANCE, IDX_TORSO_PITCH, shaped);
-        }
-        // Torso roll — joint-space submission, runs alongside dx/dy task-space.
-        if (_motionManager && _cfg.roll_enabled && _cfg.torso_balance_enabled
-            && _cfg.torso_roll_ratio > 0.001f) {
-            float torso_cmd = _ts_roll_u_clamped * _cfg.torso_roll_ratio;
-            float shaped    = _shapeOutput(BJI_TORSO_ROLL, torso_cmd,
-                                           _rollRateFiltered);
-            _motionManager->submit(SOURCE_BALANCE, IDX_TORSO_ROLL, shaped);
-        }
+    out.active       = _cfg.pitch_enabled || _cfg.roll_enabled;
+    out.pitch_active = _cfg.pitch_enabled;
+    out.roll_active  = _cfg.roll_enabled;
+    // Surface PD telemetry from the last computeCorrection run.
+    out.pitch_error    = _ts_pitch_error;
+    out.roll_error     = _ts_roll_error;
+    out.u_clamped      = _ts_pitch_u_clamped;
+    out.u_roll_clamped = _ts_roll_u_clamped;
 
-        out.active       = _cfg.pitch_enabled || _cfg.roll_enabled;
-        out.pitch_active = _cfg.pitch_enabled;
-        out.roll_active  = _cfg.roll_enabled;
-        // Surface PD telemetry from the last computeCorrection run.
-        out.pitch_error    = _ts_pitch_error;
-        out.roll_error     = _ts_roll_error;
-        out.u_clamped      = _ts_pitch_u_clamped;
-        out.u_roll_clamped = _ts_roll_u_clamped;
-
-        // Apply WeightShift ankle bias even in task-space mode.
-        // V5 invariant: bias is feedforward shaping, not foot placement —
-        // it stays in SOURCE_BALANCE via MotionManager, not in the IK chain.
-        // Same path as the C-02 fix in the legacy (!pitch && !roll) gate.
-        if (fabsf(_cfg.ankle_roll_bias_l_deg) > 0.01f ||
-            fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f ||
-            fabsf(_cfg.swing_leveler_roll_bias_l_deg) > 0.01f ||
-            fabsf(_cfg.swing_leveler_roll_bias_r_deg) > 0.01f) {
-            _applyRollCorrection(0.0f, 0.0f, 0.0f, 0.0f);
-        }
-
-        _updateRecoveryDetection(out, state);
-        _lastState = out;
-        return out;
+    // Apply WeightShift ankle-roll bias. The bias is feedforward shaping, not
+    // foot placement — it stays in SOURCE_BALANCE via MotionManager, not in the
+    // IK chain.
+    if (fabsf(_cfg.ankle_roll_bias_l_deg) > 0.01f ||
+        fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f ||
+        fabsf(_cfg.swing_leveler_roll_bias_l_deg) > 0.01f ||
+        fabsf(_cfg.swing_leveler_roll_bias_r_deg) > 0.01f) {
+        _submitAnkleRollBias();
     }
 
-    // =========================================================================
-    //  PITCH PD (legacy joint-space path)
-    // =========================================================================
-    if (_cfg.pitch_enabled) {
-        // Derivative LPF — only advanced while pitch is enabled. The disable
-        // transition (BUG-04 block above) zeros the filter so the next enable
-        // does not see a stale state, preventing a Kd spike on re-arm.
-        _pitchRateFiltered = _cfg.derivative_lpf_alpha * _pitchRateFiltered
-                           + (1.0f - _cfg.derivative_lpf_alpha) * state.pitchRate;
-
-        // Smith predictor: predict future pitch to partially cancel servo lag.
-        float predictedPitch = state.pitch
-                             + state.pitchRate * _cfg.servo_lag_compensation_s;
-        float error = predictedPitch - _cfg.pitch_setpoint_rad;
-
-        out.pitch_active = true;
-        out.pitch_error  = error;
-
-        float u_raw = 0.0f, u_clamped = 0.0f;
-        float effKp = _cfg.Kp;  // default (inside deadband or boost disabled)
-
-        if (fabsf(error) >= _cfg.pitch_deadband_rad) {
-            // TASK-1: Compute nonlinear effective Kp.
-            effKp  = _computeEffectiveKp(fabsf(error), _cfg.Kp,
-                                          _cfg.gain_boost_threshold_rad,
-                                          _cfg.gain_boost_factor);
-            u_raw  = (effKp * error + _cfg.Kd * _pitchRateFiltered)
-                     * _cfg.correction_sign;
-            u_clamped = constrain(u_raw,
-                                  -_cfg.max_correction_deg,
-                                   _cfg.max_correction_deg);
-        }
-
-        float ankle_cmd = u_clamped * _cfg.ankle_ratio;
-        float hip_cmd   = u_clamped * _cfg.hip_ratio;
-        float torso_cmd = u_clamped * _cfg.torso_ratio;
-
-        _applyPitchCorrection(ankle_cmd, hip_cmd, torso_cmd, _pitchRateFiltered);
-
-        // Telemetry: pre-shaping values + effective_kp for UI transparency.
-        out.u_raw         = u_raw;
-        out.u_clamped     = u_clamped;
-        out.effective_kp  = effKp;
-        out.ankle_cmd_deg = ankle_cmd;
-        out.hip_cmd_deg   = hip_cmd;
-        out.torso_cmd_deg = torso_cmd;
-    }
-
-    // =========================================================================
-    //  ROLL PD
-    // =========================================================================
-    if (_cfg.roll_enabled) {
-        _rollRateFiltered = _cfg.roll_derivative_lpf_alpha * _rollRateFiltered
-                         + (1.0f - _cfg.roll_derivative_lpf_alpha) * state.rollRate;
-
-        float predictedRoll = state.roll
-                            + state.rollRate * _cfg.servo_lag_compensation_s;
-        float roll_error = predictedRoll - _cfg.roll_setpoint_rad;
-
-        out.roll_active = true;
-        out.roll_error  = roll_error;
-
-        float u_roll_raw = 0.0f, u_roll_clamped = 0.0f;
-        float effKpRoll  = _cfg.Kp_roll;
-
-        if (fabsf(roll_error) >= _cfg.roll_deadband_rad) {
-            effKpRoll    = _computeEffectiveKp(fabsf(roll_error), _cfg.Kp_roll,
-                                               _cfg.gain_boost_threshold_roll_rad,
-                                               _cfg.gain_boost_factor_roll);
-            u_roll_raw   = (effKpRoll * roll_error
-                            + _cfg.Kd_roll * _rollRateFiltered)
-                           * _cfg.roll_correction_sign;
-            u_roll_clamped = constrain(u_roll_raw,
-                                       -_cfg.max_roll_correction_deg,
-                                        _cfg.max_roll_correction_deg);
-        }
-
-        float ankle_r = u_roll_clamped * _cfg.ankle_roll_ratio;
-        float hip_r   = u_roll_clamped * _cfg.hip_roll_ratio;
-        float torso_r = u_roll_clamped * _cfg.torso_roll_ratio;
-
-        _applyRollCorrection(ankle_r, hip_r, torso_r, _rollRateFiltered);
-
-        out.u_roll_raw         = u_roll_raw;
-        out.u_roll_clamped     = u_roll_clamped;
-        out.effective_kp_roll  = effKpRoll;
-        out.ankle_roll_cmd_deg = ankle_r;
-        out.hip_roll_cmd_deg   = hip_r;
-        out.torso_roll_cmd_deg = torso_r;
-
-    } else if (fabsf(_cfg.ankle_roll_bias_l_deg) > 0.01f ||
-               fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f ||
-               fabsf(_cfg.swing_leveler_roll_bias_l_deg) > 0.01f ||
-               fabsf(_cfg.swing_leveler_roll_bias_r_deg) > 0.01f) {
-        // C-02 FIX: Roll PD is disabled, but WeightShift has injected a non-zero
-        // ankle roll bias. Without this branch, _applyRollCorrection() is never
-        // called, so the bias is never submitted to MotionManager and weight shift
-        // has no effect on ankle roll when roll controller is off.
-        //
-        // We call _applyRollCorrection() with zero PD correction (ankle/hip/torso=0,
-        // rate=0) so only the bias is applied. The IIR shaping for roll joints
-        // receives rawCmd=0, which the BUG-01 fix handles correctly: IIR decays
-        // toward zero, and the bias is added post-shaping at submission time.
-        // Velocity damping is also zero (rollRate_rs=0) — correct for bias-only mode.
-        _applyRollCorrection(0.0f, 0.0f, 0.0f, 0.0f);
-    }
-
-    out.active = out.pitch_active || out.roll_active;
-    out.fell   = false;
     _updateRecoveryDetection(out, state);
+    _pdValid   = true;   // PD output (getPDOutput) valid for TorsoStabilizer
     _lastState = out;
     return out;
+}
+
+// ---------------------------------------------------------------------------
+//  getPDOutput — snapshot of the clamped PD output for TorsoStabilizer.
+//  Valid only when the last update() ran past all gates (_pdValid).
+// ---------------------------------------------------------------------------
+BalancePDOutput BalanceController::getPDOutput() const {
+    BalancePDOutput o;
+    o.pitch_u_clamped = _ts_pitch_u_clamped;
+    o.roll_u_clamped  = _ts_roll_u_clamped;
+    o.pitch_rate_filt = _pitchRateFiltered;
+    o.roll_rate_filt  = _rollRateFiltered;
+    o.pitch_active    = _cfg.pitch_enabled;
+    o.roll_active     = _cfg.roll_enabled;
+    o.valid           = _pdValid;
+    return o;
 }
 
 // ---------------------------------------------------------------------------
@@ -511,8 +396,6 @@ BalanceCorrection BalanceController::computeCorrection(const IMUState& state) {
         _ts_roll_error     = 0.0f;
     }
 
-    bc.dPitch_deg = 0.0f;  // reserved
-    bc.dRoll_deg  = 0.0f;  // reserved
     // valid=false when both axes disabled: correction is a no-op and consumers
     // that check valid (e.g. GaitController idle bypass) correctly skip it.
     bc.valid = (_cfg.pitch_enabled || _cfg.roll_enabled);
@@ -523,8 +406,8 @@ BalanceCorrection BalanceController::computeCorrection(const IMUState& state) {
 //  _updateRecoveryDetection — Stage 0 catch-step detection.
 //
 //  Reads out.u_clamped / out.u_roll_clamped from the CURRENT tick (not
-//  _lastState, which would lag by one tick). Both legacy and task-space
-//  branches populate these fields before calling this helper.
+//  _lastState, which would lag by one tick). update() populates these fields
+//  before calling this helper.
 //
 //  Conditions (OR):
 //    (a) Either-axis tilt exceeds threshold
@@ -570,135 +453,29 @@ void BalanceController::_updateRecoveryDetection(BalanceState& out,
 }
 
 // ---------------------------------------------------------------------------
-//  _applyPitchCorrection
-//  All 5 pitch joints shaped every tick (even ratio=0) so the IIR for unused
-//  joints stays at zero rather than cold-starting on ratio change.
-// ---------------------------------------------------------------------------
-void BalanceController::_applyPitchCorrection(float ankle_deg, float hip_deg,
-                                               float torso_deg, float pitchRate_rs) {
-    if (_motionManager) {
-        float r_ank = _shapeOutput(BJI_R_ANKLE_PITCH,  ankle_deg,  pitchRate_rs);
-        float l_ank = _shapeOutput(BJI_L_ANKLE_PITCH,  ankle_deg,  pitchRate_rs);
-        float r_hip = _shapeOutput(BJI_R_HIP_PITCH,    hip_deg,    pitchRate_rs);
-        float l_hip = _shapeOutput(BJI_L_HIP_PITCH,    hip_deg,    pitchRate_rs);
-        // Torso pitch negated: pushes CoM opposite direction to ankle/hip.
-        // Negation before shaping so IIR tracks actual mechanical output direction.
-        float torso = _shapeOutput(BJI_TORSO_PITCH,   -torso_deg,  pitchRate_rs);
-
-        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_PITCH, r_ank);
-        _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_PITCH, l_ank);
-        if (_cfg.hip_ratio > 0.001f) {
-            _motionManager->submit(SOURCE_BALANCE, IDX_R_HIP_PITCH, r_hip);
-            _motionManager->submit(SOURCE_BALANCE, IDX_L_HIP_PITCH, l_hip);
-        }
-        if (_cfg.torso_balance_enabled && _cfg.torso_ratio > 0.001f) {
-            _motionManager->submit(SOURCE_BALANCE, IDX_TORSO_PITCH, torso);
-        }
-        return;
-    }
-
-    if (!_servo) return;
-    static bool _warned = false;
-    if (!_warned) {
-        Serial.println("[BalanceController] WARNING: MotionManager not wired.");
-        _warned = true;
-    }
-    float r_ank = _shapeOutput(BJI_R_ANKLE_PITCH,  ankle_deg,  pitchRate_rs);
-    float l_ank = _shapeOutput(BJI_L_ANKLE_PITCH,  ankle_deg,  pitchRate_rs);
-    float r_hip = _shapeOutput(BJI_R_HIP_PITCH,    hip_deg,    pitchRate_rs);
-    float l_hip = _shapeOutput(BJI_L_HIP_PITCH,    hip_deg,    pitchRate_rs);
-    float torso = _shapeOutput(BJI_TORSO_PITCH,   -torso_deg,  pitchRate_rs);
-    _servo->setJointAngleDirect(IDX_R_ANKLE_PITCH, r_ank);
-    _servo->setJointAngleDirect(IDX_L_ANKLE_PITCH, l_ank);
-    if (_cfg.hip_ratio   > 0.001f) {
-        _servo->setJointAngleDirect(IDX_R_HIP_PITCH, r_hip);
-        _servo->setJointAngleDirect(IDX_L_HIP_PITCH, l_hip);
-    }
-    if (_cfg.torso_balance_enabled && _cfg.torso_ratio > 0.001f) {
-        _servo->setJointAngleDirect(IDX_TORSO_PITCH, torso);
-    }
-}
-
-// ---------------------------------------------------------------------------
-//  _applyRollCorrection — TASK-2: adds ankle roll bias AFTER shaping.
+//  _submitAnkleRollBias — submits the ankle-roll bias to MotionManager.
 //
-//  The shaped balance correction alone would completely override the weight
-//  shift ankle position (SOURCE_BALANCE > SOURCE_GAIT in MotionManager).
-//  Instead, WeightShift no longer submits ankle roll via MotionManager.
-//  It sets ankle_roll_bias_l/r_deg in BalanceConfig each tick. Here we add
-//  those baseline offsets after the IIR smoother so:
-//    final_l = shaped_correction_l + bias_l
-//    final_r = shaped_correction_r + bias_r
+//  This is the only joint-space leg output BalanceController still owns. Leg
+//  pitch/roll balance is task-space (computeCorrection → dx_mm/dy_mm).
 //
-//  The balance controller corrections are now additive ON TOP of the shift.
-//  When the roll error equals the setpoint (robot achieved target lean),
-//  u_roll ≈ 0, and the only submission is the bias — robot holds the lean.
-//  When roll error diverges, correction is added/subtracted around the bias.
+//  Two independent bias sources, summed:
+//    ankle_roll_bias_*_deg          — WeightShift CoM-translation bias
+//    swing_leveler_roll_bias_*_deg  — closed-loop foot leveler bias
 //
-//  Bias sign convention (matches the negation applied to right ankle):
-//    For leftward tilt: bias_l > 0, bias_r < 0
-//    Both produce the same physical tilt direction (verified via balance sign).
+//  _shapeOutput is still run on the ankle-roll joints with a zero correction
+//  input so the IIR state decays cleanly (BUG-01 zero-bypass); the bias is
+//  added AFTER shaping so it does not drift the IIR state. Both biases ride the
+//  SOURCE_BALANCE priority slot so the leveler (otherwise SOURCE_GAIT) is not
+//  discarded by arbitration.
+//
+//  Bias sign convention (matches the negation applied to the right ankle):
+//    For leftward tilt: bias_l > 0, bias_r < 0.
 // ---------------------------------------------------------------------------
-void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg,
-                                              float torso_deg, float rollRate_rs) {
-    if (_motionManager) {
-        // Shape correction (right negated for consistent physical direction).
-        float shaped_r = _shapeOutput(BJI_R_ANKLE_ROLL, -ankle_deg, rollRate_rs);
-        float shaped_l = _shapeOutput(BJI_L_ANKLE_ROLL,  ankle_deg, rollRate_rs);
-        float r_hip    = _shapeOutput(BJI_R_HIP_ROLL,    hip_deg,   rollRate_rs);
-        float l_hip    = _shapeOutput(BJI_L_HIP_ROLL,    hip_deg,   rollRate_rs);
-        float torso    = _shapeOutput(BJI_TORSO_ROLL,    torso_deg, rollRate_rs);
-
-        // TASK-2: Add weight shift baseline AFTER shaping.
-        // IIR history (filtered_cmd_deg) still tracks only the balance correction;
-        // the bias is applied at submission time so it does not drift the IIR state.
-        // Two independent bias sources, added post-shaping:
-        //   ankle_roll_bias_*_deg          — WeightShift CoM-translation bias
-        //   swing_leveler_roll_bias_*_deg  — closed-loop foot leveler bias
-        // Composing here rather than at submission lets both ride the
-        // SOURCE_BALANCE priority slot together; otherwise the leveler at
-        // SOURCE_GAIT would be silently discarded.
-        float final_r = shaped_r
-                      + _cfg.ankle_roll_bias_r_deg
-                      + _cfg.swing_leveler_roll_bias_r_deg;
-        float final_l = shaped_l
-                      + _cfg.ankle_roll_bias_l_deg
-                      + _cfg.swing_leveler_roll_bias_l_deg;
-
-        // Final clamp: combined bias + correction must not exceed joint limits.
-        // JointModel enforces hard limits, but this prevents unnecessary chatter
-        // against those limits from balance vs. weight shift contention.
-        // M-04 FIX: headroom must accommodate the LARGER of the two biases.
-        // The previous code only used left bias; if right is larger (asymmetric
-        // shift), the right clamp was too tight and could fight the weight shift.
-        const float biasL = fabsf(_cfg.ankle_roll_bias_l_deg)
-                          + fabsf(_cfg.swing_leveler_roll_bias_l_deg);
-        const float biasR = fabsf(_cfg.ankle_roll_bias_r_deg)
-                          + fabsf(_cfg.swing_leveler_roll_bias_r_deg);
-        const float maxBias  = fmaxf(biasL, biasR);
-        float maxAnkle = _cfg.max_roll_correction_deg + maxBias;
-        maxAnkle = constrain(maxAnkle, 1.0f, 40.0f);
-        final_r  = constrain(final_r, -maxAnkle, maxAnkle);
-        final_l  = constrain(final_l, -maxAnkle, maxAnkle);
-
-        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_ROLL, final_r);
-        _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_ROLL, final_l);
-        if (_cfg.hip_roll_ratio > 0.001f) {
-            _motionManager->submit(SOURCE_BALANCE, IDX_R_HIP_ROLL, r_hip);
-            _motionManager->submit(SOURCE_BALANCE, IDX_L_HIP_ROLL, l_hip);
-        }
-        if (_cfg.torso_balance_enabled && _cfg.torso_roll_ratio > 0.001f) {
-            _motionManager->submit(SOURCE_BALANCE, IDX_TORSO_ROLL, torso);
-        }
-        return;
-    }
-
-    if (!_servo) return;
-    float shaped_r = _shapeOutput(BJI_R_ANKLE_ROLL, -ankle_deg, rollRate_rs);
-    float shaped_l = _shapeOutput(BJI_L_ANKLE_ROLL,  ankle_deg, rollRate_rs);
-    float r_hip    = _shapeOutput(BJI_R_HIP_ROLL,    hip_deg,   rollRate_rs);
-    float l_hip    = _shapeOutput(BJI_L_HIP_ROLL,    hip_deg,   rollRate_rs);
-    float torso    = _shapeOutput(BJI_TORSO_ROLL,    torso_deg, rollRate_rs);
+void BalanceController::_submitAnkleRollBias() {
+    // Shape a zero correction so the ankle-roll IIR decays toward zero.
+    // (rawCmd=0 hits the BUG-01 zero-bypass — sign of the zero is irrelevant.)
+    float shaped_r = _shapeOutput(BJI_R_ANKLE_ROLL, 0.0f, 0.0f);
+    float shaped_l = _shapeOutput(BJI_L_ANKLE_ROLL, 0.0f, 0.0f);
 
     float final_r = shaped_r
                   + _cfg.ankle_roll_bias_r_deg
@@ -706,6 +483,9 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg,
     float final_l = shaped_l
                   + _cfg.ankle_roll_bias_l_deg
                   + _cfg.swing_leveler_roll_bias_l_deg;
+
+    // Final clamp: combined bias must not exceed joint limits. Headroom must
+    // accommodate the LARGER of the two sides (asymmetric shift).
     const float biasL = fabsf(_cfg.ankle_roll_bias_l_deg)
                       + fabsf(_cfg.swing_leveler_roll_bias_l_deg);
     const float biasR = fabsf(_cfg.ankle_roll_bias_r_deg)
@@ -713,16 +493,16 @@ void BalanceController::_applyRollCorrection(float ankle_deg, float hip_deg,
     const float maxBias  = fmaxf(biasL, biasR);
     float maxAnkle = _cfg.max_roll_correction_deg + maxBias;
     maxAnkle = constrain(maxAnkle, 1.0f, 40.0f);
-    final_r = constrain(final_r, -maxAnkle, maxAnkle);
-    final_l = constrain(final_l, -maxAnkle, maxAnkle);
+    final_r  = constrain(final_r, -maxAnkle, maxAnkle);
+    final_l  = constrain(final_l, -maxAnkle, maxAnkle);
 
-    _servo->setJointAngleDirect(IDX_R_ANKLE_ROLL, final_r);
-    _servo->setJointAngleDirect(IDX_L_ANKLE_ROLL, final_l);
-    if (_cfg.hip_roll_ratio   > 0.001f) {
-        _servo->setJointAngleDirect(IDX_R_HIP_ROLL, r_hip);
-        _servo->setJointAngleDirect(IDX_L_HIP_ROLL, l_hip);
+    if (_motionManager) {
+        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_ROLL, final_r);
+        _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_ROLL, final_l);
+        return;
     }
-    if (_cfg.torso_balance_enabled && _cfg.torso_roll_ratio > 0.001f) {
-        _servo->setJointAngleDirect(IDX_TORSO_ROLL, torso);
+    if (_servo) {
+        _servo->setJointAngleDirect(IDX_R_ANKLE_ROLL, final_r);
+        _servo->setJointAngleDirect(IDX_L_ANKLE_ROLL, final_l);
     }
 }

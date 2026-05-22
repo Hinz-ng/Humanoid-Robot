@@ -27,7 +27,6 @@ void WeightShift::forceCenterImmediate() {
         _targetProgress[i]    = 0.0f;
         _delayRemaining_ms[i] = 0.0f;
     }
-    _lastInjectedSetpointRad = 0.0f;
     _settledAtMs = 0;
     _smoothedForwardLean_mm  = 0.0f;
     _swingMask     = SwingLeg::NONE;
@@ -139,7 +138,7 @@ void WeightShift::update(float dt_s) {
     //
     // TASK-2 CORE: WeightShift no longer submits ankle roll via SOURCE_GAIT.
     //
-    // Bias sign convention (must match _applyRollCorrection):
+    // Bias sign convention (must match _submitAnkleRollBias):
     //   bias_r = −rightProgress × amp  →  for LEFT(right=+1): bias_r = −5°
     //   bias_l = +leftProgress  × amp  →  for LEFT(left=+1):  bias_l = +5°
     //   Both produce the same physical tilt (body tilts left for left shift).
@@ -149,7 +148,7 @@ void WeightShift::update(float dt_s) {
     // The balance controller reads these from _cfg each tick and adds them
     // to the shaped correction AFTER the IIR, so correction is additive.
     // Per-leg ankle roll bias. Sign convention preserved from the original
-    // task-2 design (see _applyRollCorrection):
+    // task-2 design (see _submitAnkleRollBias):
     //   bias_r = -rightProgress x amp
     //   bias_l = +leftProgress  x amp
     // SWING-LEG MASK: scale the swing side by (1 - liftFrac). At peak swing
@@ -160,7 +159,7 @@ void WeightShift::update(float dt_s) {
     const float scaleR = (_swingMask == SwingLeg::RIGHT) ? (1.0f - _swingLiftFrac) : 1.0f;
 
     // Sign convention preserved char-for-char from pre-Phase-2 (see
-    // _applyRollCorrection): bias_r = -rightProgress × amp, bias_l = +leftProgress × amp.
+    // _submitAnkleRollBias): bias_r = -rightProgress × amp, bias_l = +leftProgress × amp.
     // Both produce the same physical body tilt direction — this is the mirror
     // operation, NOT duplication.
     const float biasRightDeg = (fabsf(_cfg.ankle_shift_deg) > 0.01f)
@@ -174,17 +173,10 @@ void WeightShift::update(float dt_s) {
     _bal->setAnkleRollBias(Side::LEFT,  biasLeftDeg);
     _bal->setAnkleRollBias(Side::RIGHT, biasRightDeg);
 
-    // Roll setpoint: use average progress. Update only if changed > 0.5 mrad.
-    // Suppressed in task-space mode — lateral CoM control flows through
-    // FootTarget.y_mm instead. Injecting a setpoint would cause balance to
-    // chase a lean target that conflicts with dy_mm placement.
-    const float newSetpoint = -_state.progress * fabsf(_cfg.setpoint_shift_rad);
-    if (!_bal->getConfig().task_space_output) {
-        if (fabsf(newSetpoint - _lastInjectedSetpointRad) > 0.0005f) {
-            _bal->setRollSetpointRad(newSetpoint);
-            _lastInjectedSetpointRad = newSetpoint;
-        }
-    }
+    // Roll setpoint is intentionally NOT injected into BalanceConfig: lateral
+    // CoM control flows through FootTarget.y_mm (task-space dy). Injecting a
+    // roll setpoint would make balance chase a lean target that conflicts with
+    // dy_mm foot placement.
 
     // ── Forward-lean IIR smoothing (mm-space) ────────────────────────────────
     // Stage 2: the |progress|-driven body-forward offset has a derivative

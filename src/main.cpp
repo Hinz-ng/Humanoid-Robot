@@ -9,6 +9,7 @@
 #include "weight_shift.h"          // gait: CoM lateral shift
 #include "leg_ik.h"
 #include "gait_controller.h"
+#include "torso_stabilizer.h"      // joint-space torso balance (consolidation refactor)
 #include <math.h>
 
 #ifdef UNIT_TEST
@@ -81,6 +82,7 @@ ServoControl      servoController;
 WebComm           webComm(&servoController);
 StateEstimator    stateEstimator;
 BalanceController balanceController(&servoController);
+TorsoStabilizer   torsoStabilizer;  // joint-space torso balance — wired in setup()
 MotionManager     motionManager;   // joint authority layer — wired in setup()
 WeightShift       weightShift;     // gait: CoM lateral shift — wired in setup()
 
@@ -165,6 +167,7 @@ void oe_estop() {
     // benign if signal lines float while OE is high.
     servoController.resetToNeutral();   // pre-zero to prevent violent snap
     balanceController.resetOutputState();  // was resetOutputState() — method renamed
+    torsoStabilizer.resetOutputState();
 
     digitalWrite(OE_PIN, HIGH);
     Serial.println("[OE] *** EMERGENCY STOP *** Outputs DISABLED (OE=HIGH).");
@@ -173,6 +176,7 @@ void oe_estop() {
 void oe_clear() {
     servoController.resetToNeutral();
     balanceController.resetState();
+    torsoStabilizer.resetOutputState();
     balanceController.setAnkleRollBias(0.0f, 0.0f);
     balanceController.setRollSetpointRad(0.0f);
     // Reset weight shift to center so no stale lean is applied on re-enable.
@@ -237,7 +241,9 @@ void setup() {
     // init() stores a pointer to servoController (no hardware calls yet).
     motionManager.init(&servoController);
     balanceController.setMotionManager(&motionManager);
+    torsoStabilizer.setMotionManager(&motionManager);
     webComm.setBalanceController(&balanceController);
+    webComm.setTorsoStabilizer(&torsoStabilizer);
     webComm.setMotionManager(&motionManager);
     weightShift.init(&balanceController, &motionManager);
     webComm.setWeightShift(&weightShift);
@@ -382,26 +388,17 @@ void loop() {
             // Note: swing-leg bias masking is now internal to WeightShift,
             // driven by GaitController::_publishSwingLegMaskToWS() each tick.
 
-            // Stage 3: when task_space_output=true, balance runs FIRST so its
-            // correction is available when gait builds FootTargets. Legacy order
-            // preserved when task_space_output=false.
-            //
-            // Recovery flag wiring: both paths pass a BalanceState* to
-            // gaitController.update() so catch-step detection can observe the flag.
-            // Task-space: current-tick balState (fresh).
-            // Legacy: previous-tick balState via getLastState() — at most 2.5 ms stale,
-            // which is well within the recovery_confirm_ticks debounce window.
-            const bool taskSpace = balanceController.getConfig().task_space_output;
-            BalanceState balState;
-            if (taskSpace) {
-                balState = balanceController.update(state);
-                const BalanceCorrection bc = balanceController.getLastCorrection();
-                gaitController.update(dt, state, &bc, &balState, footSnapPtr);
-            } else {
-                const BalanceState lastBal = balanceController.getLastState();
-                gaitController.update(dt, state, nullptr, &lastBal, footSnapPtr);
-                balState = balanceController.update(state);
-            }
+            // Balance runs FIRST so its task-space correction is available when
+            // gait builds FootTargets. The current-tick BalanceState* is passed
+            // to gaitController.update() so catch-step detection can observe the
+            // recovery flag fresh.
+            BalanceState balState = balanceController.update(state);
+            // Torso stabiliser (joint-space) consumes the balance PD output;
+            // runs after balance, before gait — torso joints are not in the
+            // IK chain so ordering vs gait is immaterial for them.
+            torsoStabilizer.update(balanceController.getPDOutput());
+            const BalanceCorrection bc = balanceController.getLastCorrection();
+            gaitController.update(dt, state, &bc, &balState, footSnapPtr);
 
             // Flush after ALL sources have submitted for this tick:
             //   balanceController.update() → submit(SOURCE_BALANCE, ...)

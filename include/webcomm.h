@@ -14,6 +14,7 @@
 class MotionManager;
 class WeightShift;
 class GaitController;    // forward declare — only pointer stored
+class TorsoStabilizer;   // forward declare — joint-space torso balance
 class LSM6DSVDriver;     // forward declare — foot IMU diagnostic
 class SwingFootLeveler;  // forward declare — swing-foot leveler (L0+)
 class FootImpactDetector;
@@ -47,6 +48,9 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // Firmware is source of truth; client updates sliders without sending back.
     void broadcastWeightShiftConfig(AsyncWebSocketClient* client);
     void setBalanceController(BalanceController* bal);
+    // Wire the joint-space torso stabiliser — owns the torso pitch/roll config
+    // (TorsoConfig) that BALANCE_TUNE torso keys write to and BALANCE: broadcasts.
+    void setTorsoStabilizer(TorsoStabilizer* ts);
     // Wire the joint authority layer. Call once in setup() after motionManager.init().
     // When wired, slider commands are routed through MotionManager so they silently
     // lose to any active controller (BALANCE or GAIT) on shared joints.
@@ -78,6 +82,7 @@ private:
     uint32_t _lastFootImpactBroadcast_us    = 0;
     uint32_t _lastCalibBroadcast_us     = 0;   // rate-limits calib status to 10 Hz
     BalanceController* _balCtrl         = nullptr;
+    TorsoStabilizer*   _torsoStab       = nullptr;  // joint-space torso balance
     uint32_t           _lastBalanceBroadcast_us = 0;
     MotionManager*     _motionManager   = nullptr;  // joint authority layer
     WeightShift*       _weightShift     = nullptr;  // gait: CoM lateral shift

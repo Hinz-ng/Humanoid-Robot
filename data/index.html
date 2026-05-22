@@ -709,20 +709,6 @@
             </div>
         </div>
 
-        <!--
-            Correction formula — live values substituted each BALANCE: packet.
-            Shows the actual math the controller ran on the last tick.
-            u = (Kp × error + Kd × pitchRate) × correction_sign  →  clamped  →  joints
-        -->
-        <div class="bal-formula">
-            <div><span class="lbl">error    = </span><span class="val" id="bfErr">—</span><span class="lbl"> rad  (pitch − setpoint)</span></div>
-            <div><span class="lbl">u_raw    = Kp×err + Kd×rate = </span><span class="val" id="bfKp">—</span><span class="lbl">×</span><span class="val" id="bfErr2">—</span><span class="lbl"> + </span><span class="val" id="bfKd">—</span><span class="lbl">×rate</span></div>
-            <div><span class="lbl">u_clamp  = </span><span class="hi"  id="bfU">—</span><span class="lbl"> °  (clamped to ±<span id="bfMax">15</span>°)</span></div>
-            <div><span class="lbl">ankle    = u × ankle_ratio = </span><span class="hi" id="bfAnkle">—</span><span class="lbl"> °</span></div>
-            <div><span class="lbl">hip      = u × hip_ratio   = </span><span class="hi" id="bfHip">—</span><span class="lbl"> °</span></div>
-            <div><span class="lbl">torso    = u × torso_ratio = </span><span class="hi" id="bfTorso">—</span><span class="lbl"> °</span></div>
-        </div>
-
         <!-- Live output cells — pitch row then roll row -->
         <div class="section-label">Pitch outputs</div>
         <div class="bal-outputs mb-8">
@@ -799,22 +785,9 @@
             </div>
 
             <div class="bal-tune-row">
-                <div class="tune-header"><span>Ankle ratio</span><span class="tune-val" id="tvAnkle">1.00</span></div>
-                <input type="range" id="slAnkle" min="0" max="1" step="0.05" value="1"
-                       oninput="updateTuneLabel('ankle',this.value); sendBalanceKey('ankle', this.value)">
-            </div>
-
-            <div class="bal-tune-row">
-                <div class="tune-header"><span>Hip ratio</span><span class="tune-val" id="tvHip">0.00</span></div>
-                <input type="range" id="slHip" min="0" max="1" step="0.05" value="0"
-                       oninput="updateTuneLabel('hip',this.value); sendBalanceKey('hip', this.value)">
-            </div>
-
-            <div class="bal-tune-row">
                 <!--
-                    Torso pitch ratio — engage only after ankle + hip strategy is confirmed stable.
-                    Firmware normalises ankle + hip + torso to 1.0 on receipt, so raising torso
-                    proportionally reduces the others. Verify torso_pitch direction before use.
+                    Torso pitch ratio — raw gain on the pitch PD output applied
+                    to the torso joint. Verify torso_pitch direction before use.
                 -->
                 <div class="tune-header"><span>Torso ratio</span><span class="tune-val" id="tvTorso">0.00</span></div>
                 <input type="range" id="slTorso" min="0" max="1" step="0.05" value="0"
@@ -906,18 +879,6 @@
             </div>
 
             <div class="bal-tune-row">
-                <div class="tune-header"><span>Ankle roll ratio</span><span class="tune-val" id="tvAnkle_r">1.00</span></div>
-                <input type="range" id="slAnkle_r" min="0" max="1" step="0.05" value="1"
-                       oninput="updateRollTuneLabel('a_roll',this.value); sendBalanceKey('a_roll', this.value)">
-            </div>
-
-            <div class="bal-tune-row">
-                <div class="tune-header"><span>Hip roll ratio</span><span class="tune-val" id="tvHip_r">0.00</span></div>
-                <input type="range" id="slHip_r" min="0" max="1" step="0.05" value="0"
-                       oninput="updateRollTuneLabel('h_roll',this.value); sendBalanceKey('h_roll', this.value)">
-            </div>
-
-            <div class="bal-tune-row">
                 <div class="tune-header"><span>Torso roll ratio</span><span class="tune-val" id="tvTorso_r">0.00</span></div>
                 <input type="range" id="slTorso_r" min="0" max="1" step="0.05" value="0"
                        oninput="updateRollTuneLabel('t_roll',this.value); sendBalanceKey('t_roll', this.value)">
@@ -934,24 +895,16 @@
 
         </div><!-- /.roll tune grid -->
 
-        <!-- ── Task-space mode (Stage 3) ─────────────────────────────────── -->
+        <!-- ── Task-space leg correction ─────────────────────────────────── -->
         <details id="tsDetails" class="panel-divider">
             <summary class="summary-toggle">
-                Task-space mode (Stage 3)
+                Task-space leg correction
                 <span class="note-muted">
                     Balance outputs dx/dy mm → merged into FootTarget before IK
                 </span>
             </summary>
             <div class="mt-10">
-                <!-- Toggle -->
-                <div class="flex-row-gap-bottom">
-                    <span class="label-inline-medium">Task-space</span>
-                    <button id="btnTsOff" class="btn-bal-off btn-sign btn-sign-active"
-                            onclick="setTaskSpace(false)">OFF (joint-space)</button>
-                    <button id="btnTsOn"  class="btn-bal-on btn-sign"
-                            onclick="setTaskSpace(true)">ON (task-space)</button>
-                </div>
-                <!-- Joint-space torso balance — independent of task-space toggle.
+                <!-- Joint-space torso balance — independent toggle.
                      Default ON (matches firmware). When OFF, torso pitch/roll
                      servos are not driven by BalanceController even if task-space
                      leg corrections (dx/dy) are active. -->
@@ -999,9 +952,7 @@
                     </div>
                 </div>
                 <div class="note-secondary">
-                    ⚠ Reorders tick: balance → gait(merge) instead of gait → balance(override).<br>
-                    ⚠ Enable roll controller when using task-space roll correction.<br>
-                    ⚠ roll_setpoint injection from WeightShift is suppressed in this mode.
+                    ⚠ Enable the roll controller when using task-space roll correction.
                 </div>
             </div>
         </details>
@@ -2630,7 +2581,7 @@ function initWebSocket() {
             _setBadge("pitchStatus", "pitchOnBtn", "pitchOffBtn", pitchEn);
             _setBadge("rollStatus",  "rollOnBtn",  "rollOffBtn",  rollEn);
 
-            // ── Pitch formula display (live values in rad and deg) ────────────
+            // ── Pitch live values (rad/deg) used by the output cells below ────
             const pErrRad = parseFloat(v["p_err"] || "0");
             const pErrDeg = (pErrRad * 180 / Math.PI).toFixed(3);
             const pU      = parseFloat(v["p_u"]   || "0").toFixed(3);
@@ -2645,16 +2596,6 @@ function initWebSocket() {
             const effKp = parseFloat(v["eff_kp"] || "0");
             const effKpEl = document.getElementById("tvEffKp");
             if (effKpEl) effKpEl.textContent = effKp.toFixed(2);
-
-            document.getElementById("bfErr").textContent  = pErrRad.toFixed(4);
-            document.getElementById("bfErr2").textContent = pErrRad.toFixed(4);
-            document.getElementById("bfKp").textContent   = Kp.toFixed(2);
-            document.getElementById("bfKd").textContent   = Kd.toFixed(2);
-            document.getElementById("bfU").textContent    = pU;
-            document.getElementById("bfAnkle").textContent = pAnkle;
-            document.getElementById("bfHip").textContent   = pHip;
-            document.getElementById("bfTorso").textContent = pTorso;
-            document.getElementById("bfMax").textContent   = v["mx"] || "15";
 
             // ── Pitch live output cells ───────────────────────────────────────
             document.getElementById("bErr").textContent   = pErrDeg + "°";
@@ -2679,8 +2620,6 @@ function initWebSocket() {
                 _syncSlider("slKd",    "tvKd",    Kd,                          2);
                 _syncSlider("slSp",    "tvSp",    spRad * 180 / Math.PI,      1);
                 _syncSlider("slMax",   "tvMax",   parseFloat(v["mx"]  || "15"), 0);
-                _syncSlider("slAnkle", "tvAnkle", parseFloat(v["a_r"] || "1"),  2);
-                _syncSlider("slHip",   "tvHip",   parseFloat(v["h_r"] || "0"),  2);
                 _syncSlider("slTorso", "tvTorso", parseFloat(v["t_r"] || "0"),  2);
                 const sign = parseFloat(v["sgn"] || "1");
                 document.getElementById("tvSign").textContent = sign >= 0 ? "+1" : "−1";
@@ -2690,8 +2629,6 @@ function initWebSocket() {
                 _syncSlider("slKd_r",    "tvKd_r",    parseFloat(v["Kd_r"]  || "0.2"), 2);
                 _syncSlider("slSp_r",    "tvSp_r",    parseFloat(v["sp_r"]  || "0") * 180 / Math.PI, 1);
                 _syncSlider("slMax_r",   "tvMax_r",   parseFloat(v["mx_r"]  || "8"),   0);
-                _syncSlider("slAnkle_r", "tvAnkle_r", parseFloat(v["a_rr"]  || "1"),   2);
-                _syncSlider("slHip_r",   "tvHip_r",   parseFloat(v["h_rr"]  || "0"),   2);
                 _syncSlider("slTorso_r", "tvTorso_r", parseFloat(v["t_rr"]  || "0"),   2);
                 const signR = parseFloat(v["sgn_r"] || "-1");
                 document.getElementById("tvSign_r").textContent = signR >= 0 ? "+1" : "−1";
@@ -2730,13 +2667,8 @@ function initWebSocket() {
             if (v["ws_prog"] !== undefined) {
                 updateWShiftProgress(parseFloat(v["ws_prog"]), v["ws_ramp"] === "1");
             }
-            // Stage 3: task-space telemetry.
-            if (v["ts"] !== undefined) {
-                const tsOn = v["ts"] === "1";
-                const btnOff = document.getElementById("btnTsOff");
-                const btnOn  = document.getElementById("btnTsOn");
-                if (btnOff) btnOff.className = "btn-bal-off btn-sign" + (!tsOn ? " btn-sign-active" : "");
-                if (btnOn)  btnOn.className  = "btn-bal-on btn-sign"  + ( tsOn ? " btn-sign-active" : "");
+            // Task-space dx/dy live foot-target corrections.
+            if (v["dx"] !== undefined) {
                 const dxEl = document.getElementById("tsDx");
                 const dyEl = document.getElementById("tsDy");
                 if (dxEl) dxEl.textContent = parseFloat(v["dx"] || "0").toFixed(2);
@@ -3041,17 +2973,7 @@ function updateBoostLabel(id, val) {
 // Boost knobs fold into sendBalanceKey too. The slider for boost_thresh is
 // in degrees; the oninput call site does the deg->rad conversion inline.
 
-// ── Task-space mode (Stage 3) controls ───────────────────────────────────────
-function setTaskSpace(enable) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        const val = enable ? 1 : 0;
-        ws.send(`CMD:BALANCE_TUNE:task_space=${val}`);
-        document.getElementById("btnTsOff").className = "btn-bal-off btn-sign" + (!enable ? " btn-sign-active" : "");
-        document.getElementById("btnTsOn").className  = "btn-bal-on btn-sign"  + ( enable ? " btn-sign-active" : "");
-    }
-}
-
-// Joint-space torso balance toggle — independent of task-space mode.
+// Joint-space torso balance toggle.
 // Sends torso_bal=0|1; the active-button styling is also synced from the
 // `tb=` field in the BALANCE: packet (handles startup state + multi-client).
 function setTorsoBalance(enable) {

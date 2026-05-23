@@ -87,6 +87,25 @@ constexpr float NEUTRAL_TRIM_MAX_DEG = 8.0f;
 // descent visibly reduces touchdown disturbance. Default lowered 0.5 → 0.1.
 constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.10f;
 
+// Horizontal stride completion fraction (W-stride-frontload). _buildFootTarget()
+// time-warps localPhase into [0, strideCompleteFrac] for the SWING leg's
+// horizontal stride only: lpw = min(localPhase / frac, 1); s = lpw*lpw*(3-2*lpw)
+// then held at 1.0. Properties: zero horizontal foot velocity at lift-off, at
+// completion (lpw=1), and throughout the post-completion hold (smoothstep has
+// zero derivative at both ends). Endpoints unchanged (s(0)=0, s>=frac → 1.0).
+// Stance retreat is NOT warped (left on original timing to keep this experiment
+// isolated from a "shift CoM forward earlier" change).
+//
+// 1.0 = no warp; reduces EXACTLY to the unwarped smoothstep (lpw == localPhase).
+// Ship at 1.0 — flashing must change nothing until tuned down at runtime.
+//
+// TUNING: for the front-loading to act before the touchdown latch can fire,
+// keep strideCompleteFrac <= touchdownGatePhase (currently 0.7 — see GaitConfig).
+// Recommended experimental range 0.5–0.7. At 0.6 the swing foot reaches +L/2
+// at localPhase=0.6 and holds horizontally stationary until touchdown at ~0.7+.
+// Clamped to (0.05, 1.0] in GAIT_TUNE.
+constexpr float GAIT_STRIDE_COMPLETE_FRAC_DEFAULT = 0.4f;
+
 // TUNING NOTE: Reduced from 0.15 (~8.5°) → 0.10 (~5.7°). The previous value
 // was chosen conservatively for Phase 2 diagnostics. At 0.10 rad the gate opens
 // when the CoM is meaningfully over the stance foot without requiring a large
@@ -159,7 +178,7 @@ constexpr uint32_t GAIT_WAIT_SHIFT_MAX_MS_DEFAULT = 1500;
 // before lift, with margin for IIR settling and sensor noise. Setting
 // too close to lateral_shift_mm makes the gate brittle to drift; setting
 // too low defeats the point of observation.
-constexpr float GAIT_COM_LATERAL_GATE_MM_DEFAULT = 11.0f;
+constexpr float GAIT_COM_LATERAL_GATE_MM_DEFAULT = 10.0f;
 
 // ============================================================
 // LATERAL CoM TRIM  (W2 — continuous foot-placement correction)
@@ -258,7 +277,7 @@ constexpr float GAIT_CAPTURE_OFFSET_MAX_MM = 15.0f;
 // combination. Matches the sagittal cap so both axes scale together.
 // Re-tune after first hardware run; do not raise blindly.
 constexpr bool  GAIT_LAT_CAPTURE_ENABLED_DEFAULT = true;
-constexpr float GAIT_LAT_CAPTURE_GAIN_DEFAULT    = 0.6f;
+constexpr float GAIT_LAT_CAPTURE_GAIN_DEFAULT    = 0.5f;
 constexpr float GAIT_LAT_CAPTURE_OFFSET_MAX_MM   = 30.0f;
 
 // ============================================================

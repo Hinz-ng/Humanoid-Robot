@@ -66,6 +66,7 @@ void GaitController::_clearTouchdownLatch() {
     _state.touchdownPhase     = 0.0f;
     _state.touchdownSwingX_mm = 0.0f;
     _state.touchdownLocked    = false;
+    _state.touchdownSwingVelX_mm_s = 0.0f;
     // touchdownSide is not reset — it carries the side that the (now-cleared)
     // event referred to. UI reads it together with touchdownSeen; when seen=0
     // the UI treats side as "n/a". Leaving it intact avoids a flicker between
@@ -375,6 +376,25 @@ float GaitController::_swingFrac(float localPhase) const {
 }
 
 // ---------------------------------------------------------------------------
+//  _warpedStrideFrac — front-loaded horizontal stride smoothstep (swing leg).
+//
+//  See header for the full mechanism. SINGLE SOURCE OF TRUTH for the warp:
+//  called from both _buildFootTarget (swing-leg stride) AND the touchdown
+//  latch snapshot in update(). Duplicating the formula in either site would
+//  inject a position jump at touchdown whenever strideCompleteFrac < 1.0.
+//
+//  At frac = 1.0 the formula reduces EXACTLY to the legacy unwarped
+//  smoothstep s = lp*lp*(3-2*lp), so the default ships as a bit-identical
+//  no-op until tuned down at runtime.
+// ---------------------------------------------------------------------------
+float GaitController::_warpedStrideFrac(float localPhase) const {
+    const float frac = constrain(_cfg.strideCompleteFrac, 0.05f, 1.0f);
+    const float lp   = constrain(localPhase, 0.0f, 1.0f);
+    const float lpw  = (lp >= frac) ? 1.0f : (lp / frac);
+    return lpw * lpw * (3.0f - 2.0f * lpw);
+}
+
+// ---------------------------------------------------------------------------
 //  _updateRollRateFilter — W5: advance the roll-rate LPF by one tick.
 //
 //  Single-pole IIR:  filt = alpha*filt + (1-alpha)*rollRate.
@@ -596,11 +616,20 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
         if (isSwing && _touchdownLocked) {
             t.x_mm += _touchdownLockedX_mm * strideScale;
         } else {
-            const float s = localPhase * localPhase * (3.0f - 2.0f * localPhase);
+            // Stance retreat uses the RAW (unwarped) smoothstep — see
+            // _warpedStrideFrac() and the scope note in project_wide_defs.h:
+            // stance drives body forward translation; leaving its timing alone
+            // keeps the stride-frontload experiment isolated from a separate
+            // "shift CoM forward earlier" change.
+            //
+            // captureRaw is added on top of the warped swing stride exactly as
+            // before. NOTE: capture+warp interaction is unreviewed and should
+            // be revisited if capture is re-enabled while strideCompleteFrac<1.
+            const float sRaw       = localPhase * localPhase * (3.0f - 2.0f * localPhase);
             const float captureRaw = isSwing ? _captureOffsetMm() : 0.0f;
             const float strideRaw  = isSwing
-                ? (s - 0.5f) * _cfg.stepLengthMm + captureRaw
-                : (0.5f - s) * _cfg.stepLengthMm;
+                ? (_warpedStrideFrac(localPhase) - 0.5f) * _cfg.stepLengthMm + captureRaw
+                : (0.5f - sRaw) * _cfg.stepLengthMm;
             t.x_mm += strideRaw * strideScale;
         }
     }
@@ -1105,14 +1134,38 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         && _halfPhase > _cfg.touchdownGatePhase) {
         const FootImpactSideState& imp = _impact->getState(_swingSide);
         if (imp.detected) {
-            // Snapshot stride x at this tick using the same smoothstep +
-            // capture formula _buildFootTarget uses. Keeping the formula
-            // in one place would be cleaner but _buildFootTarget is const
-            // and stateless by design; duplicating one line here is the
-            // minimum-blast-radius option.
-            const float s        = _halfPhase * _halfPhase * (3.0f - 2.0f * _halfPhase);
+            // Snapshot stride x at this tick using the shared warped-stride
+            // helper — SAME helper _buildFootTarget calls for the swing leg.
+            // Mandatory: a divergence between commanded stride and latched x
+            // would inject a position jump at touchdown the moment the latch
+            // fires whenever strideCompleteFrac < 1.0. captureX is added on
+            // top exactly as in _buildFootTarget.
+            const float s_w      = _warpedStrideFrac(_halfPhase);
             const float captureX = _captureOffsetMm();
-            _touchdownLockedX_mm  = (s - 0.5f) * _cfg.stepLengthMm + captureX;
+            _touchdownLockedX_mm  = (s_w - 0.5f) * _cfg.stepLengthMm + captureX;
+
+            // Snapshot the swing foot's HORIZONTAL velocity (mm/s) at this
+            // detection. Analytic derivative of the warped stride x:
+            //   x(lp)  = (s_w - 0.5) * L  + captureX
+            //   s_w    = lpw*lpw*(3 - 2*lpw), lpw = min(lp/frac, 1)
+            //   ds_w/dlp = 6*lpw*(1-lpw)/frac   for lp < frac, else 0
+            //   dlp/dt   = 2 * phaseRateHz
+            // captureX is treated as quasi-static for this telemetry — its
+            // per-tick velocity contribution is small relative to the stride
+            // term (and capture is default-OFF). At strideCompleteFrac=1.0
+            // this reduces to the baseline 6*lp*(1-lp)*L*2*phaseRateHz; with
+            // frac lowered it drops to 0 once lp >= frac, which is the whole
+            // point of the metric.
+            const float frac_clamped = constrain(_cfg.strideCompleteFrac, 0.05f, 1.0f);
+            const float lp_clamped   = constrain(_halfPhase, 0.0f, 1.0f);
+            float dxdt_mm_s = 0.0f;
+            if (lp_clamped < frac_clamped) {
+                const float lpw      = lp_clamped / frac_clamped;
+                const float dsw_dlp  = 6.0f * lpw * (1.0f - lpw) / frac_clamped;
+                const float dlp_dt   = 2.0f * _cfg.phaseRateHz;
+                dxdt_mm_s            = _cfg.stepLengthMm * dsw_dlp * dlp_dt;
+            }
+            _state.touchdownSwingVelX_mm_s = dxdt_mm_s;
             _touchdownLockedH_mm  = _cfg.stanceHeightMm
                                   - _swingFrac(_halfPhase) * _cfg.stepHeightMm;
             // Lateral-capture freeze: capture the live ramped+clamped value

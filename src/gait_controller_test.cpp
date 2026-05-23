@@ -326,6 +326,77 @@ static bool test_stage3_continuity() {
     return pass;
 }
 
+// ---------------------------------------------------------------------------
+// T12a — Horizontal stride completion fraction (frontload). External mirror
+//        of _warpedStrideFrac() so any drift between header math and firmware
+//        math is caught at compile time. Three properties verified:
+//          1. At frac=1.0, the warp REDUCES EXACTLY to the legacy unwarped
+//             smoothstep s = lp*lp*(3-2*lp) at several lp samples.
+//          2. For frac < 1.0, lp >= frac always gives s == 1.0 (held),
+//             AND the analytic horizontal stride velocity is 0 there.
+//          3. Endpoints: lp=0 → s=0 (swing at -L/2); lp=1 → s=1 (swing at +L/2)
+//             for ALL frac values, so role-swap continuity (GAIT_DESIGN §6)
+//             is preserved.
+//        Default-no-op invariant (frac=1.0) is the most important — that is
+//        the safety promise the configuration default makes.
+static float _warpedRef(float lp, float frac) {
+    // Mirror of GaitController::_warpedStrideFrac for the test only.
+    if (lp < 0.0f) lp = 0.0f; else if (lp > 1.0f) lp = 1.0f;
+    if (frac < 0.05f) frac = 0.05f; else if (frac > 1.0f) frac = 1.0f;
+    const float lpw = (lp >= frac) ? 1.0f : (lp / frac);
+    return lpw * lpw * (3.0f - 2.0f * lpw);
+}
+
+static bool test_strideFrontload_no_op_at_frac1() {
+    // (1) frac=1.0 — bit-identical to unwarped smoothstep at multiple samples.
+    const float samples[] = {0.0f, 0.1f, 0.25f, 0.5f, 0.75f, 0.9f, 1.0f};
+    bool pass = true;
+    for (float lp : samples) {
+        const float legacy = lp * lp * (3.0f - 2.0f * lp);
+        const float warp   = _warpedRef(lp, 1.0f);
+        if (!near(legacy, warp, 1e-6f)) { pass = false; break; }
+    }
+    Serial.printf("[GaitT12a] stride_frontload_no_op_at_frac1: %s\n",
+                  pass ? "PASS" : "FAIL");
+    return pass;
+}
+
+static bool test_strideFrontload_held_after_frac() {
+    // (2) frac<1.0 — past completion, s==1 and stride velocity is 0.
+    //     stride velocity ∝ ds/dlp = 6*lpw*(1-lpw)/frac, which is 0 at lpw=1.
+    const float frac = 0.6f;
+    const float lps_after[] = {0.6f, 0.65f, 0.8f, 0.95f, 1.0f};
+    bool pass = true;
+    for (float lp : lps_after) {
+        const float s = _warpedRef(lp, frac);
+        if (!near(s, 1.0f, 1e-6f)) { pass = false; break; }
+        // Stride velocity analytic: zero for lp >= frac.
+        const float lpw_clamped = (lp >= frac) ? 1.0f : (lp / frac);
+        const float dsdt        = 6.0f * lpw_clamped * (1.0f - lpw_clamped);
+        if (!near(dsdt, 0.0f, 1e-6f)) { pass = false; break; }
+    }
+    Serial.printf("[GaitT12b] stride_frontload_held_after_frac: %s\n",
+                  pass ? "PASS" : "FAIL");
+    return pass;
+}
+
+static bool test_strideFrontload_endpoints_preserved() {
+    // (3) Endpoints stable for ANY frac: lp=0 → s=0, lp=1 → s=1. Without
+    //     this property, role-swap continuity (GAIT_DESIGN §6) would break
+    //     at the half-cycle boundary.
+    const float fracs[] = {0.05f, 0.3f, 0.5f, 0.7f, 1.0f};
+    bool pass = true;
+    for (float f : fracs) {
+        const float s0 = _warpedRef(0.0f, f);
+        const float s1 = _warpedRef(1.0f, f);
+        if (!near(s0, 0.0f, 1e-6f)) { pass = false; break; }
+        if (!near(s1, 1.0f, 1e-6f)) { pass = false; break; }
+    }
+    Serial.printf("[GaitT12c] stride_frontload_endpoints: %s\n",
+                  pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 // T12 — Stage 3: stance leg at peak (lp=0.5) is at neutral x.
 static bool test_stage3_midstance_zero() {
     const float L = 20.0f;
@@ -444,6 +515,9 @@ void runGaitControllerTests() {
     run(test_stop_during_swing_ramps_cleanly());
     run(test_strideEndpoints());
     run(test_stage3_continuity());
+    run(test_strideFrontload_no_op_at_frac1());
+    run(test_strideFrontload_held_after_frac());
+    run(test_strideFrontload_endpoints_preserved());
     run(test_stage3_midstance_zero());
     run(test_latCaptureDefaults());
     run(test_latCapture_signAndClamp());

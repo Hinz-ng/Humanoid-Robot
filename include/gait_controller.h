@@ -187,6 +187,17 @@ struct GaitConfig {
     // [0.05, 0.95] in _swingFrac(). WS key: "swingApex".
     float swingApexFrac = GAIT_SWING_APEX_FRAC_DEFAULT;
 
+    // Horizontal analog of W1: front-loaded horizontal stride. Compresses the
+    // SWING leg's smoothstep stride into localPhase in [0, frac] and then holds
+    // s=1 for the rest of the swing — foot reaches +L/2 with zero horizontal
+    // velocity by localPhase=frac, then sits stationary horizontally until
+    // touchdown. Stance retreat is NOT warped (kept on original timing — see
+    // _warpedStrideFrac()). captureRaw is added on top of the warped stride;
+    // capture+warp interaction is unreviewed and should be revisited if capture
+    // is re-enabled while frac < 1.0. Clamped to (0.05, 1.0] in GAIT_TUNE.
+    // 1.0 = no warp (bit-identical to legacy smoothstep). WS key: "strideComplete".
+    float strideCompleteFrac = GAIT_STRIDE_COMPLETE_FRAC_DEFAULT;
+
     // W2 — continuous lateral CoM trim. When enabled, observed lateral CoM
     // displacement is added to both feet's y_mm every tick (see
     // _comLateralTrimMm()). Independent of LiftGateMode::COM_LATERAL, which
@@ -498,6 +509,17 @@ struct GaitState {
     uint8_t touchdownSide      = 0;
     bool    touchdownLocked    = false;
 
+    // Swing foot's HORIZONTAL velocity (mm/s) at the moment the touchdown
+    // latch fires this half-cycle. Computed consistently with the warped
+    // stride trajectory (see _warpedStrideFrac / strideCompleteFrac): at the
+    // 1.0 default it reports the unwarped baseline; with strideCompleteFrac
+    // lowered, drops toward 0 because the stride is held at +L/2 by the
+    // time the latch fires. Sign matches commanded x-velocity (positive =
+    // foot moving forward in body frame). 0 when no touchdown this swing
+    // OR when capture is enabled (see implementation note — capture x
+    // velocity is not currently included). Reset on _advanceHalf().
+    float   touchdownSwingVelX_mm_s = 0.0f;
+
     // ------------------------------------------------------------------
     // W4 — Touchdown-compliance telemetry. Telemetry-only — the control
     // stack reads the private _complianceOffsetMm member, not these.
@@ -767,6 +789,31 @@ private:
 
     // sin(localPhase × π) → swing fraction [0, 1] from grounded to peak and back.
     float _swingFrac(float localPhase) const;
+
+    // -----------------------------------------------------------------------
+    //  _warpedStrideFrac — front-loaded horizontal stride smoothstep value.
+    //
+    //  Returns the smoothstep s in [0, 1] applied to the SWING leg's horizontal
+    //  stride. Compresses localPhase into [0, strideCompleteFrac], then holds:
+    //      lpw = min(localPhase / frac, 1.0)
+    //      s   = lpw*lpw*(3 - 2*lpw)        // smoothstep
+    //  Properties: s(0)=0, s(localPhase >= frac)=1.0; smoothstep has zero
+    //  derivative at lpw=0 and lpw=1, so horizontal stride VELOCITY is zero
+    //  at lift-off and for every localPhase >= frac. frac=1.0 reduces to the
+    //  legacy unwarped smoothstep (s = lp*lp*(3-2*lp)) bit-identically.
+    //
+    //  Single source of truth: BOTH _buildFootTarget (swing-leg stride) and
+    //  the touchdown-latch snapshot in update() must call this — duplicating
+    //  the formula in the latch would inject a position jump at touchdown
+    //  whenever frac < 1.0.
+    //
+    //  STANCE retreat does NOT use this helper. Stance retreat drives body
+    //  forward translation; leaving it on the original (unwarped) timing keeps
+    //  this experiment isolated from the separate "shift CoM forward earlier"
+    //  work. The call site in _buildFootTarget uses the warped s for the swing
+    //  branch and the raw smoothstep for the stance branch.
+    // -----------------------------------------------------------------------
+    float _warpedStrideFrac(float localPhase) const;
 
     // -----------------------------------------------------------------------
     //  _captureOffsetMm — sagittal capture-point step-placement correction.

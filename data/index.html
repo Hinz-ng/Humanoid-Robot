@@ -1841,6 +1841,34 @@
 
             <div class="gait-tune-row">
                 <div class="tune-header">
+                    <span>Stride complete fraction</span>
+                    <span class="tune-val" id="tvGaitStrideComplete">1.00</span>
+                </div>
+                <input type="range" id="slGaitStrideComplete" min="0.05" max="1.0" step="0.05" value="1.0"
+                       oninput="updateGaitLabel('strideComplete', this.value); sendGaitKey('strideComplete', parseFloat(this.value).toFixed(2))">
+                <div class="small-note">
+                    Front-load the swing-leg HORIZONTAL stride. 1.00 = no warp (legacy).
+                    Lower values compress the stride into [0, frac] then hold +L/2 —
+                    foot reaches landing position with zero horizontal velocity before
+                    touchdown. Keep ≤ touchdownGatePhase (0.7). Try 0.7 → 0.6 → 0.5.
+                    Watch "TD swing Vx (mm/s)" telemetry drop toward 0.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>TD swing Vx (mm/s)</span>
+                    <span class="tune-val" id="tvGaitTdSwingVx">0.0</span>
+                </div>
+                <div class="small-note">
+                    Horizontal velocity of the swing foot at the moment the touchdown
+                    latch fires (this half-cycle). Telemetry only. Baseline at
+                    strideComplete=1.0 — drops toward 0 as strideComplete is lowered.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
                     <span>Lateral CoM trim gain (W2)</span>
                     <span class="tune-val" id="tvGaitComLatGain">0.30</span>
                 </div>
@@ -3452,6 +3480,7 @@ const _gaitTuneMap = {
     captureGain: { el: "tvGaitCapGain", decimals: 2 },
     captureMax:  { el: "tvGaitCapMax",  decimals: 0 },
     swingApex:   { el: "tvGaitSwingApex",  decimals: 2 },
+    strideComplete: { el: "tvGaitStrideComplete", decimals: 2 },
     comLatGain:  { el: "tvGaitComLatGain", decimals: 2 },
     comLatMax:   { el: "tvGaitComLatMax",  decimals: 0 },
     comLatKd:      { el: "tvGaitComLatKd",      decimals: 3 },
@@ -3893,6 +3922,14 @@ function parseGaitState(payload) {
         // an un-reflashed firmware leaves them at their last-known value.
         if (v["swingApex"] !== undefined)
             _syncSlider("slGaitSwingApex", "tvGaitSwingApex", parseFloat(v["swingApex"]), 2);
+        // Horizontal stride completion fraction (analog of W1 for horizontal
+        // stride). Optional-chained same as swingApex.
+        if (v["strideComplete"] !== undefined)
+            _syncSlider("slGaitStrideComplete", "tvGaitStrideComplete",
+                        parseFloat(v["strideComplete"]), 2);
+        // Touchdown swing horizontal velocity (telemetry — pure readout).
+        if (v["tdSwingVx"] !== undefined)
+            set("tvGaitTdSwingVx", parseFloat(v["tdSwingVx"]).toFixed(1));
         if (v["comLatGain"] !== undefined)
             _syncSlider("slGaitComLatGain", "tvGaitComLatGain", parseFloat(v["comLatGain"]), 2);
         if (v["comLatMax"] !== undefined)

@@ -566,7 +566,12 @@ void WebComm::broadcastGaitState() {
         // echoes (enable / gain / cap / sign) + live applied value (world-
         // signed mm, post-clamp, post-strideScale, post-freeze; 0 on
         // stance / disabled / IDLE / estopped / IMU invalid).
-        "latCapEn=%d,latCapGain=%.2f,latCapMax=%.1f,latCapSign=%.0f,latCap=%.1f",
+        "latCapEn=%d,latCapGain=%.2f,latCapMax=%.1f,latCapSign=%.0f,latCap=%.1f,"
+        // Horizontal stride completion fraction (config echo) + per-swing
+        // horizontal swing-foot velocity at the moment the touchdown latch
+        // fires (mm/s). At strideComplete=1.0 (default) the velocity reports
+        // the unwarped baseline; with strideComplete lowered, drops toward 0.
+        "strideComplete=%.2f,tdSwingVx=%.1f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -674,7 +679,10 @@ void WebComm::broadcastGaitState() {
         _gaitCtrl->getConfig().latCaptureGain,
         _gaitCtrl->getConfig().latCaptureMaxMm,
         _gaitCtrl->getConfig().latCaptureSign,
-        s.latCaptureMm
+        s.latCaptureMm,
+        // Horizontal stride completion fraction + per-swing touchdown velocity.
+        _gaitCtrl->getConfig().strideCompleteFrac,
+        s.touchdownSwingVelX_mm_s
     );
     _sendFiltered(buf);
 }
@@ -1617,6 +1625,18 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             // matches the clamp inside _swingFrac() so the UI
                             // slider and firmware never disagree.
                             cfg.swingApexFrac = constrain(val, 0.05f, 0.95f);
+                        }
+                        else if (key == "strideComplete") {
+                            // Horizontal stride completion fraction. (0.05, 1.0]
+                            // matches the clamp inside _warpedStrideFrac(). 1.0
+                            // = no warp (legacy bit-identical behaviour). Lower
+                            // values front-load the swing-leg stride so the
+                            // foot reaches +L/2 with zero horizontal velocity
+                            // before touchdown. For the effect to act before
+                            // the touchdown latch can fire, keep this
+                            // <= touchdownGatePhase (default 0.7). Recommended
+                            // experimental range 0.5–0.7.
+                            cfg.strideCompleteFrac = constrain(val, 0.05f, 1.0f);
                         }
                         else if (key == "comLatTrim") cfg.comLatTrimEnabled = (val > 0.5f);
                         else if (key == "comLatGain") {

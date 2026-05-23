@@ -57,10 +57,11 @@ void TorsoStabilizer::update(const BalancePDOutput& pd) {
         _state.pitch_cmd_deg = shaped;
         _state.pitch_active  = true;
     }
-    // Torso roll — no negation (parity with the pre-refactor path).
+    // Torso roll — negated so the torso leans opposite to the leg correction
+    // (mechanical direction inversion vs. the pre-refactor path).
     if (_cfg.enabled && pd.roll_active && _cfg.roll_ratio > 0.001f) {
         float cmd    = pd.roll_u_clamped * _cfg.roll_ratio;
-        float shaped = _shape(_rollShape, cmd, pd.roll_rate_filt);
+        float shaped = _shape(_rollShape, -cmd, pd.roll_rate_filt);
         _mm->submit(SOURCE_BALANCE, IDX_TORSO_ROLL, shaped);
         _state.roll_cmd_deg = shaped;
         _state.roll_active  = true;

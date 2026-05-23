@@ -59,6 +59,7 @@
 void GaitController::_clearTouchdownLatch() {
     _touchdownLocked         = false;
     _touchdownLockedX_mm     = 0.0f;
+    _touchdownLockedY_mm     = 0.0f;
     _touchdownLockedH_mm     = 0.0f;
     _touchdownLockedPhase    = 0.0f;
     _state.touchdownSeen      = false;
@@ -433,7 +434,7 @@ float GaitController::_comLateralTrimRawMm() const {
 
     const float dispTrim = comLatDisp * _cfg.comLatTrimGain;  // W2 — Kp term
     const float velTrim  = comLatVel  * _cfg.comLatTrimKd;    // W5 — Kd term
-    const float trim     = dispTrim + velTrim;
+    const float trim     = -(dispTrim + velTrim);
 
     return constrain(trim, -_cfg.comLatTrimMaxMm, +_cfg.comLatTrimMaxMm);
 }
@@ -489,6 +490,49 @@ float GaitController::_captureOffsetMm() const {
                                     -_cfg.stepLengthMm,
                                     +_cfg.stepLengthMm);
     return byStep;
+}
+
+// ---------------------------------------------------------------------------
+//  _latCaptureOffsetMm — frontal-plane capture-point swing-foot placement.
+//  See header for the full mechanism + sign convention. Pure-math; reads
+//  _rollRateFilt (advanced once per tick by _updateRollRateFilter() — same
+//  W5 filter — never stepped twice), and _touchdownLockedY_mm for freeze.
+//  Per-leg sign and strideScale are applied at the call site in
+//  _buildFootTarget so this helper stays world-frame and shape-only.
+// ---------------------------------------------------------------------------
+float GaitController::_latCaptureOffsetMm(float localPhase) const {
+    // Freeze first: once latched, return the snapshot verbatim and do not
+    // re-touch the live roll signal — keeps the lateral contribution from
+    // re-introducing stance-style body-shove on a planted foot. The snapshot
+    // is itself bounded by the same cap, so no extra clamp needed.
+    if (_touchdownLocked) return _touchdownLockedY_mm;
+
+    // Default-path no-op gates — kept identical in spirit to _captureOffsetMm
+    // so a flipped enable produces the smallest possible code-path delta.
+    if (!_cfg.latCaptureEnabled)        return 0.0f;
+    if (!_lastImuState.valid)           return 0.0f;
+    if (oe_is_estopped())               return 0.0f;
+    if (_state.mode == GaitMode::IDLE)  return 0.0f;
+
+    // Lateral LIP omega0 == sagittal omega0 (same CoM height H_COM_MM), so
+    // GAIT_CAPTURE_INV_OMEGA0_S is reused verbatim — see CAPTURE-POINT block
+    // in project_wide_defs.h for the shared derivation.
+    const float vy_CoM_mm_s = H_COM_MM * _rollRateFilt;   // mm/s (LIP)
+    const float raw         = vy_CoM_mm_s
+                            * GAIT_CAPTURE_INV_OMEGA0_S
+                            * _cfg.latCaptureGain
+                            * _cfg.latCaptureSign;
+
+    const float clamped = constrain(raw,
+                                    -_cfg.latCaptureMaxMm,
+                                    +_cfg.latCaptureMaxMm);
+
+    // Smoothstep ramp on localPhase — identical shape to the sagittal stride
+    // in _buildFootTarget (s = lp²(3 - 2lp)). Zero at lift-off, full at
+    // touchdown → zero lateral foot velocity at contact.
+    const float lp = constrain(localPhase, 0.0f, 1.0f);
+    const float s  = lp * lp * (3.0f - 2.0f * lp);
+    return clamped * s;
 }
 
 // ---------------------------------------------------------------------------
@@ -585,6 +629,22 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
     const float comLatTrim = _comLateralTrimMm() * strideScale;
     t.y_mm += isRight ? +comLatTrim : -comLatTrim;
 
+    // Lateral (frontal-plane) capture-point swing-foot placement. Parallel,
+    // additive A/B candidate to the W2 trim above + roll-PD merge below.
+    // Applied to the SWING leg's landing y ONLY — stance leg untouched (that
+    // is the entire point: first true swing-foot placement authority during
+    // gait). Per-leg sign mirrors the comLatTrim convention (isRight ? + : -)
+    // so body falling toward a side → swing foot placed toward that side
+    // (capture). Sign flip exposed at runtime via cfg.latCaptureSign.
+    // strideScale fades the term through STOPPING and is 0 in IDLE / standing
+    // stance submits, exactly like stride / comLatTrim / sagittal capture.
+    // _latCaptureOffsetMm() early-returns 0 when disabled, IDLE, IMU invalid,
+    // or estopped, so this line is a true no-op on the default-OFF path.
+    if (isSwing) {
+        const float latCapture = _latCaptureOffsetMm(localPhase) * strideScale;
+        t.y_mm += isRight ? +latCapture : -latCapture;
+    }
+
     // Stage 3: balance correction merges onto stance leg only.
     if (bc != nullptr && !isSwing) {
         mergeBalanceCorrection(t, *bc);
@@ -610,6 +670,20 @@ LegIKResult GaitController::_submitFootTargetIK(Side side,
                                                  const FootTarget& t) {
     LegIKResult r;
     if (_mm == nullptr) { r.status = IKStatus::DOMAIN_ERROR; return r; }
+
+    // Snapshot the final FootTarget components for UI diagnostics, BEFORE the
+    // validity early-out so the UI still sees the requested target on
+    // DOMAIN_ERROR (helpful for "why did IK refuse" debugging).
+    if (side == Side::LEFT) {
+        _state.lastFootTargetXL_mm = t.x_mm;
+        _state.lastFootTargetYL_mm = t.y_mm;
+        _state.lastFootTargetHL_mm = t.h_sagittal_mm;
+    } else {
+        _state.lastFootTargetXR_mm = t.x_mm;
+        _state.lastFootTargetYR_mm = t.y_mm;
+        _state.lastFootTargetHR_mm = t.h_sagittal_mm;
+    }
+
     if (!t.valid)       { r.status = IKStatus::DOMAIN_ERROR; return r; }
 
     r = LegIK::solve(t);
@@ -1041,6 +1115,14 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _touchdownLockedX_mm  = (s - 0.5f) * _cfg.stepLengthMm + captureX;
             _touchdownLockedH_mm  = _cfg.stanceHeightMm
                                   - _swingFrac(_halfPhase) * _cfg.stepHeightMm;
+            // Lateral-capture freeze: capture the live ramped+clamped value
+            // BEFORE flipping _touchdownLocked, because _latCaptureOffsetMm()
+            // short-circuits to _touchdownLockedY_mm once the latch is set.
+            // After this point, _buildFootTarget reuses this snapshot for the
+            // rest of the half-cycle so the lateral contribution stops
+            // tracking live rollRate on a planted foot (would otherwise
+            // re-introduce stance-style body-shove). Mirrors the X snapshot.
+            _touchdownLockedY_mm  = _latCaptureOffsetMm(_halfPhase);
             _touchdownLockedPhase = _halfPhase;
             _touchdownLocked      = true;
 
@@ -1114,6 +1196,7 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         // Telemetry: applied capture + lateral trim also fade — surface the
         // actual (faded) value, not the raw computation.
         _state.captureOffsetMm = _captureOffsetMm()    * strideScale;
+        _state.latCaptureMm    = _latCaptureOffsetMm(_halfPhase) * strideScale;
         _state.comLatTrimMm    = _comLateralTrimMm()   * strideScale;
         _state.cycleXDispl_mm  = _halfPhase * _cfg.stepLengthMm * strideScale;
 
@@ -1140,6 +1223,7 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _state.wsProgress = wsSettled ? 0.0f : _state.wsProgress;
             _state.poseHold  = 0;
             _state.captureOffsetMm = 0.0f;
+            _state.latCaptureMm    = 0.0f;
             _state.comLatTrimMm    = 0.0f;
             _state.cycleXDispl_mm  = 0.0f;
         }
@@ -1307,6 +1391,11 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // Stage 2.2 — broadcast the capture offset that was applied this tick.
     // Reads as 0 when capture disabled or vx_CoM ≈ 0.
     _state.captureOffsetMm = _captureOffsetMm();
+    // Lateral capture telemetry — applied world-frame signed value this tick
+    // (post-clamp, post-ramp, post-freeze; pre-leg-sign — that flip happens
+    // at the foot in _buildFootTarget). Reads 0 when latCapture disabled,
+    // IMU invalid, or roll rate ≈ 0. strideScale = 1.0 in SWINGING.
+    _state.latCaptureMm = _latCaptureOffsetMm(_halfPhase);
 
     // Repurposed UI fields: hip pitch produced by IK on the swing leg.
     _state.liftL_deg = leftIsSwing  ? rL.hip_pitch_deg : 0.0f;

@@ -228,6 +228,39 @@ constexpr float GAIT_CAPTURE_GAIN_DEFAULT = 0.15f;
 // Re-tune after first hardware run; do not raise blindly.
 constexpr float GAIT_CAPTURE_OFFSET_MAX_MM = 15.0f;
 
+// ------------------------------------------------------------
+// LATERAL (FRONTAL-PLANE) CAPTURE-POINT — swing-foot placement.
+// ------------------------------------------------------------
+// Frontal analogue of the sagittal capture term above. Applied to the SWING
+// leg's landing y only (stance leg untouched). Mechanism:
+//
+//   vy_CoM_mm_s    = H_COM_MM * rollRate_filt          (mm/s, LIP)
+//   latCaptureRaw  = vy_CoM_mm_s * GAIT_CAPTURE_INV_OMEGA0_S
+//                                 * latCaptureGain * latCaptureSign
+//   applied        = clamp(raw, ±latCaptureMaxMm) * smoothstep(localPhase)
+//                                                  * strideScale
+//
+// The lateral LIP natural frequency omega0 is identical to the sagittal
+// case (same CoM height H_COM_MM), so GAIT_CAPTURE_INV_OMEGA0_S is shared.
+//
+// DEFAULT GAIN: 0.15 — same starting-conservative rationale as the sagittal
+// capture (well below full LIP correction; raise only after hardware shows
+// the swing-foot placement is responsive but not chasing noise).
+//
+// DEFAULT OFFSET CAP: 15 mm — derived from the frontal reach budget.
+// L_FRONTAL_MM = 166 mm, CHAIN_HEIGHT_DELTA_MM ≈ 25.4 mm → at stanceH=185
+// the frontal chain length is ~159.6 mm, and IK_MAX_REACH_FRACTION (0.99)
+// gives ~158 mm of total |y| budget. After deducting the realistic
+// frontal-plane consumers — WS lateral shift up to ~40 mm
+// (GAIT_STANCE_WIDTH_MM), comLatTrimMaxMm up to 20 mm, and balance
+// correction dy of a few mm — roughly 95 mm of headroom remains. A 15 mm
+// hard cap therefore stays well inside frontal IK reach in any realistic
+// combination. Matches the sagittal cap so both axes scale together.
+// Re-tune after first hardware run; do not raise blindly.
+constexpr bool  GAIT_LAT_CAPTURE_ENABLED_DEFAULT = true;
+constexpr float GAIT_LAT_CAPTURE_GAIN_DEFAULT    = 0.6f;
+constexpr float GAIT_LAT_CAPTURE_OFFSET_MAX_MM   = 30.0f;
+
 // ============================================================
 // RECOVERY STEP PARAMETERS — secondary balance system
 // ============================================================

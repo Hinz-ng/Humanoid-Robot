@@ -224,6 +224,27 @@ struct GaitConfig {
     float captureGain       = GAIT_CAPTURE_GAIN_DEFAULT;  // WS: "captureGain"
     float captureOffsetMaxMm = GAIT_CAPTURE_OFFSET_MAX_MM; // WS: "captureMax"
 
+    // Lateral (frontal-plane) capture-point swing-foot placement. Parallel,
+    // additive A/B candidate to the W2/W5 comLatTrim + roll-PD merge paths —
+    // applied to the SWING leg's landing y only; stance leg untouched. See
+    // _latCaptureOffsetMm() and the LATERAL CAPTURE block in
+    // project_wide_defs.h for the mechanism + per-leg sign convention.
+    //
+    //   latCaptureEnabled — master enable. Default ON: the new term is the
+    //                       headline A/B candidate. Toggle OFF for baseline.
+    //   latCaptureGain    — dimensionless multiplier on (vy_CoM × inv_omega0).
+    //                       Starts conservative; mirrors sagittal default.
+    //   latCaptureMaxMm   — hard cap on the offset's contribution to a
+    //                       single step (mm). Frontal-IK-reach guard.
+    //   latCaptureSign    — ±1 runtime sign flip. Intended sign: body falling
+    //                       TOWARD a side → swing foot placed TOWARD that
+    //                       side (true capture). Must be confirmed on hardware;
+    //                       flip to -1 if the observed direction is wrong.
+    bool  latCaptureEnabled = GAIT_LAT_CAPTURE_ENABLED_DEFAULT; // WS: "latCapture"
+    float latCaptureGain    = GAIT_LAT_CAPTURE_GAIN_DEFAULT;    // WS: "latCaptureGain"
+    float latCaptureMaxMm   = GAIT_LAT_CAPTURE_OFFSET_MAX_MM;   // WS: "latCaptureMax"
+    float latCaptureSign    = -1.0f;                            // WS: "latCaptureSign"
+
     // Stage 2 -- support-transfer dwell + timeout. See project_wide_defs.h
     // for rationale. 0 on either field reverts to pre-Stage-2 behavior
     // on that axis (no dwell / no timeout).
@@ -401,6 +422,18 @@ struct GaitState {
     uint8_t      lastIKStatusR = 0;
     float        lastReachPctL = 0.0f;
     float        lastReachPctR = 0.0f;
+
+    // Per-leg final FootTarget (post-WS, post-W2 trim, post-W4 compliance, post
+    // BalanceCorrection merge — the exact values handed to LegIK this tick).
+    // Snapshotted in _submitFootTargetIK() so the UI can see the composed
+    // lateral/sagittal targets without re-deriving them from individual terms.
+    // Telemetry only.
+    float        lastFootTargetXL_mm = 0.0f;
+    float        lastFootTargetXR_mm = 0.0f;
+    float        lastFootTargetYL_mm = 0.0f;
+    float        lastFootTargetYR_mm = 0.0f;
+    float        lastFootTargetHL_mm = 0.0f;
+    float        lastFootTargetHR_mm = 0.0f;
     // Stage 1.1 — flat-foot diagnostic. Nonzero means the ankle pitch was
     // clamped to its soft limit; the sole is no longer flat against the ground.
     // Treat |value| > 2° as a tuning red flag — gait should pause/abort.
@@ -417,6 +450,14 @@ struct GaitState {
     // this stays at 0. Updated whenever _buildFootTarget() runs on the swing
     // leg — value reflects the offset applied to that tick's swing foot.
     float captureOffsetMm = 0.0f;
+
+    // Lateral capture-point applied value this tick (mm, world-frame signed,
+    // post-clamp, post-strideScale, post-touchdown freeze). Positive = body
+    // falling/moving toward robot's right → swing foot placed rightward.
+    // Zero when latCaptureEnabled=false, IMU invalid, IDLE, estopped, or no
+    // active swing leg this tick. Telemetry only — control reads the helper
+    // directly inside _buildFootTarget().
+    float latCaptureMm = 0.0f;
 
     // Recovery telemetry (Stage 1+). Valid only when mode == RECOVERY_STEP.
     RecoverySubState recoverySub       = RecoverySubState::TRIGGERED;
@@ -630,6 +671,12 @@ private:
     bool     _touchdownLocked      = false;
     float    _touchdownLockedX_mm  = 0.0f;   // snapshot of stride x at lock
     float    _touchdownLockedH_mm  = 0.0f;   // snapshot of h_sagittal_mm at lock
+    // Lateral-capture freeze snapshot. Stored in WORLD-frame signed mm
+    // (pre-per-leg-sign, pre-strideScale, post-clamp, post-smoothstep ramp).
+    // _buildFootTarget applies the per-leg sign and strideScale at use time,
+    // so the locked value still fades through STOPPING and stays consistent
+    // with the unlocked path. Mirrors _touchdownLockedX_mm's lifecycle.
+    float    _touchdownLockedY_mm  = 0.0f;
     float    _touchdownLockedPhase = 0.0f;   // _halfPhase at lock
 
     // Clears the latch and the public telemetry mirror. Call at any half-
@@ -742,6 +789,32 @@ private:
     //  IK status path — this function is intentionally pure-math.
     // -----------------------------------------------------------------------
     float _captureOffsetMm() const;
+
+    // -----------------------------------------------------------------------
+    //  _latCaptureOffsetMm — frontal-plane capture-point swing-foot placement.
+    //
+    //  Returns the world-frame signed mm offset to add to the SWING leg's
+    //  landing y (positive = body moving/falling rightward → foot placed
+    //  rightward in world). Pre-per-leg-sign, pre-strideScale; the caller
+    //  in _buildFootTarget applies both. Post-clamp (±latCaptureMaxMm),
+    //  post-smoothstep ramp (s = lp²(3-2lp), zero at lift-off, full at
+    //  touchdown), post-freeze (returns _touchdownLockedY_mm when latched).
+    //
+    //  Mechanism mirrors _captureOffsetMm() in the frontal plane:
+    //      vy_CoM_mm_s   = H_COM_MM * _rollRateFilt     (reuses W5 filter)
+    //      raw           = vy_CoM × INV_OMEGA0 × gain × sign   (omega0 shared)
+    //      clamped       = clamp(raw, ±latCaptureMaxMm)
+    //      ramped        = clamped × smoothstep(localPhase)
+    //      applied       = _touchdownLocked ? _touchdownLockedY_mm : ramped
+    //
+    //  Returns 0 when latCaptureEnabled is false, IMU invalid, IDLE, or
+    //  estopped (intended default-path no-op when disabled).
+    //
+    //  STANCE-LEG GATING is performed at the call site in _buildFootTarget
+    //  (this helper is invoked only for the swing leg) — keeps the helper
+    //  symmetric with _captureOffsetMm().
+    // -----------------------------------------------------------------------
+    float _latCaptureOffsetMm(float localPhase) const;
 
     // -----------------------------------------------------------------------
     //  _comLateralTrimMm — W2+W5 continuous lateral CoM foot-placement trim.

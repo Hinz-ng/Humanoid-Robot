@@ -38,7 +38,7 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
     {  4,  "right_hip_yaw",       118.0f,  +1,  -50.0f,  +50.0f,  180.0f,  667.0f  },  // TUNE
 
     //  Hip Pitch  — 270° servo, 0.11 s/60° → 545 °/s
-    {  5,  "right_hip_pitch",     123.0f,  +1,  -25.0f,  +90.0f,  270.0f,  545.0f  },  // TUNE
+    {  5,  "right_hip_pitch",     125.0f,  +1,  -25.0f,  +90.0f,  270.0f,  545.0f  },  // TUNE
 
 // ▼  LEFT LEG  ───────────────────────────────────────────────────────────────────────
 

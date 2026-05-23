@@ -1233,6 +1233,134 @@
     </div><!-- /.wshift-body -->
 </div><!-- /.wshift-panel -->
 
+<!-- ── Gait Diagnostics Panel ──────────────────────────────────────────── -->
+<!-- Consolidated read-only diagnostic view for walking experiments. Pulls
+     from BALANCE: (roll/pitch PD, dx/dy) and GAIT: (foot targets, trim,
+     touchdown, support phase, compliance, recovery) so a single panel
+     surfaces everything needed to diagnose a gait cycle in real time.
+     Tune controls remain on their respective per-feature panels below. -->
+<div class="gait-panel">
+    <div class="gait-header" onclick="toggleGaitDiagPanel()">
+        <h3>🔬 Gait Diagnostics</h3>
+        <span class="gait-chevron" id="gaitDiagChevron">▼</span>
+    </div>
+    <div class="gait-body hidden" id="gaitDiagBody">
+
+        <!-- Top status row: mode | support phase | stance side | gate -->
+        <div class="flex-row-wrap-sm mb-10">
+            <span class="gait-mode-badge gait-mode-idle" id="gdModeBadge">IDLE</span>
+            <span class="gait-mode-badge gait-mode-idle" id="gdSubBadge">WAIT</span>
+            <span class="gait-mode-badge gait-mode-idle" id="gdStanceBadge">stance: —</span>
+            <span class="gait-gate-badge gait-gate-closed" id="gdGateBadge">GATE CLOSED</span>
+        </div>
+
+        <!-- Phase bar mirrors the main controller for at-a-glance progress -->
+        <div class="gait-phase-wrap">
+            <div class="gait-phase-bg">
+                <div class="gait-phase-fill" id="gdPhaseFill"></div>
+            </div>
+            <div class="gait-phase-label" id="gdPhaseLabel">Phase: 0.0%</div>
+        </div>
+
+        <!-- Phase / time-of-cycle -->
+        <div class="section-label">Cycle</div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell"><div class="bal-out-lbl">Phase</div>
+                <div class="bal-out-val" id="gdPhase">0.000</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Half</div>
+                <div class="bal-out-val" id="gdHalf">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Cycle x-disp (mm)</div>
+                <div class="bal-out-val" id="gdCycleX">0.0</div></div>
+        </div>
+
+        <!-- Roll / pitch PD outputs (from BALANCE: broadcast) -->
+        <div class="section-label">PD outputs (from balance)</div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell"><div class="bal-out-lbl">Roll u (deg)</div>
+                <div class="bal-out-val" id="gdRollU">0.000</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Roll err (deg)</div>
+                <div class="bal-out-val" id="gdRollErr">0.000</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Eff. Kp (roll)</div>
+                <div class="bal-out-val" id="gdEffKpR">0.00</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Pitch u (deg)</div>
+                <div class="bal-out-val" id="gdPitchU">0.000</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Pitch err (deg)</div>
+                <div class="bal-out-val" id="gdPitchErr">0.000</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Eff. Kp (pitch)</div>
+                <div class="bal-out-val" id="gdEffKp">0.00</div></div>
+        </div>
+
+        <!-- Balance task-space correction + W2/W5 lateral trim -->
+        <div class="section-label">Task-space correction &amp; lateral trim</div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell"><div class="bal-out-lbl">Balance dx (mm)</div>
+                <div class="bal-out-val" id="gdDx">0.00</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Balance dy (mm)</div>
+                <div class="bal-out-val" id="gdDy">0.00</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Trim suppress</div>
+                <div class="bal-out-val" id="gdTrimSup">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">W2 lat trim (mm)</div>
+                <div class="bal-out-val" id="gdLatTrim">0.0</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">W5 lat vel (mm)</div>
+                <div class="bal-out-val" id="gdLatVel">0.0</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Roll rate (rad/s)</div>
+                <div class="bal-out-val" id="gdRollRate">0.000</div></div>
+        </div>
+
+        <!-- Final FootTarget (post WS, W2, W4, balance merge — what IK saw) -->
+        <div class="section-label">Final FootTarget (this tick, into IK)</div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell"><div class="bal-out-lbl">Foot X — L (mm)</div>
+                <div class="bal-out-val" id="gdFxL">0.0</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Foot Y — L (mm)</div>
+                <div class="bal-out-val" id="gdFyL">0.0</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Foot H — L (mm)</div>
+                <div class="bal-out-val" id="gdFhL">0.0</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Foot X — R (mm)</div>
+                <div class="bal-out-val" id="gdFxR">0.0</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Foot Y — R (mm)</div>
+                <div class="bal-out-val" id="gdFyR">0.0</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Foot H — R (mm)</div>
+                <div class="bal-out-val" id="gdFhR">0.0</div></div>
+        </div>
+
+        <!-- Lift + capture + compliance -->
+        <div class="section-label">Lift / capture / compliance</div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell"><div class="bal-out-lbl">Lift L (°)</div>
+                <div class="bal-out-val" id="gdLiftL">0.0</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Lift R (°)</div>
+                <div class="bal-out-val" id="gdLiftR">0.0</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Capture offset (mm)</div>
+                <div class="bal-out-val" id="gdCapture">0.0</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">W4 compliance (mm)</div>
+                <div class="bal-out-val" id="gdCmpOff">0.00</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Compliance active</div>
+                <div class="bal-out-val" id="gdCmpAct">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">WS progress</div>
+                <div class="bal-out-val" id="gdWs">0.000</div></div>
+        </div>
+
+        <!-- Touchdown latch + recovery -->
+        <div class="section-label">Touchdown / recovery</div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell"><div class="bal-out-lbl">TD seen</div>
+                <div class="bal-out-val" id="gdTdSeen">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">TD locked</div>
+                <div class="bal-out-val" id="gdTdLkd">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">TD phase</div>
+                <div class="bal-out-val" id="gdTdPh">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">TD side</div>
+                <div class="bal-out-val" id="gdTdSide">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">TD swing-x (mm)</div>
+                <div class="bal-out-val" id="gdTdX">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Recovery sub</div>
+                <div class="bal-out-val" id="gdRcvSub">—</div></div>
+        </div>
+
+    </div><!-- /#gaitDiagBody -->
+</div><!-- /.gait-panel (diagnostics) -->
+
 <!-- ── Gait Controller Panel (Phase 1: Stepping In Place) ──────────────── -->
 <div class="gait-panel">
     <div class="gait-header" onclick="toggleGaitPanel()">
@@ -1283,6 +1411,9 @@
             </button>
             <button class="btn-gait-step" id="btnGaitLatTrimToggle" onclick="toggleLatTrim()">
                 Lat Trim: ON
+            </button>
+            <button class="btn-gait-step" id="btnGaitLatCapToggle" onclick="toggleLatCapture()">
+                Lat Cap: ON
             </button>
             <button class="btn-gait-step"  onclick="sendCmd('TORSO_TARE')">🎯 Torso Tare</button>
             <button class="btn-gait-step"  onclick="sendCmd('GAIT_STEP')">↷ Single Step</button>
@@ -1365,6 +1496,10 @@
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">Lat trim (mm)</div>
                 <div class="bal-out-val" id="gaitTelemLatTrim">0.0</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Lat cap (mm)</div>
+                <div class="bal-out-val" id="gaitTelemLatCap">0.0</div>
             </div>
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">Roll rate (rad/s)</div>
@@ -1757,6 +1892,46 @@
                     (noisy), higher = smoother but more lag (less effective damping).
                     Default 0.70. If "Roll rate (rad/s)" looks jittery at rest,
                     raise this before raising Kd.
+                </div>
+            </div>
+
+            <!-- Lateral capture-point (frontal LIP, parallel to W2/W5) -->
+            <div class="gait-tune-row grid-span-2-mt4">
+                <div class="section-label" style="margin-bottom:2px">Lateral capture-point (frontal LIP)</div>
+            </div>
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Lat capture gain</span>
+                    <span class="tune-val" id="tvGaitLatCapGain">0.15</span>
+                </div>
+                <input type="range" id="slGaitLatCapGain" min="0.0" max="1.5" step="0.05" value="0.15"
+                       oninput="updateGaitLabel('latCaptureGain', this.value); sendGaitKey('latCaptureGain', parseFloat(this.value).toFixed(2))">
+                <div class="small-note">
+                    Frontal LIP step-placement strength. 0 = off. 1.0 = full model.
+                    Toggle with "Lat Cap" button. Start at 0.15, raise in 0.05 steps.
+                </div>
+            </div>
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Lat capture max (mm)</span>
+                    <span class="tune-val" id="tvGaitLatCapMax">15</span>
+                </div>
+                <input type="range" id="slGaitLatCapMax" min="0" max="30" step="1" value="15"
+                       oninput="updateGaitLabel('latCaptureMax', this.value); sendGaitKey('latCaptureMax', this.value)">
+                <div class="small-note">
+                    Hard cap on lateral capture offset (mm). IK frontal budget ~88 mm headroom;
+                    15 mm is very conservative.
+                </div>
+            </div>
+            <div class="gait-tune-row grid-span-2-mt4">
+                <div class="tune-header">
+                    <span>Lat capture sign</span>
+                    <span class="tune-val" id="tvGaitLatCapSign">+1</span>
+                </div>
+                <div class="flex-row-gap-sm">
+                    <button class="btn-sign btn-sign-active" id="btnLatCapSignPos" onclick="setLatCapSign(+1)">+1 (default)</button>
+                    <button class="btn-sign" id="btnLatCapSignNeg" onclick="setLatCapSign(-1)">−1 (flip)</button>
+                    <span class="small-note-no-margin" style="margin-left:6px">Flip if step placement goes the wrong direction on hardware.</span>
                 </div>
             </div>
 
@@ -2607,11 +2782,32 @@ function initWebSocket() {
             // ── Roll live output cells ────────────────────────────────────────
             const rErrRad = parseFloat(v["r_err"] || "0");
             const rErrDeg = (rErrRad * 180 / Math.PI).toFixed(3);
+            const rU      = parseFloat(v["r_u"]   || "0");
             document.getElementById("bRErr").textContent   = rErrDeg + "°";
-            document.getElementById("bRU").textContent     = parseFloat(v["r_u"]   || "0").toFixed(3);
+            document.getElementById("bRU").textContent     = rU.toFixed(3);
             document.getElementById("bRAnkle").textContent = parseFloat(v["r_ank"] || "0").toFixed(2);
             document.getElementById("bRHip").textContent   = parseFloat(v["r_hip"] || "0").toFixed(2);
             document.getElementById("bRTorso").textContent = parseFloat(v["r_trs"] || "0").toFixed(2);
+
+            // ── Gait Diagnostics panel — PD outputs + balance dx/dy ──────────
+            // The diag panel needs roll/pitch PD output, error, and effective
+            // Kp from this packet. dx/dy are cached on window so the GAIT:
+            // handler (different cadence) can echo them at every tick.
+            const _gdSet2 = (id, txt) => { const el = document.getElementById(id);
+                                           if (el) el.textContent = txt; };
+            _gdSet2("gdRollU",   rU.toFixed(3));
+            _gdSet2("gdRollErr", rErrDeg);
+            _gdSet2("gdPitchU",   pU);              // already a fixed-3 string
+            _gdSet2("gdPitchErr", pErrDeg);         // already a fixed-3 string
+            const effKpR = parseFloat(v["eff_kpr"] || v["eff_kp"] || "0");
+            _gdSet2("gdEffKpR", effKpR.toFixed(2));
+            _gdSet2("gdEffKp",  effKp.toFixed(2));
+            if (v["dx"] !== undefined) window._gdLastDx = parseFloat(v["dx"]);
+            if (v["dy"] !== undefined) window._gdLastDy = parseFloat(v["dy"]);
+            const dxEl2 = document.getElementById("gdDx");
+            const dyEl2 = document.getElementById("gdDy");
+            if (dxEl2 && window._gdLastDx !== undefined) dxEl2.textContent = window._gdLastDx.toFixed(2);
+            if (dyEl2 && window._gdLastDy !== undefined) dyEl2.textContent = window._gdLastDy.toFixed(2);
 
             // ── Sync sliders to firmware (guarded while user is dragging) ─────
             if (!_tuneActive) {
@@ -3236,6 +3432,14 @@ function toggleGaitPanel() {
     chevron.classList.toggle("open", !open);
 }
 
+function toggleGaitDiagPanel() {
+    const body    = document.getElementById("gaitDiagBody");
+    const chevron = document.getElementById("gaitDiagChevron");
+    const open    = body.style.display !== "none";
+    body.style.display = open ? "none" : "block";
+    chevron.classList.toggle("open", !open);
+}
+
 // Maps slider id → { label element id, display decimals }
 const _gaitTuneMap = {
     phaseRate:  { el: "tvGaitRate",     decimals: 2 },
@@ -3253,6 +3457,8 @@ const _gaitTuneMap = {
     comLatKd:      { el: "tvGaitComLatKd",      decimals: 3 },
     comLatRateLpf: { el: "tvGaitComLatRateLpf", decimals: 2 },
     comLatGate: { el: "tvGaitComLatGate", decimals: 1 },
+    latCaptureGain: { el: "tvGaitLatCapGain", decimals: 2 },
+    latCaptureMax:  { el: "tvGaitLatCapMax",  decimals: 0 },
     torsoNeutralRoll:  { el: "tvGaitTorsoNeutralRoll",  decimals: 3 },
     torsoNeutralPitch: { el: "tvGaitTorsoNeutralPitch", decimals: 3 },
 };
@@ -3325,6 +3531,22 @@ function toggleLatTrim() {
     const enable = btn && btn.textContent.indexOf('OFF') !== -1;
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(`CMD:GAIT_TUNE:comLatTrim=${enable ? 1 : 0}`);
+    }
+}
+
+// Lateral capture-point master toggle (frontal LIP). Syncs via GAIT: broadcast.
+function toggleLatCapture() {
+    const btn = document.getElementById('btnGaitLatCapToggle');
+    const enable = btn && btn.textContent.indexOf('OFF') !== -1;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(`CMD:GAIT_TUNE:latCapture=${enable ? 1 : 0}`);
+    }
+}
+
+// Set lateral capture sign (+1 or -1). Active button updates via GAIT: broadcast.
+function setLatCapSign(sign) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(`CMD:GAIT_TUNE:latCaptureSign=${sign}`);
     }
 }
 
@@ -3589,6 +3811,32 @@ function parseGaitState(payload) {
     }
     set("gaitTelemLatTrim", latTrimMm.toFixed(1));
 
+    // Lateral capture-point — parallel A/B authority to the trim above.
+    // Optional-chained: an un-reflashed firmware leaves these undefined and
+    // the UI displays the last-known value rather than zeroing the readout.
+    if (v["latCap"] !== undefined) {
+        const latCapMm   = parseFloat(v["latCap"]   || "0");
+        const latCapEn   = (v["latCapEn"] === "1");
+        const latCapSign = parseFloat(v["latCapSign"] || "1");
+        // Toggle button
+        const lcBtn = document.getElementById('btnGaitLatCapToggle');
+        if (lcBtn) {
+            lcBtn.textContent = latCapEn
+                ? `Lat Cap: ON (${latCapMm.toFixed(1)}mm)` : "Lat Cap: OFF";
+            lcBtn.style.background = latCapEn ? "#1565c0" : "#e65100";
+        }
+        // Telemetry readout
+        set("gaitTelemLatCap", (latCapEn ? "" : "(off) ") + latCapMm.toFixed(1));
+        // Sign selector buttons
+        const pos = latCapSign >= 0;
+        const tvSign = document.getElementById("tvGaitLatCapSign");
+        if (tvSign) tvSign.textContent = pos ? "+1" : "-1";
+        const spBtn = document.getElementById("btnLatCapSignPos");
+        const snBtn = document.getElementById("btnLatCapSignNeg");
+        if (spBtn) spBtn.className = "btn-sign" + (pos ? " btn-sign-active" : "");
+        if (snBtn) snBtn.className = "btn-sign" + (!pos ? " btn-sign-active" : "");
+    }
+
     // W5 — velocity-damping telemetry. Roll rate is the filtered signal that
     // feeds the Kd term; Lat vel is that term's contribution to the trim (mm,
     // pre-clamp). comLatTrimMm above already includes it.
@@ -3656,6 +3904,11 @@ function parseGaitState(payload) {
         if (v["comLatRateLpf"] !== undefined)
             _syncSlider("slGaitComLatRateLpf", "tvGaitComLatRateLpf",
                         parseFloat(v["comLatRateLpf"]), 2);
+        // Lateral capture-point sliders. Optional-chained like W2/W5.
+        if (v["latCapGain"] !== undefined)
+            _syncSlider("slGaitLatCapGain", "tvGaitLatCapGain", parseFloat(v["latCapGain"]), 2);
+        if (v["latCapMax"] !== undefined)
+            _syncSlider("slGaitLatCapMax", "tvGaitLatCapMax", parseFloat(v["latCapMax"]), 0);
     }
 
     // Swing-foot leveler L0 telemetry
@@ -3831,6 +4084,135 @@ function parseGaitState(payload) {
     // Session neutral-trim status (continuous sync from the GAIT: broadcast).
     if (v["ntActive"] !== undefined) {
         _applyNeutralTrimStatus(v["ntActive"] === "1", parseFloat(v["ntMax"] || "0"));
+    }
+
+    // ── Gait Diagnostics panel (consolidated read-only view) ──────────────
+    // Re-uses values already parsed above. Optional-chain numeric reads so
+    // an un-reflashed firmware leaves cells at their last-known value rather
+    // than zeroing them.
+    {
+        const gdSet = (id, txt) => { const el = document.getElementById(id);
+                                     if (el) el.textContent = txt; };
+
+        // Status badges -------------------------------------------------------
+        const modeBadgeD = document.getElementById("gdModeBadge");
+        if (modeBadgeD) {
+            modeBadgeD.textContent = modeNames[mode] || "?";
+            modeBadgeD.className   = "gait-mode-badge "
+                                   + (modeClass[mode] || "gait-mode-idle");
+        }
+        const subBadge = document.getElementById("gdSubBadge");
+        if (subBadge) {
+            if (mode === 5) {
+                const rcvSubN = ["TRIGGERED","LIFTING","LANDING","DAMP","SOFT","DONE"];
+                const rcvSub  = parseInt(v["rsub"] || "0");
+                subBadge.textContent = "RCV " + (rcvSubN[rcvSub] || "?");
+                subBadge.className   = "gait-mode-badge gait-mode-rcv";
+            } else {
+                const subN = ["WAIT","SWING","STAB","STOP"];
+                subBadge.textContent = subN[sub] || "WAIT";
+                subBadge.className   = "gait-mode-badge "
+                                     + (sub === 1 ? "gait-mode-run" : "gait-mode-idle");
+            }
+        }
+        const stanceBadge = document.getElementById("gdStanceBadge");
+        if (stanceBadge) {
+            // gateStanceIsLeft is only updated while gait is active; when IDLE,
+            // both feet are weight-bearing, so show "BOTH".
+            if (mode === 0) {
+                stanceBadge.textContent = "stance: BOTH";
+                stanceBadge.className   = "gait-mode-badge gait-mode-idle";
+            } else {
+                stanceBadge.textContent = "stance: " + (stanceIsL ? "L" : "R");
+                stanceBadge.className   = "gait-mode-badge gait-mode-step";
+            }
+        }
+        const gateBadgeD = document.getElementById("gdGateBadge");
+        if (gateBadgeD) {
+            gateBadgeD.textContent = gateOK ? "GATE OPEN" : "GATE CLOSED";
+            gateBadgeD.className   = "gait-gate-badge "
+                                   + (gateOK ? "gait-gate-open" : "gait-gate-closed");
+        }
+
+        // Phase bar
+        const gdFill  = document.getElementById("gdPhaseFill");
+        const gdPhLbl = document.getElementById("gdPhaseLabel");
+        if (gdFill)  gdFill.style.width  = (phase * 100).toFixed(1) + "%";
+        if (gdPhLbl) gdPhLbl.textContent =
+            "Phase: " + (phase * 100).toFixed(1) + "%  |  "
+            + (phase < 0.5 ? "L foot swinging" : "R foot swinging");
+
+        // Cycle ---------------------------------------------------------------
+        gdSet("gdPhase", phase.toFixed(3));
+        gdSet("gdHalf",  phase < 0.5 ? "0 (L swing)" : "1 (R swing)");
+        gdSet("gdCycleX", parseFloat(v["xDispl"] || "0").toFixed(1));
+
+        // Task-space correction & lateral trim -------------------------------
+        // dx/dy come from the BALANCE: broadcast — we cache them on window so
+        // the diag panel can echo them at the GAIT: cadence too. Falls back
+        // to "—" if BALANCE: hasn't been seen yet this session.
+        const cachedDx = (window._gdLastDx !== undefined) ? window._gdLastDx : null;
+        const cachedDy = (window._gdLastDy !== undefined) ? window._gdLastDy : null;
+        gdSet("gdDx", cachedDx === null ? "—" : cachedDx.toFixed(2));
+        gdSet("gdDy", cachedDy === null ? "—" : cachedDy.toFixed(2));
+        const tdSupActD = (v["tdTrimSupAct"] === "1");
+        const tdSupEnD  = (v["tdTrimSup"]    === "1");
+        const tsEl = document.getElementById("gdTrimSup");
+        if (tsEl) {
+            tsEl.textContent = tdSupEnD ? (tdSupActD ? "ACTIVE" : "—") : "off";
+            tsEl.style.color = tdSupEnD && tdSupActD ? "#ffc107" : "#888";
+        }
+        gdSet("gdLatTrim", parseFloat(v["comLatTrimMm"] || "0").toFixed(1));
+        gdSet("gdLatVel",  parseFloat(v["comLatTrimVel"] || "0").toFixed(1));
+        gdSet("gdRollRate", parseFloat(v["comLatRollRate"] || "0").toFixed(3));
+
+        // Final FootTarget — only present in re-flashed firmware. Optional
+        // chain so an old firmware leaves the cells blank instead of "0.0".
+        const fxL = v["fxL"], fxR = v["fxR"], fyL = v["fyL"],
+              fyR = v["fyR"], fhL = v["fhL"], fhR = v["fhR"];
+        gdSet("gdFxL", fxL !== undefined ? parseFloat(fxL).toFixed(1) : "—");
+        gdSet("gdFxR", fxR !== undefined ? parseFloat(fxR).toFixed(1) : "—");
+        gdSet("gdFyL", fyL !== undefined ? parseFloat(fyL).toFixed(1) : "—");
+        gdSet("gdFyR", fyR !== undefined ? parseFloat(fyR).toFixed(1) : "—");
+        gdSet("gdFhL", fhL !== undefined ? parseFloat(fhL).toFixed(1) : "—");
+        gdSet("gdFhR", fhR !== undefined ? parseFloat(fhR).toFixed(1) : "—");
+
+        // Lift / capture / compliance ----------------------------------------
+        gdSet("gdLiftL",   liftL.toFixed(1) + "°");
+        gdSet("gdLiftR",   liftR.toFixed(1) + "°");
+        gdSet("gdCapture", parseFloat(v["capOffset"] || "0").toFixed(1));
+        gdSet("gdCmpOff",  parseFloat(v["cmpOff"]    || "0").toFixed(2));
+        const cmpActD = (v["cmpAct"] === "1");
+        const cmpEl = document.getElementById("gdCmpAct");
+        if (cmpEl) {
+            cmpEl.textContent = cmpActD ? "ACTIVE" : "—";
+            cmpEl.style.color = cmpActD ? "#4caf50" : "#888";
+        }
+        gdSet("gdWs", wsProg.toFixed(3));
+
+        // Touchdown / recovery -----------------------------------------------
+        const tdSeenD = (v["tdSeen"] === "1");
+        const tdLkdD  = (v["tdLkd"]  === "1");
+        const seenEl2 = document.getElementById("gdTdSeen");
+        if (seenEl2) {
+            seenEl2.textContent = tdSeenD ? "★ seen" : "—";
+            seenEl2.style.color = tdSeenD ? "#4caf50" : "#888";
+        }
+        const lkdEl2 = document.getElementById("gdTdLkd");
+        if (lkdEl2) {
+            lkdEl2.textContent = tdLkdD ? "LATCHED" : "—";
+            lkdEl2.style.color = tdLkdD ? "#ffc107" : "#888";
+        }
+        gdSet("gdTdPh",   tdSeenD ? parseFloat(v["tdPh"] || "0").toFixed(3) : "—");
+        gdSet("gdTdSide", tdSeenD ? (parseInt(v["tdSide"] || "0") === 0 ? "LEFT" : "RIGHT") : "—");
+        gdSet("gdTdX",    tdSeenD ? parseFloat(v["tdX"] || "0").toFixed(1) : "—");
+        if (mode === 5) {
+            const rcvSubN2 = ["TRIGGERED","LIFTING","LANDING","DAMP_HOLD","SOFT_RETURN","DONE"];
+            const rcvSub2  = parseInt(v["rsub"] || "0");
+            gdSet("gdRcvSub", rcvSubN2[rcvSub2] || "?");
+        } else {
+            gdSet("gdRcvSub", "—");
+        }
     }
 }
 

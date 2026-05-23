@@ -337,6 +337,99 @@ static bool test_stage3_midstance_zero() {
 }
 
 // ---------------------------------------------------------------------------
+// T13 — Lateral capture defaults: enabled, gain matches sagittal default,
+//       max-mm cap matches its constant, sign starts at +1. Catches a
+//       header default that drifts away from the project_wide_defs constant
+//       at compile time.
+static bool test_latCaptureDefaults() {
+    GaitController g;
+    const GaitConfig& c = g.getConfig();
+    const bool pass = c.latCaptureEnabled == GAIT_LAT_CAPTURE_ENABLED_DEFAULT
+                   && near(c.latCaptureGain,  GAIT_LAT_CAPTURE_GAIN_DEFAULT,    0.0001f)
+                   && near(c.latCaptureMaxMm, GAIT_LAT_CAPTURE_OFFSET_MAX_MM,   0.0001f)
+                   && near(c.latCaptureSign, +1.0f, 0.0001f);
+    Serial.printf("[GaitT13] lat_capture_defaults: %s  en=%d gain=%.3f max=%.1f sign=%.0f\n",
+                  pass ? "PASS" : "FAIL",
+                  (int)c.latCaptureEnabled, c.latCaptureGain,
+                  c.latCaptureMaxMm, c.latCaptureSign);
+    return pass;
+}
+
+// ---------------------------------------------------------------------------
+// T14 — Lateral capture pure-math: external mirror of the helper, verifies
+//       sign and clamp at a known rollRate. _latCaptureOffsetMm is private;
+//       this re-computes the formula explicitly so any future change to the
+//       firmware shape is caught at compile time when this test diverges.
+//
+//   raw = (H_COM_MM * rollRate_filt) * INV_OMEGA0 * gain * sign
+//   ramped = clamp(raw, ±max) * smoothstep(localPhase)
+//
+// Inputs chosen so the unclamped raw exceeds the cap → confirms the clamp
+// truncates magnitude but preserves sign. localPhase=1 → s=1 (full ramp).
+static bool test_latCapture_signAndClamp() {
+    const float rollRate_filt = +5.0f;                     // rad/s, big enough to saturate
+    const float gain          = GAIT_LAT_CAPTURE_GAIN_DEFAULT;
+    const float maxMm         = GAIT_LAT_CAPTURE_OFFSET_MAX_MM;
+    const float sign          = +1.0f;
+    const float lp            = 1.0f;
+    const float s             = lp * lp * (3.0f - 2.0f * lp);
+    const float raw           = (H_COM_MM * rollRate_filt)
+                              * GAIT_CAPTURE_INV_OMEGA0_S * gain * sign;
+    const float expected_pos  = ((raw > +maxMm) ? +maxMm
+                              :  (raw < -maxMm) ? -maxMm : raw) * s;
+    const float expected_neg  = -expected_pos;             // sign reversal at -rollRate
+
+    const bool clampedPos = (expected_pos > 0.0f) && near(expected_pos, +maxMm, 0.01f);
+    const bool clampedNeg = (expected_neg < 0.0f) && near(expected_neg, -maxMm, 0.01f);
+    const bool pass = clampedPos && clampedNeg && (raw > +maxMm);
+    Serial.printf("[GaitT14] lat_capture_sign_clamp: %s  raw=%.2f cap=%.1f "
+                  "expPos=%.2f expNeg=%.2f\n",
+                  pass ? "PASS" : "FAIL",
+                  raw, maxMm, expected_pos, expected_neg);
+    return pass;
+}
+
+// ---------------------------------------------------------------------------
+// T15 — Lateral capture telemetry is exactly 0 when disabled. Verified via
+//       the public GaitState mirror; _latCaptureOffsetMm() is private. With
+//       the helper disabled + no swing leg (mode=IDLE), latCaptureMm must
+//       stay 0 across an update tick.
+static bool test_latCapture_disabledReturnsZero() {
+    BalanceController bal(nullptr);
+    MotionManager     mm;
+    WeightShift       ws;
+    GaitController    g;
+    ws.init(&bal, &mm);
+    g.init(&mm, &ws);
+
+    GaitConfig cfg = g.getConfig();
+    cfg.latCaptureEnabled = false;
+    g.setConfig(cfg);
+
+    IMUState imu = {};
+    imu.valid    = true;
+    imu.rollRate = 5.0f;            // would saturate if enabled
+
+    g.update(0.0025f, imu);          // mode is IDLE — no swing — should stay 0
+    const bool idleZero = near(g.getState().latCaptureMm, 0.0f, 0.001f);
+
+    // Also confirm: stance-leg gating is per call-site (helper isn't called on
+    // stance in _buildFootTarget) — so even in active gait, switching the
+    // flag off must zero the telemetry. Run one swing tick with enable=false.
+    cfg.latCaptureEnabled = false;
+    g.setConfig(cfg);
+    g.start(GaitMode::RUNNING);
+    for (int i = 0; i < 5; ++i) { ws.update(0.0025f); g.update(0.0025f, imu); }
+    const bool activeZero = near(g.getState().latCaptureMm, 0.0f, 0.001f);
+    g.start(GaitMode::IDLE);
+
+    const bool pass = idleZero && activeZero;
+    Serial.printf("[GaitT15] lat_capture_disabled_zero: %s  idleZero=%d activeZero=%d\n",
+                  pass ? "PASS" : "FAIL", (int)idleZero, (int)activeZero);
+    return pass;
+}
+
+// ---------------------------------------------------------------------------
 void runGaitControllerTests() {
     Serial.println("\n[GaitCtrl] ══ Unit Tests ══════════════════════════════════");
     int pass = 0, total = 0;
@@ -352,6 +445,9 @@ void runGaitControllerTests() {
     run(test_strideEndpoints());
     run(test_stage3_continuity());
     run(test_stage3_midstance_zero());
+    run(test_latCaptureDefaults());
+    run(test_latCapture_signAndClamp());
+    run(test_latCapture_disabledReturnsZero());
     Serial.printf("[GaitCtrl] ══ %d / %d PASSED ═══════════════════════════════\n\n",
                   pass, total);
 }

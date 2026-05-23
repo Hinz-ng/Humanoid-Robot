@@ -508,7 +508,7 @@ void WebComm::broadcastGaitState() {
                                       ? _swingLeveler->getState()
                                       : SwingFootLevelerState{};
 
-    char buf[1360];
+    char buf[1480];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
@@ -556,7 +556,17 @@ void WebComm::broadcastGaitState() {
         "cmpEn=%d,cmpDepth=%.1f,cmpDecay=%lu,cmpOff=%.2f,cmpAct=%d,"
         // Session neutral trim — ntActive (any channel trimmed) + ntMax
         // (largest |trim|, deg). Lets the UI hold a persistent status line.
-        "ntActive=%d,ntMax=%.2f",
+        "ntActive=%d,ntMax=%.2f,"
+        // Per-leg final FootTarget components (post-WS, post-W2 trim,
+        // post-W4 compliance, post BalanceCorrection merge). Diagnostic
+        // snapshot of what LegIK received this tick.
+        "fxL=%.1f,fxR=%.1f,fyL=%.1f,fyR=%.1f,fhL=%.1f,fhR=%.1f,"
+        // Lateral (frontal-plane) capture-point swing-foot placement —
+        // additive A/B candidate parallel to comLatTrim + roll-PD. Config
+        // echoes (enable / gain / cap / sign) + live applied value (world-
+        // signed mm, post-clamp, post-strideScale, post-freeze; 0 on
+        // stance / disabled / IDLE / estopped / IMU invalid).
+        "latCapEn=%d,latCapGain=%.2f,latCapMax=%.1f,latCapSign=%.0f,latCap=%.1f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -654,7 +664,17 @@ void WebComm::broadcastGaitState() {
         // ServoControl. Rides the GAIT packet purely as transport (the UI
         // panel lives in the gait tab); it is not a gait-owned value.
         static_cast<int>(_servoCtrl && _servoCtrl->hasSessionTrim()),
-        _servoCtrl ? _servoCtrl->maxSessionTrimDeg() : 0.0f
+        _servoCtrl ? _servoCtrl->maxSessionTrimDeg() : 0.0f,
+        // Per-leg final FootTarget components (mm).
+        s.lastFootTargetXL_mm, s.lastFootTargetXR_mm,
+        s.lastFootTargetYL_mm, s.lastFootTargetYR_mm,
+        s.lastFootTargetHL_mm, s.lastFootTargetHR_mm,
+        // Lateral capture-point — config echoes + live applied value.
+        static_cast<int>(_gaitCtrl->getConfig().latCaptureEnabled),
+        _gaitCtrl->getConfig().latCaptureGain,
+        _gaitCtrl->getConfig().latCaptureMaxMm,
+        _gaitCtrl->getConfig().latCaptureSign,
+        s.latCaptureMm
     );
     _sendFiltered(buf);
 }
@@ -1623,6 +1643,27 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             // [0, 0.99]: 0 = raw rate (noisy), 0.99 = nearly
                             // frozen. Mirrors the clamp in _updateRollRateFilter.
                             cfg.comLatTrimRateLpfAlpha = constrain(val, 0.0f, 0.99f);
+                        }
+                        else if (key == "latCapture") cfg.latCaptureEnabled = (val > 0.5f);
+                        else if (key == "latCaptureGain") {
+                            // Mirrors sagittal captureGain cap. 0 nulls the
+                            // term (same as the enable off). 1.5 cap matches
+                            // _captureOffsetMm — past full LIP correction
+                            // the term over-drives swing-foot placement.
+                            cfg.latCaptureGain = constrain(val, 0.0f, 1.5f);
+                        }
+                        else if (key == "latCaptureMax") {
+                            // 30 mm hard ceiling: above this the offset alone
+                            // starts approaching frontal IK reach when stacked
+                            // with WS lateral shift + comLatTrim. Re-evaluate
+                            // before raising.
+                            cfg.latCaptureMaxMm = constrain(val, 0.0f, 30.0f);
+                        }
+                        else if (key == "latCaptureSign") {
+                            // ±1 sign flip (runtime). Anything else is rejected
+                            // by snapping to the nearest of {-1, +1}; the
+                            // physical convention is binary, no third option.
+                            cfg.latCaptureSign = (val >= 0.0f) ? +1.0f : -1.0f;
                         }
                         else if (key == "torsoNeutralRoll") {
                             // +/-0.20 rad (~11 deg) hard cap. Anything larger

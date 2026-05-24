@@ -571,7 +571,12 @@ void WebComm::broadcastGaitState() {
         // horizontal swing-foot velocity at the moment the touchdown latch
         // fires (mm/s). At strideComplete=1.0 (default) the velocity reports
         // the unwarped baseline; with strideComplete lowered, drops toward 0.
-        "strideComplete=%.2f,tdSwingVx=%.1f",
+        "strideComplete=%.2f,tdSwingVx=%.1f,"
+        // Forward CoM progression — swing-phase-timed body offset. Config
+        // echoes (max magnitude mm, lead fraction) + live applied magnitude
+        // (mm, post-shape, post-strideScale; 0 on default-OFF / IDLE /
+        // estopped). Read against the A/B failure-mode split when sweeping.
+        "fwdCom=%.1f,fwdComLead=%.2f,fwdComMm=%.2f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -682,7 +687,11 @@ void WebComm::broadcastGaitState() {
         s.latCaptureMm,
         // Horizontal stride completion fraction + per-swing touchdown velocity.
         _gaitCtrl->getConfig().strideCompleteFrac,
-        s.touchdownSwingVelX_mm_s
+        s.touchdownSwingVelX_mm_s,
+        // Forward CoM progression — config echoes + live applied magnitude.
+        _gaitCtrl->getConfig().fwdComMaxMm,
+        _gaitCtrl->getConfig().fwdComLeadFrac,
+        s.fwdComProgressionMm
     );
     _sendFiltered(buf);
 }
@@ -1693,6 +1702,25 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         }
                         else if (key == "torsoNeutralPitch") {
                             cfg.torsoPitchNeutralRad = constrain(val, -0.20f, 0.20f);
+                        }
+                        else if (key == "fwdCom") {
+                            // Forward CoM progression — max forward body offset
+                            // applied to BOTH legs' x_mm at the peak of the
+                            // localPhase shape. 0 = inert (default).
+                            // Hard ceiling 15 mm: above this the term alone
+                            // approaches the order of stepLengthMm and starts
+                            // composing with stance retreat to over-translate
+                            // the body forward (mode A risk). Tune up from 0
+                            // in ~1 mm steps and stop when mode A starts rising.
+                            cfg.fwdComMaxMm = constrain(val, 0.0f, 15.0f);
+                        }
+                        else if (key == "fwdComLead") {
+                            // Front-load fraction. 1.0 = pure unwarped
+                            // smoothstep (default). (0.05, 1.0] matches the
+                            // clamp inside _fwdComProgressionMm(). Lower
+                            // toward 0.5 to push the progression earlier in
+                            // the swing.
+                            cfg.fwdComLeadFrac = constrain(val, 0.05f, 1.0f);
                         }
                     }
                     start = (comma == -1) ? params.length() : comma + 1;

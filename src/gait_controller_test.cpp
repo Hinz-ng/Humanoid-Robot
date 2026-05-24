@@ -501,6 +501,90 @@ static bool test_latCapture_disabledReturnsZero() {
 }
 
 // ---------------------------------------------------------------------------
+// T16 — Forward CoM progression: pure-math invariants of _fwdComProgressionMm.
+//   _fwdComProgressionRef mirrors the firmware helper. Catches drift between
+//   the header math and the .cpp implementation at compile time.
+//
+//   raw = clamp(max, 0, +inf) * smoothstep(min(lp / lead, 1))
+//
+//   Sub-tests:
+//     (a) max=0 → 0 at all sampled localPhases (default-OFF no-op).
+//     (b) max>0, lead=1 → 0 at lp=0, monotonic non-decreasing, == max at lp=1.
+//     (c) max>0, lead<1 → held at max for all lp >= lead (early arrival).
+//     (d) Sign convention (compile-time visual check): helper returns a
+//         non-negative magnitude. The call site in _buildFootTarget applies
+//         the per-leg sign as a CONSTANT negation on BOTH legs, matching
+//         WeightShift::getStanceShift's forward_lean (x_offset = -fwd_mm).
+//         A wrong sign would pull the body BACKWARD and worsen mode B; this
+//         test deliberately fails if the helper ever returns negative output.
+static float _fwdComProgressionRef(float lp, float maxMm, float lead) {
+    if (maxMm <= 0.0f) return 0.0f;
+    if (lp < 0.0f) lp = 0.0f; else if (lp > 1.0f) lp = 1.0f;
+    if (lead < 0.05f) lead = 0.05f; else if (lead > 1.0f) lead = 1.0f;
+    const float lpw = (lp >= lead) ? 1.0f : (lp / lead);
+    const float s   = lpw * lpw * (3.0f - 2.0f * lpw);
+    return maxMm * s;
+}
+
+static bool test_fwdCom_zeroMaxIsNoOp() {
+    const float samples[] = {0.0f, 0.1f, 0.25f, 0.5f, 0.75f, 0.9f, 1.0f};
+    bool pass = true;
+    for (float lp : samples) {
+        const float v = _fwdComProgressionRef(lp, 0.0f, 1.0f);
+        if (!near(v, 0.0f, 1e-6f)) { pass = false; break; }
+    }
+    Serial.printf("[GaitT16a] fwdCom_zeroMax_no_op: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
+static bool test_fwdCom_monotonicAndEndpoints() {
+    const float maxMm = 5.0f;
+    const float lead  = 1.0f;   // pure smoothstep
+    const float lps[] = {0.0f, 0.1f, 0.25f, 0.5f, 0.75f, 0.9f, 1.0f};
+    bool pass = true;
+    float prev = -1.0f;
+    for (float lp : lps) {
+        const float v = _fwdComProgressionRef(lp, maxMm, lead);
+        if (v < -1e-6f)        { pass = false; break; }   // (d) non-negative
+        if (v + 1e-6f < prev)  { pass = false; break; }   // monotonic
+        prev = v;
+    }
+    const float v0 = _fwdComProgressionRef(0.0f, maxMm, lead);
+    const float v1 = _fwdComProgressionRef(1.0f, maxMm, lead);
+    pass = pass && near(v0, 0.0f, 1e-6f) && near(v1, maxMm, 1e-6f);
+    Serial.printf("[GaitT16b] fwdCom_monotonic_endpoints: %s  v0=%.3f v1=%.3f\n",
+                  pass ? "PASS" : "FAIL", v0, v1);
+    return pass;
+}
+
+static bool test_fwdCom_leadFracHeldAtMax() {
+    const float maxMm = 5.0f;
+    const float lead  = 0.6f;
+    const float lps[] = {0.6f, 0.7f, 0.85f, 1.0f};
+    bool pass = true;
+    for (float lp : lps) {
+        const float v = _fwdComProgressionRef(lp, maxMm, lead);
+        if (!near(v, maxMm, 1e-6f)) { pass = false; break; }
+    }
+    Serial.printf("[GaitT16c] fwdCom_lead_held_at_max: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
+// T17 — Default config: fwdComMaxMm ships at 0 (true no-op) and fwdComLeadFrac
+//       ships at 1.0 (pure smoothstep). Either drifting away from the
+//       project_wide_defs constant would silently activate the term on flash.
+static bool test_fwdComDefaults() {
+    GaitController g;
+    const GaitConfig& c = g.getConfig();
+    const bool pass = near(c.fwdComMaxMm, GAIT_FWD_COM_PROGRESSION_MAX_MM_DEFAULT, 1e-6f)
+                   && near(c.fwdComLeadFrac, GAIT_FWD_COM_PROGRESSION_LEAD_FRAC_DEFAULT, 1e-6f)
+                   && near(c.fwdComMaxMm, 0.0f, 1e-6f);
+    Serial.printf("[GaitT17] fwdCom_defaults: %s  max=%.3f lead=%.3f\n",
+                  pass ? "PASS" : "FAIL", c.fwdComMaxMm, c.fwdComLeadFrac);
+    return pass;
+}
+
+// ---------------------------------------------------------------------------
 void runGaitControllerTests() {
     Serial.println("\n[GaitCtrl] ══ Unit Tests ══════════════════════════════════");
     int pass = 0, total = 0;
@@ -522,6 +606,10 @@ void runGaitControllerTests() {
     run(test_latCaptureDefaults());
     run(test_latCapture_signAndClamp());
     run(test_latCapture_disabledReturnsZero());
+    run(test_fwdCom_zeroMaxIsNoOp());
+    run(test_fwdCom_monotonicAndEndpoints());
+    run(test_fwdCom_leadFracHeldAtMax());
+    run(test_fwdComDefaults());
     Serial.printf("[GaitCtrl] ══ %d / %d PASSED ═══════════════════════════════\n\n",
                   pass, total);
 }

@@ -89,7 +89,7 @@ struct WeightShiftConfig {
     // Stage 2: Body forward shift (mm) at |progress| = 1. Replaces ankle_pitch_tilt_deg.
     // Both feet receive an x_mm offset of -|progress| × forward_lean_mm so the foot
     // sits behind the hip pitch axis when the body leans forward. 0 = disabled.
-    float forward_lean_mm = 3.0f;
+    float forward_lean_mm = 0.0f;
 
     // IIR smoothing factor for the forward-lean ramp (was ankle_tilt_smooth_alpha).
     // Applied as: smoothed = alpha*smoothed + (1-alpha)*raw. The lateral path uses

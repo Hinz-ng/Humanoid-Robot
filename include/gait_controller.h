@@ -351,6 +351,32 @@ struct GaitConfig {
     bool     touchdownTrimSuppressEnabled = GAIT_TD_TRIM_SUPPRESS_ENABLED_DEFAULT;
     uint32_t touchdownTrimHoldMs          = GAIT_TD_TRIM_HOLD_MS_DEFAULT;
     bool     touchdownTrimFreezeHold      = GAIT_TD_TRIM_FREEZE_DEFAULT;
+
+    // -----------------------------------------------------------------------
+    // Forward CoM progression — swing-phase-timed body offset (transfer
+    // shaping, body-side complement of change A's strideCompleteFrac).
+    //
+    // Adds a small forward CoM bias to BOTH feet's x_mm during the swing
+    // half-cycle so the body is progressing forward over the incoming
+    // support foot AT touchdown, instead of arriving late and forcing a
+    // post-landing catch-up. Driven by SWING localPhase (NOT wsProgress —
+    // that timing is exactly why the existing WeightShift forward_lean
+    // destabilised). See GAIT_FWD_COM_PROGRESSION_* block in
+    // project_wide_defs.h for the full rationale, sign convention, and
+    // double-count guard.
+    //
+    //   fwdComMaxMm       magnitude of the forward CoM offset, mm. 0 = the
+    //                     term is a true no-op (default). Applied
+    //                     symmetrically to both feet's x_mm with the same
+    //                     sign convention as WeightShift::forward_lean.
+    //   fwdComLeadFrac    smoothstep compression fraction. shape reaches
+    //                     1.0 at localPhase = fwdComLeadFrac and holds at
+    //                     1.0 until touchdown. 1.0 = pure unwarped
+    //                     smoothstep (default). Lower toward 0.5 to push
+    //                     the progression earlier in the swing.
+    // -----------------------------------------------------------------------
+    float fwdComMaxMm    = GAIT_FWD_COM_PROGRESSION_MAX_MM_DEFAULT;    // WS: "fwdCom"
+    float fwdComLeadFrac = GAIT_FWD_COM_PROGRESSION_LEAD_FRAC_DEFAULT; // WS: "fwdComLead"
 };
 
 // ---------------------------------------------------------------------------
@@ -544,6 +570,18 @@ struct GaitState {
     // ------------------------------------------------------------------
     bool    trimSuppressActive = false;
 
+    // ------------------------------------------------------------------
+    // Forward CoM progression — applied per-tick body offset (mm).
+    //
+    // Equal to shape(localPhase) * fwdComMaxMm * strideScale, where the
+    // shape is the front-loaded smoothstep documented in
+    // _fwdComProgressionMm(). Always >= 0 in magnitude (the per-leg sign
+    // flip is the constant negation in _buildFootTarget that matches
+    // WeightShift::getStanceShift's forward_lean convention). 0 whenever
+    // fwdComMaxMm == 0, IDLE, estopped, or no active swing this tick.
+    // Telemetry only — _buildFootTarget reads the helper directly.
+    // ------------------------------------------------------------------
+    float fwdComProgressionMm = 0.0f;
 };
 
 // ---------------------------------------------------------------------------
@@ -862,6 +900,41 @@ private:
     //  symmetric with _captureOffsetMm().
     // -----------------------------------------------------------------------
     float _latCaptureOffsetMm(float localPhase) const;
+
+    // -----------------------------------------------------------------------
+    //  _fwdComProgressionMm — swing-phase-timed forward CoM body offset.
+    //
+    //  Returns the non-negative mm magnitude of the forward CoM offset for
+    //  this tick. The CALLER (in _buildFootTarget) negates it before adding
+    //  to x_mm on BOTH legs, matching the sign convention used by
+    //  WeightShift::getStanceShift for forward_lean (x_offset = -fwd_mm:
+    //  feet sit further behind the hips when the body has shifted forward).
+    //
+    //  Mechanism (front-loaded smoothstep, mirror of _warpedStrideFrac):
+    //      lead  = clamp(fwdComLeadFrac, 0.05, 1.0)
+    //      lp    = clamp(localPhase, 0, 1)
+    //      lpw   = (lp >= lead) ? 1.0 : (lp / lead)
+    //      s     = lpw * lpw * (3 - 2 * lpw)        // smoothstep
+    //      offset = fwdComMaxMm * s
+    //  Properties: s(0) = 0 (lift-off unaffected), s(lp >= lead) = 1.0
+    //  (CoM at full forward offset BEFORE touchdown — leads the contact).
+    //  fwdComLeadFrac = 1.0 reduces to the legacy unwarped smoothstep.
+    //
+    //  Returns 0 when fwdComMaxMm <= 0, the controller is IDLE, or
+    //  estopped — keeps the default-OFF ship truly bit-identical to the
+    //  pre-change x_mm path. Intentionally pure-math.
+    //
+    //  COMPOSITION (called out in the cpp too, per scope notes):
+    //    - Independent of the touchdown latch. The latch freezes only the
+    //      swing leg's stride x contribution (_touchdownLockedX_mm); this
+    //      term is a both-legs body offset that intentionally continues to
+    //      ramp on localPhase after the latch fires.
+    //    - Stacks ADDITIVELY on top of the existing forward_lean (WS) and
+    //      the stance-leg retreat. To avoid double-counting forward
+    //      progression during sweeps, set WeightShiftConfig::forward_lean_mm
+    //      to 0 while tuning fwdComMaxMm up from 0.
+    // -----------------------------------------------------------------------
+    float _fwdComProgressionMm(float localPhase) const;
 
     // -----------------------------------------------------------------------
     //  _comLateralTrimMm — W2+W5 continuous lateral CoM foot-placement trim.

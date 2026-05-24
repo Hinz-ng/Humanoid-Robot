@@ -26,7 +26,7 @@
 // DEFAULT_DEG_S: comfortable default for UI interaction — not too sluggish, not snappy.
 // Recalculate MAX_DEG_S if SD_ANGLE_RANGE changes (servo_driver.h):
 //   max_us_per_tick = (MAX_DEG_S / SD_ANGLE_RANGE) * (SD_USMAX - SD_USMIN) * UPDATE_INTERVAL_S
-#define JOINT_SPEED_DEFAULT_DEG_S   70.0f   // All joints at boot
+#define JOINT_SPEED_DEFAULT_DEG_S   140.0f   // All joints at boot
 #define JOINT_SPEED_MIN_DEG_S        1.0f   // Floor — prevents silent frozen-joint bugs
 // No global MAX: upper clamp is now per-joint (JointConfig::noLoadSpeedDegS).
 
@@ -60,7 +60,7 @@ constexpr float GAIT_PHASE_RATE_HZ          = 0.50f;  // cycles/sec
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
 // If drag returns at 15 mm, the root cause is the gate, not step height.
-constexpr float GAIT_STEP_HEIGHT_MM         = 10.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 8.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 30.0f;  // Phase 3+; forward stride
 
@@ -84,8 +84,8 @@ constexpr float NEUTRAL_TRIM_MAX_DEG = 8.0f;
 //
 // TUNING NOTE 2026-05-20: hardware testing found a strongly front-loaded
 // apex (0.1) noticeably better than the symmetric 0.5 — the long, slow
-// descent visibly reduces touchdown disturbance. Default lowered 0.5 → 0.1.
-constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.10f;
+// descent visibly reduces touchdown disturbance. Default lowered 0.5 → 0.15.
+constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.15f;
 
 // Horizontal stride completion fraction (W-stride-frontload). _buildFootTarget()
 // time-warps localPhase into [0, strideCompleteFrac] for the SWING leg's
@@ -104,7 +104,7 @@ constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.10f;
 // Recommended experimental range 0.5–0.7. At 0.6 the swing foot reaches +L/2
 // at localPhase=0.6 and holds horizontally stationary until touchdown at ~0.7+.
 // Clamped to (0.05, 1.0] in GAIT_TUNE.
-constexpr float GAIT_STRIDE_COMPLETE_FRAC_DEFAULT = 0.4f;
+constexpr float GAIT_STRIDE_COMPLETE_FRAC_DEFAULT = 0.3f;
 
 // TUNING NOTE: Reduced from 0.15 (~8.5°) → 0.10 (~5.7°). The previous value
 // was chosen conservatively for Phase 2 diagnostics. At 0.10 rad the gate opens
@@ -178,7 +178,7 @@ constexpr uint32_t GAIT_WAIT_SHIFT_MAX_MS_DEFAULT = 1500;
 // before lift, with margin for IIR settling and sensor noise. Setting
 // too close to lateral_shift_mm makes the gate brittle to drift; setting
 // too low defeats the point of observation.
-constexpr float GAIT_COM_LATERAL_GATE_MM_DEFAULT = 10.0f;
+constexpr float GAIT_COM_LATERAL_GATE_MM_DEFAULT = 8.0f;
 
 // ============================================================
 // LATERAL CoM TRIM  (W2 — continuous foot-placement correction)
@@ -448,6 +448,60 @@ constexpr uint32_t GAIT_TD_COMPLIANCE_DECAY_MS_DEFAULT = 200;    // recovery tim
 constexpr bool     GAIT_TD_TRIM_SUPPRESS_ENABLED_DEFAULT = true;
 constexpr uint32_t GAIT_TD_TRIM_HOLD_MS_DEFAULT          = 80;   // post-latch hold
 constexpr bool     GAIT_TD_TRIM_FREEZE_DEFAULT           = true; // freeze vs. zero
+
+// ============================================================
+// FORWARD CoM PROGRESSION  (transfer-shaping, body-side complement of change A)
+// ============================================================
+// Swing-phase-timed forward CoM offset. Applied symmetrically to BOTH feet's
+// x_mm so the body advances forward relative to the feet over the course of
+// the swing — i.e. the CoM is progressing forward over the incoming support
+// foot AT touchdown instead of arriving late and forcing a post-landing
+// catch-up. Targets the residual sagittal transfer problem (body arriving
+// late relative to the support exchange) that remains after change A fixed
+// the swing FOOT's horizontal contact velocity.
+//
+// SIGN CONVENTION: matches WeightShift::getStanceShift's forward_lean
+// contribution, which applies x_offset = -smoothedForwardLean_mm on BOTH
+// legs. A forward body shift means the feet sit further BEHIND the hips in
+// body frame → negative x_mm on both feet. _buildFootTarget therefore
+// subtracts the (non-negative) progression magnitude from t.x_mm on both
+// legs. A wrong sign would pull the body backward and worsen the late-
+// arrival failure mode; do not flip without re-confirming against
+// weight_shift.cpp:getStanceShift().
+//
+// PHASE SHAPING: shape(localPhase) ramps 0 → 1 across the swing using a
+// front-loaded smoothstep (same lpw-compression pattern as W-stride-front-
+// load, but applied to a body offset instead of foot placement). shape(0)
+// is zero so lift-off is unaffected; shape reaches 1.0 at fwdComLeadFrac
+// and holds at 1.0 until touchdown, so the CoM is at its full forward
+// offset BEFORE contact (i.e. it leads touchdown). Default lead = 1.0 =
+// pure smoothstep (no front-load) — lower toward 0.5 to push the
+// progression earlier in the swing.
+//
+// COMPOSITION (the double-count guard):
+//   1. Stance-leg retreat already drives forward body translation. This
+//      term is ADDITIVE on top of that. Tune with the existing
+//      forward_lean_mm set to 0 so progression sources don't stack.
+//   2. The touchdown latch (_touchdownLockedX_mm) freezes only the
+//      SWING LEG'S stride x contribution. This term is a BOTH-LEGS body
+//      offset and is intentionally NOT latched — it keeps ramping on
+//      localPhase exactly like the stance retreat does, so a small forward
+//      progression continues to accrue between latch and _advanceHalf.
+//      The two are independent and never fight on the same x component.
+//
+// TUNING (off-by-default; tune up cautiously):
+//   - Ship at 0.0 mm: bit-identical to current gait, fwdComProgressionMm
+//     reads 0 in telemetry.
+//   - Raise in ~1 mm steps. Failure mode B (rebound / "body arrives late")
+//     should drop FIRST. STOP / back off as soon as failure mode A
+//     (forward tip) starts rising — that is the optimum.
+//   - Watch lastReachPctL/R: a forward CoM bias adds to the SWING leg's
+//     reach near +L/2 (the term subtracts from x, so swing-foot x at
+//     touchdown becomes more negative — increasing |x| at +L/2).
+//   - If raising never reduces mode B, the late-arrival diagnosis is
+//     wrong: stop and reconsider before building double-support blending.
+constexpr float GAIT_FWD_COM_PROGRESSION_MAX_MM_DEFAULT   = 0.0f;
+constexpr float GAIT_FWD_COM_PROGRESSION_LEAD_FRAC_DEFAULT = 1.0f;
 
 // ============================================================
 // SWING-FOOT LEVELER (Section 14)

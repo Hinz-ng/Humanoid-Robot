@@ -258,6 +258,7 @@ void GaitController::start(GaitMode mode) {
         _state.rcvStepY_mm   = 0.0f;
         _state.rcvMagnitude  = 0.0f;
         _state.cycleXDispl_mm = 0.0f;
+        _state.fwdComProgressionMm = 0.0f;
         _clearTouchdownLatch();
         _resetCompliance();
         _resetTrimSuppression();
@@ -556,6 +557,38 @@ float GaitController::_latCaptureOffsetMm(float localPhase) const {
 }
 
 // ---------------------------------------------------------------------------
+//  _fwdComProgressionMm — swing-phase-timed forward CoM body offset.
+//
+//  See header for the full mechanism + composition notes. Returns the
+//  non-negative mm magnitude; the per-leg sign flip is performed at the
+//  call site in _buildFootTarget (NEGATED before adding to x_mm on BOTH
+//  legs, matching WeightShift::getStanceShift's forward_lean convention).
+//
+//  Default-OFF early-outs (truly bit-identical to the pre-change path):
+//    fwdComMaxMm <= 0       → 0   (knob at default; term inert)
+//    mode == IDLE           → 0   (term is a gait shaping aid, not a posture
+//                                   bias; never layered on the idle pose)
+//    estopped               → 0
+//
+//  Note: this helper is intentionally NOT gated on _touchdownLocked. The
+//  latch freezes only the swing leg's STRIDE x contribution; this term is
+//  a both-legs body offset and keeps ramping on localPhase right up to
+//  _advanceHalf. Stance retreat composes the same way (its formula is
+//  evaluated on _halfPhase regardless of the latch).
+// ---------------------------------------------------------------------------
+float GaitController::_fwdComProgressionMm(float localPhase) const {
+    if (_cfg.fwdComMaxMm <= 0.0f)       return 0.0f;
+    if (_state.mode == GaitMode::IDLE)  return 0.0f;
+    if (oe_is_estopped())               return 0.0f;
+
+    const float lead = constrain(_cfg.fwdComLeadFrac, 0.05f, 1.0f);
+    const float lp   = constrain(localPhase, 0.0f, 1.0f);
+    const float lpw  = (lp >= lead) ? 1.0f : (lp / lead);
+    const float s    = lpw * lpw * (3.0f - 2.0f * lpw);
+    return _cfg.fwdComMaxMm * s;
+}
+
+// ---------------------------------------------------------------------------
 //  _buildFootTarget — Stage 1: vertical lift only.
 //  Stance leg returns the neutral pose (x=0, y=0, h=stanceHeight).
 //  Swing  leg returns same x,y with h reduced by swingFrac × stepHeight.
@@ -641,6 +674,37 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
         t.x_mm += wsX_mm;
         t.y_mm += wsY_mm;
     }
+
+    // Forward CoM progression — swing-phase-timed body offset (transfer-
+    // shaping, body-side complement of change A's strideCompleteFrac warp).
+    // Applied symmetrically to BOTH legs (this is a body offset, not foot
+    // placement). Sign MATCHES WeightShift::getStanceShift's forward_lean
+    // (x_offset = -fwd_mm: feet sit further behind the hips when the body
+    // has shifted forward), so we SUBTRACT the helper's non-negative magnitude
+    // from t.x_mm. A wrong sign would pull the body backward and worsen the
+    // late-arrival failure mode.
+    //
+    // strideScale fades the term through STOPPING and is 0 on IDLE / standing-
+    // stance submits (_submitStanceBothLegs uses strideScale=0), exactly like
+    // stride / capture / comLatTrim above. Default fwdComMaxMm = 0 makes
+    // _fwdComProgressionMm() return 0 unconditionally, so on the default-OFF
+    // path this line resolves to t.x_mm += 0.0 — bit-identical to pre-change.
+    //
+    // DOUBLE-COUNT NOTE: the existing WS forward_lean above is ALSO a forward
+    // body offset (driven by |wsProgress|). Both terms stack additively. To
+    // isolate the new behaviour during a sweep, set WeightShiftConfig::
+    // forward_lean_mm to 0 while tuning fwdComMaxMm up from 0. The stance-
+    // leg retreat (computed above in the stride block) is the THIRD source of
+    // forward body translation; that one must stay untouched (it is what
+    // physically advances the body across the step).
+    //
+    // LATCH COMPOSITION: independent of _touchdownLocked. The latch only
+    // freezes the swing leg's stride x contribution (_touchdownLockedX_mm).
+    // This term ramps on localPhase for both legs equally, so it never
+    // double-counts with the latch and never fights the swing-x freeze.
+    const float fwdComMagMm  = _fwdComProgressionMm(localPhase);
+    const float fwdComBoth_mm = -fwdComMagMm * strideScale;
+    t.x_mm += fwdComBoth_mm;
 
     // W2: continuous lateral CoM trim. UVC-style — the observed lateral CoM
     // displacement is fed into BOTH feet's y_mm every tick so the support
@@ -1252,6 +1316,8 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         _state.latCaptureMm    = _latCaptureOffsetMm(_halfPhase) * strideScale;
         _state.comLatTrimMm    = _comLateralTrimMm()   * strideScale;
         _state.cycleXDispl_mm  = _halfPhase * _cfg.stepLengthMm * strideScale;
+        // Forward CoM progression — applied magnitude this tick, faded.
+        _state.fwdComProgressionMm = _fwdComProgressionMm(_halfPhase) * strideScale;
 
         if (elapsed >= GAIT_STOP_RAMP_MS / 2 && _ws && _lastShiftDir != ShiftDirection::NONE) {
             _ws->trigger(ShiftDirection::NONE);
@@ -1279,6 +1345,7 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _state.latCaptureMm    = 0.0f;
             _state.comLatTrimMm    = 0.0f;
             _state.cycleXDispl_mm  = 0.0f;
+            _state.fwdComProgressionMm = 0.0f;
         }
         return;
     }
@@ -1449,6 +1516,10 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // at the foot in _buildFootTarget). Reads 0 when latCapture disabled,
     // IMU invalid, or roll rate ≈ 0. strideScale = 1.0 in SWINGING.
     _state.latCaptureMm = _latCaptureOffsetMm(_halfPhase);
+    // Forward CoM progression — applied magnitude this tick (mm). 0 when
+    // fwdComMaxMm = 0 (default), IDLE, or estopped. strideScale = 1.0 in
+    // SWINGING so the raw helper output is the applied value.
+    _state.fwdComProgressionMm = _fwdComProgressionMm(_halfPhase);
 
     // Repurposed UI fields: hip pitch produced by IK on the swing leg.
     _state.liftL_deg = leftIsSwing  ? rL.hip_pitch_deg : 0.0f;

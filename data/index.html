@@ -1869,6 +1869,55 @@
 
             <div class="gait-tune-row">
                 <div class="tune-header">
+                    <span>Forward CoM progression max (mm)</span>
+                    <span class="tune-val" id="tvGaitFwdCom">0.0</span>
+                </div>
+                <input type="range" id="slGaitFwdCom" min="0.0" max="15.0" step="0.5" value="0.0"
+                       oninput="updateGaitLabel('fwdCom', this.value); sendGaitKey('fwdCom', parseFloat(this.value).toFixed(1))">
+                <div class="small-note">
+                    Body-side complement of stride-frontload. Adds a swing-phase-timed
+                    forward body offset (both legs) so the CoM is progressing forward
+                    over the incoming stance foot AT touchdown — instead of arriving
+                    late. 0 = OFF (default, bit-identical to current gait). Raise in
+                    ~1 mm steps. Mode B (rebound) should drop FIRST; stop the moment
+                    mode A (forward tip) starts rising — that is the optimum. For an
+                    isolated sweep, set WeightShift forward_lean to 0 (avoid stacking
+                    forward-progression sources). Watch the "Applied (mm)" readout
+                    below and lastReachPct on the IK panel.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Forward CoM lead fraction</span>
+                    <span class="tune-val" id="tvGaitFwdComLead">1.00</span>
+                </div>
+                <input type="range" id="slGaitFwdComLead" min="0.05" max="1.0" step="0.05" value="1.0"
+                       oninput="updateGaitLabel('fwdComLead', this.value); sendGaitKey('fwdComLead', parseFloat(this.value).toFixed(2))">
+                <div class="small-note">
+                    Where in the swing the forward CoM offset finishes ramping. 1.00 =
+                    pure smoothstep across the whole swing (default). Lower compresses
+                    the ramp into [0, lead] then holds at max until touchdown, so the
+                    CoM arrives forward EARLIER. shape(0) = 0 always (lift-off
+                    unaffected). Try 0.7 → 0.6 → 0.5 once max is dialled in.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Forward CoM applied (mm)</span>
+                    <span class="tune-val" id="tvGaitFwdComMm">0.00</span>
+                </div>
+                <div class="small-note">
+                    Magnitude of the forward CoM offset actually applied this tick
+                    (post-shape, post-strideScale). Telemetry only. 0 when max=0,
+                    IDLE, or estopped. Reaches max near touchdown when the term is
+                    armed; reads exactly max for all localPhase ≥ lead.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
                     <span>Lateral CoM trim gain (W2)</span>
                     <span class="tune-val" id="tvGaitComLatGain">0.30</span>
                 </div>
@@ -3481,6 +3530,8 @@ const _gaitTuneMap = {
     captureMax:  { el: "tvGaitCapMax",  decimals: 0 },
     swingApex:   { el: "tvGaitSwingApex",  decimals: 2 },
     strideComplete: { el: "tvGaitStrideComplete", decimals: 2 },
+    fwdCom:       { el: "tvGaitFwdCom",     decimals: 1 },
+    fwdComLead:   { el: "tvGaitFwdComLead", decimals: 2 },
     comLatGain:  { el: "tvGaitComLatGain", decimals: 2 },
     comLatMax:   { el: "tvGaitComLatMax",  decimals: 0 },
     comLatKd:      { el: "tvGaitComLatKd",      decimals: 3 },
@@ -3930,6 +3981,15 @@ function parseGaitState(payload) {
         // Touchdown swing horizontal velocity (telemetry — pure readout).
         if (v["tdSwingVx"] !== undefined)
             set("tvGaitTdSwingVx", parseFloat(v["tdSwingVx"]).toFixed(1));
+        // Forward CoM progression — config echoes (max mm, lead fraction)
+        // sync the sliders; live applied magnitude sets the readout label.
+        if (v["fwdCom"] !== undefined)
+            _syncSlider("slGaitFwdCom", "tvGaitFwdCom", parseFloat(v["fwdCom"]), 1);
+        if (v["fwdComLead"] !== undefined)
+            _syncSlider("slGaitFwdComLead", "tvGaitFwdComLead",
+                        parseFloat(v["fwdComLead"]), 2);
+        if (v["fwdComMm"] !== undefined)
+            set("tvGaitFwdComMm", parseFloat(v["fwdComMm"]).toFixed(2));
         if (v["comLatGain"] !== undefined)
             _syncSlider("slGaitComLatGain", "tvGaitComLatGain", parseFloat(v["comLatGain"]), 2);
         if (v["comLatMax"] !== undefined)

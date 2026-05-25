@@ -2,7 +2,7 @@
 // FILE:    gait_controller.cpp
 // MODULE:  gait
 // LAYER:   3.5 — Gait / Motion
-// LAST CHANGED: 2026-04-25 | Hinz | Phase 1: pose-by-pose mode, leg inversion
+// LAST CHANGED: 2026-05-24 | Hinz | promote GAIT_STABILIZE_MS → runtime stabilizeMs; add skipStabilizeNone
 //
 // IMPLEMENTATION NOTES
 // ────────────────────
@@ -919,13 +919,22 @@ void GaitController::_advanceHalf() {
     // Telemetry mirror also wiped so the UI shows a clean "no detection yet"
     // state until the new swing leg actually triggers.
     _clearTouchdownLatch();
-    // Center the weight shift; the structural/IIR transients from the half just
-    // completed damp during the hold. _triggerShiftForSwing() for the new half
-    // runs after STABILIZE expires (see update() STABILIZING branch).
-    if (_ws) _ws->trigger(ShiftDirection::NONE);
-    _lastShiftDir = ShiftDirection::NONE;
-    Serial.printf("[GaitCtrl] STABILIZE — swing=%s, %ums hold\n",
-                  sideName(_swingSide), (unsigned)GAIT_STABILIZE_MS);
+    // skipStabilizeNone=false (default): center WeightShift so structural/IIR
+    // transients damp during the hold. _triggerShiftForSwing() for the new
+    // half runs after STABILIZE expires (see update() STABILIZING branch).
+    // skipStabilizeNone=true (step-4 probe): skip centering; immediately arm
+    // the next half's direction so CoM blends foot-to-foot without returning
+    // to center. _triggerShiftForSwing is idempotent at the STABILIZE→WAIT
+    // transition (direction already set), so no double-trigger occurs.
+    if (_cfg.skipStabilizeNone) {
+        _triggerShiftForSwing(_swingSide);
+    } else {
+        if (_ws) _ws->trigger(ShiftDirection::NONE);
+        _lastShiftDir = ShiftDirection::NONE;
+    }
+    Serial.printf("[GaitCtrl] STABILIZE — swing=%s, %ums hold (skipNone=%d)\n",
+                  sideName(_swingSide), (unsigned)_cfg.stabilizeMs,
+                  (int)_cfg.skipStabilizeNone);
 }
 
 // ---------------------------------------------------------------------------
@@ -1398,12 +1407,12 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // ── RUNNING / SINGLE_STEP / POSE_STEP: weight-shift-gated stepping ────────
 
     // STABILIZING is entered by _advanceHalf() between half-cycles. Hold pose
-    // (no submits, no phase advance) until GAIT_STABILIZE_MS has elapsed, then
+    // (no submits, no phase advance) until _cfg.stabilizeMs has elapsed, then
     // arm WAIT_SHIFT and trigger the new half's shift. This separates the prior
     // shift's mechanical settling from the next shift's command edge so the two
     // do not superimpose into a destabilising transient.
     if (_subState == StepSubState::STABILIZING) {
-        if (millis() - _stabilizeStartMs >= GAIT_STABILIZE_MS) {
+        if (millis() - _stabilizeStartMs >= _cfg.stabilizeMs) {
             _subState         = StepSubState::WAIT_SHIFT;
             _state.subState   = _subState;
             _waitShiftStartMs = millis();

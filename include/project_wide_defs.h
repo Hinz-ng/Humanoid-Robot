@@ -55,12 +55,12 @@
 // TUNING NOTE (2026-04-xx): Reduced from 0.4 → 0.25 Hz to give the IMU roll
 // gate (wsThresholdRad) more time to satisfy before the half-cycle advances.
 // Return to 0.4 once stance loading is stable at the lower rate.
-constexpr float GAIT_PHASE_RATE_HZ          = 0.50f;  // cycles/sec
+constexpr float GAIT_PHASE_RATE_HZ          = 0.65f;  // cycles/sec
 
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
 // If drag returns at 15 mm, the root cause is the gate, not step height.
-constexpr float GAIT_STEP_HEIGHT_MM         = 8.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 7.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 30.0f;  // Phase 3+; forward stride
 
@@ -85,7 +85,7 @@ constexpr float NEUTRAL_TRIM_MAX_DEG = 8.0f;
 // TUNING NOTE 2026-05-20: hardware testing found a strongly front-loaded
 // apex (0.1) noticeably better than the symmetric 0.5 — the long, slow
 // descent visibly reduces touchdown disturbance. Default lowered 0.5 → 0.15.
-constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.15f;
+constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.1f;
 
 // Horizontal stride completion fraction (W-stride-frontload). _buildFootTarget()
 // time-warps localPhase into [0, strideCompleteFrac] for the SWING leg's
@@ -104,7 +104,7 @@ constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.15f;
 // Recommended experimental range 0.5–0.7. At 0.6 the swing foot reaches +L/2
 // at localPhase=0.6 and holds horizontally stationary until touchdown at ~0.7+.
 // Clamped to (0.05, 1.0] in GAIT_TUNE.
-constexpr float GAIT_STRIDE_COMPLETE_FRAC_DEFAULT = 0.3f;
+constexpr float GAIT_STRIDE_COMPLETE_FRAC_DEFAULT = 0.1f;
 
 // TUNING NOTE: Reduced from 0.15 (~8.5°) → 0.10 (~5.7°). The previous value
 // was chosen conservatively for Phase 2 diagnostics. At 0.10 rad the gate opens
@@ -134,7 +134,7 @@ constexpr float GAIT_STANCE_X_OFFSET_MM         = -10.0f;
 // transients damp before the next direction is commanded. Should be ≥ ~5×
 // the IIR time constant from WeightShiftConfig::ankle_tilt_smooth_alpha.
 // At alpha=0.90 / 400 Hz, τ ≈ 25 ms → 150 ms gives ~6τ.
-constexpr uint32_t GAIT_STABILIZE_MS            = 400;
+constexpr uint32_t GAIT_STABILIZE_MS            = 0;
 constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 
 // ============================================================
@@ -150,7 +150,7 @@ constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 // added per-step latency is mechanically invisible.
 //
 // 0 disables dwell (single-tick gate -- pre-Stage-2 behavior).
-constexpr uint32_t GAIT_LIFT_DWELL_MS_DEFAULT = 80;
+constexpr uint32_t GAIT_LIFT_DWELL_MS_DEFAULT = 40;
 
 // Maximum WAIT_SHIFT duration before declaring transfer failure.
 // On expiry, GaitController calls stop() (clean ramp to IDLE).

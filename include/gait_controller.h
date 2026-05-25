@@ -49,9 +49,9 @@ enum class StepSubState : uint8_t {
     WAIT_SHIFT  = 0,
     SWINGING    = 1,
     // Inserted between SWINGING (previous half done) and WAIT_SHIFT (next half).
-    // Weight shift is centered (trigger NONE) and the FSM holds for
-    // GAIT_STABILIZE_MS so structural and IIR transients damp before the next
-    // direction is commanded. Prevents back-to-back shifts from destabilising.
+    // Weight shift is centered (trigger NONE, unless skipStabilizeNone) and
+    // the FSM holds for GaitConfig::stabilizeMs so structural and IIR
+    // transients damp before the next direction is commanded.
     STABILIZING = 2,
     STOPPING    = 3,
 };
@@ -143,7 +143,7 @@ struct GaitConfig {
     // foot is allowed to lift. Gate opens when |wsProgress| >= this value.
     // 0.70 = 70% shift complete. Lower to 0.50 if gate never opens.
     // Raise toward 0.90 if robot falls when foot leaves ground.
-    float liftGateThreshold = 0.85f;  // [0, 1). WS: "liftGate"
+    float liftGateThreshold = 0.7f;  // [0, 1). WS: "liftGate"
 
     // Phase 2 IMU roll threshold (rad) — logged for diagnostics but not yet
     // used as a gate. Will gate foot lift in Phase 2 after single-leg stance
@@ -261,6 +261,19 @@ struct GaitConfig {
     // on that axis (no dwell / no timeout).
     uint32_t liftDwellMs    = GAIT_LIFT_DWELL_MS_DEFAULT;     // WS: "dwellMs"
     uint32_t waitShiftMaxMs = GAIT_WAIT_SHIFT_MAX_MS_DEFAULT; // WS: "waitMaxMs"
+
+    // Inter-step hold inserted between half-cycles (STABILIZING sub-state).
+    // Promoted from compile-time GAIT_STABILIZE_MS so the dwell can be swept
+    // at runtime. Default = GAIT_STABILIZE_MS → bit-identical until tuned.
+    // Sweep DOWN to test momentum carry-through; floor risk is prior-half
+    // IIR / mechanical transient superposition (~80–150 ms empirical knee).
+    uint32_t stabilizeMs = GAIT_STABILIZE_MS;  // WS: "stabilizeMs"
+
+    // Step-4 cheap probe: skip trigger(NONE) at _advanceHalf() and
+    // immediately command the next direction. WeightShift target flips
+    // foot-to-foot without routing through center. Pair with low stabilizeMs.
+    // Revert to false if lateral oscillation appears.
+    bool skipStabilizeNone = false;  // WS: "skipNone"
 
     // Stage 3 -- Lateral CoM observation gate. See project_wide_defs.h
     // for the model and tuning guidance. Threshold compared in mm.
@@ -680,7 +693,7 @@ private:
     uint8_t _poseHoldPt = 0;
 
     // millis() timestamp at which the current STABILIZING substate began.
-    // Compared against GAIT_STABILIZE_MS to decide when to release into WAIT_SHIFT.
+    // Compared against _cfg.stabilizeMs to decide when to release into WAIT_SHIFT.
     uint32_t _stabilizeStartMs = 0;
     // Stage 2 -- dwell + timeout bookkeeping. Both are millis() timestamps.
     // _waitShiftStartMs: set on every entry to WAIT_SHIFT. Drives the

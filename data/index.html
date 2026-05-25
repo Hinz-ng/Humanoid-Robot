@@ -1918,6 +1918,38 @@
 
             <div class="gait-tune-row">
                 <div class="tune-header">
+                    <span>Stabilize hold (ms)</span>
+                    <span class="tune-val" id="tvGaitStab">400</span>
+                </div>
+                <input type="range" id="slGaitStab" min="0" max="400" step="10" value="400"
+                       oninput="updateGaitLabel('stabilizeMs', this.value); sendGaitKey('stabilizeMs', parseInt(this.value, 10))">
+                <div class="small-note">
+                    Inter-step hold (STABILIZING sub-state). Lower = less dead-stop between
+                    steps; 0 collapses to ~1 tick. Floor risk: prior-half IIR/mechanical
+                    transient superposition — empirical knee ~80–150 ms. Sweep down from 400.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Skip center-NONE (step-4 probe)</span>
+                    <span class="tune-val" id="tvGaitSkipNone">OFF</span>
+                </div>
+                <label class="form-label-inline">
+                    <input type="checkbox" id="cbGaitSkipNone"
+                           onchange="sendGaitKey('skipNone', this.checked ? 1 : 0); document.getElementById('tvGaitSkipNone').textContent = this.checked ? 'ON' : 'OFF'">
+                    Skip trigger(NONE) — CoM blends foot-to-foot
+                </label>
+                <div class="small-note">
+                    When ON: skip centering WeightShift at the half-cycle boundary; arm the
+                    next direction immediately. CoM reverses toward the new side without
+                    returning to center. Pair with low stabilizeMs. Revert OFF if lateral
+                    oscillation appears.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
                     <span>Lateral CoM trim gain (W2)</span>
                     <span class="tune-val" id="tvGaitComLatGain">0.30</span>
                 </div>
@@ -3532,6 +3564,7 @@ const _gaitTuneMap = {
     strideComplete: { el: "tvGaitStrideComplete", decimals: 2 },
     fwdCom:       { el: "tvGaitFwdCom",     decimals: 1 },
     fwdComLead:   { el: "tvGaitFwdComLead", decimals: 2 },
+    stabilizeMs:  { el: "tvGaitStab",       decimals: 0 },
     comLatGain:  { el: "tvGaitComLatGain", decimals: 2 },
     comLatMax:   { el: "tvGaitComLatMax",  decimals: 0 },
     comLatKd:      { el: "tvGaitComLatKd",      decimals: 3 },
@@ -3990,6 +4023,17 @@ function parseGaitState(payload) {
                         parseFloat(v["fwdComLead"]), 2);
         if (v["fwdComMm"] !== undefined)
             set("tvGaitFwdComMm", parseFloat(v["fwdComMm"]).toFixed(2));
+        if (v["stabilizeMs"] !== undefined)
+            _syncSlider("slGaitStab", "tvGaitStab", parseFloat(v["stabilizeMs"]), 0);
+        if (v["skipNone"] !== undefined) {
+            const skip = (v["skipNone"] === "1");
+            const cb = document.getElementById("cbGaitSkipNone");
+            if (cb && !_tuneActive) {
+                cb.checked = skip;
+                const lbl = document.getElementById("tvGaitSkipNone");
+                if (lbl) lbl.textContent = skip ? "ON" : "OFF";
+            }
+        }
         if (v["comLatGain"] !== undefined)
             _syncSlider("slGaitComLatGain", "tvGaitComLatGain", parseFloat(v["comLatGain"]), 2);
         if (v["comLatMax"] !== undefined)

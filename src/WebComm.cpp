@@ -508,7 +508,7 @@ void WebComm::broadcastGaitState() {
                                       ? _swingLeveler->getState()
                                       : SwingFootLevelerState{};
 
-    char buf[1480];
+    char buf[1520];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
@@ -576,7 +576,8 @@ void WebComm::broadcastGaitState() {
         // echoes (max magnitude mm, lead fraction) + live applied magnitude
         // (mm, post-shape, post-strideScale; 0 on default-OFF / IDLE /
         // estopped). Read against the A/B failure-mode split when sweeping.
-        "fwdCom=%.1f,fwdComLead=%.2f,fwdComMm=%.2f",
+        "fwdCom=%.1f,fwdComLead=%.2f,fwdComMm=%.2f,"
+        "stabilizeMs=%lu,skipNone=%d",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -691,7 +692,9 @@ void WebComm::broadcastGaitState() {
         // Forward CoM progression — config echoes + live applied magnitude.
         _gaitCtrl->getConfig().fwdComMaxMm,
         _gaitCtrl->getConfig().fwdComLeadFrac,
-        s.fwdComProgressionMm
+        s.fwdComProgressionMm,
+        (unsigned long)_gaitCtrl->getConfig().stabilizeMs,
+        (int)_gaitCtrl->getConfig().skipStabilizeNone
     );
     _sendFiltered(buf);
 }
@@ -1721,6 +1724,18 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             // toward 0.5 to push the progression earlier in
                             // the swing.
                             cfg.fwdComLeadFrac = constrain(val, 0.05f, 1.0f);
+                        }
+                        else if (key == "stabilizeMs") {
+                            // 0..1000 ms inter-step hold. 0 = STABILIZING
+                            // collapses to ~1 tick (maximally continuous).
+                            // Floor risk: prior-half IIR/mechanical transient
+                            // superposition; empirical knee ~80-150 ms.
+                            cfg.stabilizeMs = (uint32_t)constrain(val, 0.0f, 1000.0f);
+                        }
+                        else if (key == "skipNone") {
+                            // Step-4 probe: skip trigger(NONE) at half-cycle
+                            // boundary; arm next direction immediately.
+                            cfg.skipStabilizeNone = (val > 0.5f);
                         }
                     }
                     start = (comma == -1) ? params.length() : comma + 1;

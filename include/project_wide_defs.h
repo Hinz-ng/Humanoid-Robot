@@ -26,7 +26,7 @@
 // DEFAULT_DEG_S: comfortable default for UI interaction — not too sluggish, not snappy.
 // Recalculate MAX_DEG_S if SD_ANGLE_RANGE changes (servo_driver.h):
 //   max_us_per_tick = (MAX_DEG_S / SD_ANGLE_RANGE) * (SD_USMAX - SD_USMIN) * UPDATE_INTERVAL_S
-#define JOINT_SPEED_DEFAULT_DEG_S   140.0f   // All joints at boot
+#define JOINT_SPEED_DEFAULT_DEG_S   200.0f   // All joints at boot
 #define JOINT_SPEED_MIN_DEG_S        1.0f   // Floor — prevents silent frozen-joint bugs
 // No global MAX: upper clamp is now per-joint (JointConfig::noLoadSpeedDegS).
 
@@ -55,7 +55,7 @@
 // TUNING NOTE (2026-04-xx): Reduced from 0.4 → 0.25 Hz to give the IMU roll
 // gate (wsThresholdRad) more time to satisfy before the half-cycle advances.
 // Return to 0.4 once stance loading is stable at the lower rate.
-constexpr float GAIT_PHASE_RATE_HZ          = 0.65f;  // cycles/sec
+constexpr float GAIT_PHASE_RATE_HZ          = 0.7f;  // cycles/sec
 
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
@@ -422,7 +422,7 @@ constexpr uint32_t FOOT_IMPACT_REFRACTORY_MS_DEFAULT = 75;
 // the recovery itself becomes a second transient, too long and it bleeds
 // into the next half-cycle's load transfer.
 constexpr bool     GAIT_TD_COMPLIANCE_ENABLED_DEFAULT  = true;
-constexpr float    GAIT_TD_COMPLIANCE_DEPTH_MM_DEFAULT = 4.0f;   // mm of yield
+constexpr float    GAIT_TD_COMPLIANCE_DEPTH_MM_DEFAULT = 2.0f;   // mm of yield
 constexpr uint32_t GAIT_TD_COMPLIANCE_DECAY_MS_DEFAULT = 200;    // recovery time
 
 // ============================================================

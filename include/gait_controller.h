@@ -206,7 +206,7 @@ struct GaitConfig {
     //                       headline. Toggle OFF for A/B baseline runs.
     //   comLatTrimGain    — mm of foot trim per mm of observed CoM offset.
     //   comLatTrimMaxMm   — per-tick cap on the applied trim magnitude.
-    bool  comLatTrimEnabled = true;                            // WS: "comLatTrim"
+    bool  comLatTrimEnabled = false;                            // WS: "comLatTrim"
     float comLatTrimGain    = GAIT_COM_LAT_TRIM_GAIN_DEFAULT;   // WS: "comLatGain"
     float comLatTrimMaxMm   = GAIT_COM_LAT_TRIM_MAX_MM_DEFAULT; // WS: "comLatMax"
 
@@ -595,6 +595,39 @@ struct GaitState {
     // Telemetry only — _buildFootTarget reads the helper directly.
     // ------------------------------------------------------------------
     float fwdComProgressionMm = 0.0f;
+
+    // ------------------------------------------------------------------
+    // Step-timing instrumentation. Updated at each footfall (before
+    // _advanceHalf flips _swingSide). All durations in unsigned ms;
+    // uint32 subtraction is wrap-safe. Zero before the first completed
+    // step (stepPeriodMs == 0 flags "no data yet").
+    //
+    //   stepPeriodMs:    wall-clock between consecutive footfalls.
+    //   waitMs:          WAIT_SHIFT duration that preceded this swing.
+    //   swingMs:         lift-off commit → footfall.
+    //   stabilizeMsMeas: elapsed STABILIZING that preceded this WAIT_SHIFT;
+    //                    0 on the first swing (no prior STABILIZE).
+    //   postContactMs:   planted-but-not-advanced dead time after the
+    //                    touchdown latch fires; 0 when no latch this half.
+    //   lastStepSide:    which side just swung (Side::LEFT=0, RIGHT=1).
+    // ------------------------------------------------------------------
+    uint32_t stepPeriodMs    = 0;
+    uint32_t waitMs          = 0;
+    uint32_t swingMs         = 0;
+    uint32_t stabilizeMsMeas = 0;
+    uint32_t postContactMs   = 0;
+    uint8_t  lastStepSide    = 0;
+    // Derived — valid when stepPeriodMs > 0, else 0.
+    float cadenceHz       = 0.0f;   // 1000 / (2 × stepPeriodMs)
+    float cadenceStepsMin = 0.0f;   // 60000 / stepPeriodMs
+    // Rolling means over the last STEP_TIMING_RING_SIZE footfalls.
+    // L/R variants split by swing side for asymmetry diagnosis.
+    float meanStepPeriodMs = 0.0f;
+    float meanCadenceHz    = 0.0f;
+    float meanStepPeriodL  = 0.0f;
+    float meanStepPeriodR  = 0.0f;
+    float meanSwingMsL     = 0.0f;
+    float meanSwingMsR     = 0.0f;
 };
 
 // ---------------------------------------------------------------------------
@@ -808,6 +841,23 @@ private:
     uint32_t _trimSuppressUntilMs = 0;
     bool     _trimSuppressActive  = false;
     float    _trimLastValidMm     = 0.0f;
+
+    // -----------------------------------------------------------------------
+    // Step-timing instrumentation — timestamps and ring buffer.
+    // All millis() timestamps; 0 = not yet set.
+    // Ring buffer stores the last STEP_TIMING_RING_SIZE footfall events;
+    // written at each footfall, read to compute rolling means. Stack/member-
+    // resident, no heap. Only written at footfall rate (~0.5–2 Hz).
+    // -----------------------------------------------------------------------
+    static constexpr uint8_t STEP_TIMING_RING_SIZE = 6;
+    uint32_t _lastFootfallMs = 0;   // millis() at last footfall
+    uint32_t _swingStartMs   = 0;   // millis() at WAIT→SWING commit
+    uint32_t _touchdownMs    = 0;   // millis() when touchdown latch set this half
+    uint32_t _stepRingPeriodMs[STEP_TIMING_RING_SIZE] = {};
+    uint8_t  _stepRingSide[STEP_TIMING_RING_SIZE]      = {};  // uint8_t(Side)
+    uint32_t _stepRingSwingMs[STEP_TIMING_RING_SIZE]   = {};
+    uint8_t  _stepRingHead  = 0;    // next write index
+    uint8_t  _stepRingCount = 0;    // valid entries (≤ STEP_TIMING_RING_SIZE)
 
     // Recompute the touchdown trim-suppression decision for this tick and keep
     // the freeze snapshot fresh. Must run once per update(), before any trim

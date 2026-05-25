@@ -62,6 +62,7 @@ void GaitController::_clearTouchdownLatch() {
     _touchdownLockedY_mm     = 0.0f;
     _touchdownLockedH_mm     = 0.0f;
     _touchdownLockedPhase    = 0.0f;
+    _touchdownMs             = 0;    // reset per-half timestamp
     _state.touchdownSeen      = false;
     _state.touchdownPhase     = 0.0f;
     _state.touchdownSwingX_mm = 0.0f;
@@ -210,6 +211,14 @@ void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController*
     _stopSwingSide    = Side::LEFT;
     _waitShiftStartMs = 0;
     _gateOkSinceMs    = 0;
+    _lastFootfallMs   = 0;
+    _swingStartMs     = 0;
+    _touchdownMs      = 0;
+    _stepRingHead     = 0;
+    _stepRingCount    = 0;
+    memset(_stepRingPeriodMs, 0, sizeof(_stepRingPeriodMs));
+    memset(_stepRingSide,     0, sizeof(_stepRingSide));
+    memset(_stepRingSwingMs,  0, sizeof(_stepRingSwingMs));
     _clearTouchdownLatch();
     _resetCompliance();
     _resetTrimSuppression();
@@ -259,6 +268,20 @@ void GaitController::start(GaitMode mode) {
         _state.rcvMagnitude  = 0.0f;
         _state.cycleXDispl_mm = 0.0f;
         _state.fwdComProgressionMm = 0.0f;
+        _state.stepPeriodMs    = 0;
+        _state.waitMs          = 0;
+        _state.swingMs         = 0;
+        _state.stabilizeMsMeas = 0;
+        _state.postContactMs   = 0;
+        _state.lastStepSide    = 0;
+        _state.cadenceHz       = 0.0f;
+        _state.cadenceStepsMin = 0.0f;
+        _state.meanStepPeriodMs = 0.0f;
+        _state.meanCadenceHz    = 0.0f;
+        _state.meanStepPeriodL  = 0.0f;
+        _state.meanStepPeriodR  = 0.0f;
+        _state.meanSwingMsL     = 0.0f;
+        _state.meanSwingMsR     = 0.0f;
         _clearTouchdownLatch();
         _resetCompliance();
         _resetTrimSuppression();
@@ -281,6 +304,11 @@ void GaitController::start(GaitMode mode) {
     _state.poseHold   = 0;
     _waitShiftStartMs = millis();
     _gateOkSinceMs    = 0;
+    _lastFootfallMs   = 0;
+    _swingStartMs     = 0;
+    _touchdownMs      = 0;
+    _stepRingHead     = 0;
+    _stepRingCount    = 0;
     _clearTouchdownLatch();
     _resetCompliance();
     _resetTrimSuppression();
@@ -1251,6 +1279,7 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _touchdownLockedY_mm  = _latCaptureOffsetMm(_halfPhase);
             _touchdownLockedPhase = _halfPhase;
             _touchdownLocked      = true;
+            _touchdownMs          = millis();  // step-timing: planted-but-not-advanced start
 
             // Stage 0 telemetry mirror.
             _state.touchdownSeen      = true;
@@ -1471,11 +1500,12 @@ void GaitController::update(float dt_s, const IMUState& imuState,
                                     && (now - _gateOkSinceMs >= _cfg.liftDwellMs);
         if (!dwellSatisfied) return;
 
-        // Dwell satisfied â€” commit to swing.
+        // Dwell satisfied — commit to swing.
         _subState  = StepSubState::SWINGING;
         _halfPhase = 0.0f;
         _state.subState = _subState;
         _state.waitShiftTimedOut = false;
+        _swingStartMs = millis();   // step-timing: lift-off commit timestamp
         Serial.printf("[GaitCtrl] Gate open  swing=%s  ws=%.3f  roll=%.4f rad  "
                       "dwell=%lu ms  elapsed=%lu ms\n",
                       sideName(_swingSide), wsProgress, imuState.roll,
@@ -1554,6 +1584,8 @@ void GaitController::update(float dt_s, const IMUState& imuState,
 
     if (_halfPhase >= 1.0f) {
         // POSE_STEP: pause at landing before advancing to next half-cycle.
+        // Timing is intentionally distorted by the operator hold, so step-
+        // timing metrics are skipped on this path.
         if (_state.mode == GaitMode::POSE_STEP) {
             _halfPhase      = 0.999f;  // hold near end; nextPose() will advance
             _poseHoldPt     = 3;
@@ -1562,6 +1594,87 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             Serial.println("[GaitCtrl] POSE_STEP: hold=3 landing");
             return;
         }
+
+        // ── Step-timing capture ───────────────────────────────────────────
+        // Captured here, before _advanceHalf() flips _swingSide and clears
+        // the touchdown latch, so all timestamps still refer to THIS swing.
+        {
+            const uint32_t now = millis();
+
+            // Unsigned subtraction is wrap-safe (both are millis() values).
+            const uint32_t stepPeriod = (_lastFootfallMs != 0)
+                                        ? (now - _lastFootfallMs) : 0;
+            const uint32_t swingDur   = (_swingStartMs != 0)
+                                        ? (now - _swingStartMs) : 0;
+            // waitMs: from WAIT_SHIFT entry to lift-off commit.
+            const uint32_t waitDur    = (_swingStartMs != 0 && _waitShiftStartMs != 0)
+                                        ? (_swingStartMs - _waitShiftStartMs) : 0;
+            // stabMs: from STABILIZE entry to WAIT_SHIFT entry; 0 on first swing.
+            const uint32_t stabDur    = (_stabilizeStartMs != 0)
+                                        ? (_waitShiftStartMs - _stabilizeStartMs) : 0;
+            // postContactMs: time the foot was planted while phase still ran to 1.0.
+            const uint32_t postCtDur  = (_touchdownLocked && _touchdownMs != 0)
+                                        ? (now - _touchdownMs) : 0;
+
+            _state.stepPeriodMs    = stepPeriod;
+            _state.swingMs         = swingDur;
+            _state.waitMs          = waitDur;
+            _state.stabilizeMsMeas = stabDur;
+            _state.postContactMs   = postCtDur;
+            _state.lastStepSide    = static_cast<uint8_t>(_swingSide);
+
+            if (stepPeriod > 0) {
+                _state.cadenceHz       = 1000.0f / (2.0f * static_cast<float>(stepPeriod));
+                _state.cadenceStepsMin = 60000.0f / static_cast<float>(stepPeriod);
+
+                // Ring buffer — overwrite oldest when full.
+                _stepRingPeriodMs[_stepRingHead] = stepPeriod;
+                _stepRingSide[_stepRingHead]     = static_cast<uint8_t>(_swingSide);
+                _stepRingSwingMs[_stepRingHead]  = swingDur;
+                _stepRingHead = (_stepRingHead + 1) % STEP_TIMING_RING_SIZE;
+                if (_stepRingCount < STEP_TIMING_RING_SIZE) ++_stepRingCount;
+            } else {
+                _state.cadenceHz       = 0.0f;
+                _state.cadenceStepsMin = 0.0f;
+            }
+
+            // Rolling means. Iterate newest-first so the per-side sums stay
+            // correct regardless of which slot is oldest. Uses int arithmetic
+            // for the index to avoid uint8_t underflow.
+            {
+                float sumP = 0.0f, sumPL = 0.0f, sumPR = 0.0f;
+                float sumSL = 0.0f, sumSR = 0.0f;
+                uint8_t nL = 0, nR = 0;
+                for (uint8_t i = 0; i < _stepRingCount; ++i) {
+                    const uint8_t idx = (uint8_t)(
+                        ((int)_stepRingHead - 1 - (int)i + STEP_TIMING_RING_SIZE)
+                        % STEP_TIMING_RING_SIZE);
+                    sumP += static_cast<float>(_stepRingPeriodMs[idx]);
+                    if (_stepRingSide[idx] == static_cast<uint8_t>(Side::LEFT)) {
+                        sumPL += static_cast<float>(_stepRingPeriodMs[idx]);
+                        sumSL += static_cast<float>(_stepRingSwingMs[idx]);
+                        ++nL;
+                    } else {
+                        sumPR += static_cast<float>(_stepRingPeriodMs[idx]);
+                        sumSR += static_cast<float>(_stepRingSwingMs[idx]);
+                        ++nR;
+                    }
+                }
+                const float cnt = static_cast<float>(_stepRingCount);
+                _state.meanStepPeriodMs = (cnt > 0.0f) ? (sumP / cnt) : 0.0f;
+                _state.meanCadenceHz    = (_state.meanStepPeriodMs > 0.0f)
+                                          ? (1000.0f / (2.0f * _state.meanStepPeriodMs))
+                                          : 0.0f;
+                _state.meanStepPeriodL  = (nL > 0) ? (sumPL / static_cast<float>(nL)) : 0.0f;
+                _state.meanStepPeriodR  = (nR > 0) ? (sumPR / static_cast<float>(nR)) : 0.0f;
+                _state.meanSwingMsL     = (nL > 0) ? (sumSL / static_cast<float>(nL)) : 0.0f;
+                _state.meanSwingMsR     = (nR > 0) ? (sumSR / static_cast<float>(nR)) : 0.0f;
+            }
+
+            _lastFootfallMs = now;
+        }
+        // ─────────────────────────────────────────────────────────────────
+
         _halfPhase = 0.0f;
         _advanceHalf();
     }

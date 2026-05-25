@@ -508,7 +508,7 @@ void WebComm::broadcastGaitState() {
                                       ? _swingLeveler->getState()
                                       : SwingFootLevelerState{};
 
-    char buf[1520];
+    char buf[1760];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
@@ -577,7 +577,12 @@ void WebComm::broadcastGaitState() {
         // (mm, post-shape, post-strideScale; 0 on default-OFF / IDLE /
         // estopped). Read against the A/B failure-mode split when sweeping.
         "fwdCom=%.1f,fwdComLead=%.2f,fwdComMm=%.2f,"
-        "stabilizeMs=%lu,skipNone=%d",
+        "stabilizeMs=%lu,skipNone=%d,"
+        // Per-step timing (updated once per footfall, zero until first complete step).
+        "stepMs=%lu,waitMs=%lu,swingMs=%lu,stabMsMeas=%lu,postCtMs=%lu,"
+        "lastSide=%d,cadHz=%.2f,cadSpm=%.1f,"
+        "meanStepMs=%.0f,meanCadHz=%.2f,meanStepL=%.0f,meanStepR=%.0f,"
+        "meanSwingL=%.0f,meanSwingR=%.0f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -694,7 +699,22 @@ void WebComm::broadcastGaitState() {
         _gaitCtrl->getConfig().fwdComLeadFrac,
         s.fwdComProgressionMm,
         (unsigned long)_gaitCtrl->getConfig().stabilizeMs,
-        (int)_gaitCtrl->getConfig().skipStabilizeNone
+        (int)_gaitCtrl->getConfig().skipStabilizeNone,
+        // Per-step timing fields.
+        (unsigned long)s.stepPeriodMs,
+        (unsigned long)s.waitMs,
+        (unsigned long)s.swingMs,
+        (unsigned long)s.stabilizeMsMeas,
+        (unsigned long)s.postContactMs,
+        (int)s.lastStepSide,
+        s.cadenceHz,
+        s.cadenceStepsMin,
+        s.meanStepPeriodMs,
+        s.meanCadenceHz,
+        s.meanStepPeriodL,
+        s.meanStepPeriodR,
+        s.meanSwingMsL,
+        s.meanSwingMsR
     );
     _sendFiltered(buf);
 }

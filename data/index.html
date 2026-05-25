@@ -1273,6 +1273,39 @@
                 <div class="bal-out-val" id="gdCycleX">0.0</div></div>
         </div>
 
+        <!-- Step timing (updated once per footfall) -->
+        <div class="section-label">Step timing</div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell"><div class="bal-out-lbl">Last side</div>
+                <div class="bal-out-val" id="gdLastSide">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Step period (ms)</div>
+                <div class="bal-out-val" id="gdStepMs">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Cadence (Hz)</div>
+                <div class="bal-out-val" id="gdCadHz">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Cadence (spm)</div>
+                <div class="bal-out-val" id="gdCadSpm">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Wait ms</div>
+                <div class="bal-out-val" id="gdWaitMs">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Swing ms</div>
+                <div class="bal-out-val" id="gdSwingMs">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Stabilize ms</div>
+                <div class="bal-out-val" id="gdStabMs">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Post-contact ms</div>
+                <div class="bal-out-val" id="gdPostCtMs">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Mean step (ms)</div>
+                <div class="bal-out-val" id="gdMeanStepMs">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Mean cadence (Hz)</div>
+                <div class="bal-out-val" id="gdMeanCadHz">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Mean step L (ms)</div>
+                <div class="bal-out-val" id="gdMeanStepL">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Mean step R (ms)</div>
+                <div class="bal-out-val" id="gdMeanStepR">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Mean swing L (ms)</div>
+                <div class="bal-out-val" id="gdMeanSwingL">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Mean swing R (ms)</div>
+                <div class="bal-out-val" id="gdMeanSwingR">—</div></div>
+        </div>
+
         <!-- Roll / pitch PD outputs (from BALANCE: broadcast) -->
         <div class="section-label">PD outputs (from balance)</div>
         <div class="gait-telem-grid">
@@ -4354,6 +4387,25 @@ function parseGaitState(payload) {
         } else {
             gdSet("gdRcvSub", "—");
         }
+
+        // Step timing (updated once per footfall; show "—" until first step) ---
+        const stepMs = v["stepMs"] !== undefined ? parseInt(v["stepMs"]) : undefined;
+        const sideN  = ["LEFT", "RIGHT"];
+        gdSet("gdLastSide",  v["lastSide"]  !== undefined ? (sideN[parseInt(v["lastSide"])] || "—") : "—");
+        gdSet("gdStepMs",    stepMs > 0 ? stepMs + " ms" : "—");
+        gdSet("gdCadHz",     v["cadHz"]  !== undefined && parseFloat(v["cadHz"])  > 0 ? parseFloat(v["cadHz"]).toFixed(2)  + " Hz"  : "—");
+        gdSet("gdCadSpm",    v["cadSpm"] !== undefined && parseFloat(v["cadSpm"]) > 0 ? parseFloat(v["cadSpm"]).toFixed(1) + " spm" : "—");
+        gdSet("gdWaitMs",    v["waitMs"]      !== undefined ? v["waitMs"]      + " ms" : "—");
+        gdSet("gdSwingMs",   v["swingMs"]     !== undefined ? v["swingMs"]     + " ms" : "—");
+        gdSet("gdStabMs",    v["stabMsMeas"]  !== undefined ? v["stabMsMeas"]  + " ms" : "—");
+        gdSet("gdPostCtMs",  v["postCtMs"]    !== undefined ? v["postCtMs"]    + " ms" : "—");
+        const meanStepMs = v["meanStepMs"] !== undefined ? parseFloat(v["meanStepMs"]) : 0;
+        gdSet("gdMeanStepMs",  meanStepMs > 0 ? meanStepMs.toFixed(0) + " ms" : "—");
+        gdSet("gdMeanCadHz",   v["meanCadHz"]  !== undefined && parseFloat(v["meanCadHz"])  > 0 ? parseFloat(v["meanCadHz"]).toFixed(2)  + " Hz" : "—");
+        gdSet("gdMeanStepL",   v["meanStepL"]  !== undefined && parseFloat(v["meanStepL"])  > 0 ? parseFloat(v["meanStepL"]).toFixed(0)  + " ms" : "—");
+        gdSet("gdMeanStepR",   v["meanStepR"]  !== undefined && parseFloat(v["meanStepR"])  > 0 ? parseFloat(v["meanStepR"]).toFixed(0)  + " ms" : "—");
+        gdSet("gdMeanSwingL",  v["meanSwingL"] !== undefined && parseFloat(v["meanSwingL"]) > 0 ? parseFloat(v["meanSwingL"]).toFixed(0) + " ms" : "—");
+        gdSet("gdMeanSwingR",  v["meanSwingR"] !== undefined && parseFloat(v["meanSwingR"]) > 0 ? parseFloat(v["meanSwingR"]).toFixed(0) + " ms" : "—");
     }
 }
 

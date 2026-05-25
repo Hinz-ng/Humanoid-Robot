@@ -63,12 +63,12 @@ struct WeightShiftConfig {
     // Ankle roll amplitude (deg). Injected as an ankle-roll bias into
     // BalanceConfig (not via SOURCE_GAIT). 15.0 deg is the post-tuning working
     // default; override via WEIGHT_SHIFT_TUNE:ankle=...
-    float ankle_shift_deg = 14.50f;
+    float ankle_shift_deg = 15.0f;
     
     // TASK-2: Phase delay between swing and stance ankle ramps (ms).
     // Swing ankle starts immediately; stance starts after this delay.
     // Set to 0 for simultaneous ramp (disables phasing).
-    float shift_phase_delay_ms = 50.0f;
+    float shift_phase_delay_ms = 0.0f;
 
     // Stage 2: Body lateral shift (mm) at progress = ±1.
     // SIGN CONVENTION (current default is negative — adduction strategy):

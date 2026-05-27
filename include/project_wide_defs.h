@@ -145,7 +145,7 @@ constexpr float GAIT_STANCE_INSET_MM            = 6.0f;
 //
 // Tune from 0 in ±1mm increments until ankle-pitch IK output sits near each
 // joint's neutralDeg in standing pose. Typical magnitude: ≤ 10 mm.
-constexpr float GAIT_STANCE_X_OFFSET_MM         = -10.0f;
+constexpr float GAIT_STANCE_X_OFFSET_MM         = -0.0f;
 
 // Hold duration (ms) GaitController inserts between half-cycles. Weight shift
 // is centered (trigger NONE) and held for this duration so mechanical/IIR

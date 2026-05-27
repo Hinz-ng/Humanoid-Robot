@@ -76,6 +76,28 @@ public:
     float maxSessionTrimDeg() const;                // largest |trim|, servo-deg
     float getEffectiveNeutralDeg(uint8_t channel) const;  // factory neutral + trim
 
+    // =========================================================================
+    //  TRANSMISSION GAIN  —  thin pass-throughs to JointModel
+    // =========================================================================
+    //  Per-joint anatomical-to-servo mechanical ratio. Sourced from
+    //  JOINT_CONFIG at boot; settable at runtime by WebComm for tune sweeps.
+    //  See joint_config.cpp for the measurement log and joint_model.h for the
+    //  conversion contract.
+    void  setTransmissionGain(uint8_t channel, float gain);
+    float getTransmissionGain(uint8_t channel) const;
+    // Returns the corrected servo-side deviation (servo°) for a given
+    // anatomical deviation (°). Telemetry uses this to show command vs
+    // intended bone angle side-by-side.
+    float correctedServoDeviationDeg(uint8_t channel, float anatomicalDeg) const;
+    // Latched saturation flag for the corrected servo angle on this channel.
+    // Set when the amplified command clipped the 0–270° hardware envelope.
+    bool  getTransmissionClampHit(uint8_t channel) const;
+    void  clearTransmissionClamp();
+    // Anatomical joint deviation currently commanded (target, post-clamp).
+    // Mirrors getTargetAngle() but in the joint-relative frame — saves
+    // telemetry from doing the inverse conversion itself.
+    float getJointAngle(uint8_t channel) const;
+
     // Immediate joint-relative write — bypasses smooth stepping.
     // Use ONLY from real-time control loops (balance controller).
     // angleDeg: degrees FROM neutral, same frame as setJointAngle().

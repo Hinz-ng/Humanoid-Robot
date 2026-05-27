@@ -159,6 +159,45 @@ public:
     float maxSessionTrimDeg() const;  // largest |trim| across all joints
 
     // =========================================================================
+    //  TRANSMISSION GAIN  —  per-joint mechanical ratio
+    // =========================================================================
+    //  Ratio: (anatomical deviation) / (commanded servo deviation). For a 4-bar
+    //  linkage, the bone rotates less than the servo by this factor — see the
+    //  measurement log in joint_config.cpp.
+    //
+    //  The seam: jointAngleToPulse() divides the (already-clamped, anatomical)
+    //  joint deviation by gain before computing the servo angle, so the bone
+    //  ends up rotating by the requested anatomical amount.
+    //    gain == 1.0       → bit-identical to pre-correction conversion
+    //    deviation == 0    → no change (neutral pose unaffected)
+    //    gain ≤ 0          → treated as 1.0 (defensive against bad config)
+    //
+    //  Runtime override: setTransmissionGain() lets the WebComm tune sweep the
+    //  gain without reflashing. Defaults are sourced from JOINT_CONFIG at
+    //  construction time. Not persisted — reboot restores the compile-time
+    //  defaults (joint_config.cpp is the source of truth).
+    void  setTransmissionGain(uint8_t jointId, float gain);
+    float getTransmissionGain(uint8_t jointId) const;
+
+    // The "amplified" (post-gain) anatomical-to-servo deviation for one joint,
+    // in servo-side degrees from neutral. Used by telemetry to show what the
+    // servo is actually being commanded vs what the bone should reach.
+    //   correctedServoDeviationDeg(ch, anatomicalDeg) = anatomicalDeg / gain
+    // (sign already encoded; multiply by JointConfig::direction to get the
+    // signed offset that lands at the servo register.)
+    float correctedServoDeviationDeg(uint8_t jointId, float anatomicalDeg) const;
+
+    // Saturation flag: set to true when the corrected servo angle clipped the
+    // 0–270° hardware envelope on the last conversion. Sticky until cleared.
+    // Mirrors how the rest of the code surfaces silent saturations: visible,
+    // broadcast, never silent. Public for read-only access by telemetry.
+    bool  transmissionClampHit[NUM_JOINTS];
+
+    // Clear all transmission-clamp flags (call after a tune knob change so
+    // the operator sees fresh saturations, not stale ones from prior gains).
+    void  clearTransmissionClamp();
+
+    // =========================================================================
     //  SMOOTH STEPPING LOOP  —  call once per loop()
     // =========================================================================
 
@@ -214,6 +253,12 @@ private:
     // only by captureSessionNeutral() / cleared by clearSessionNeutral().
     // See the factory-vs-runtime block at the top of this file.
     float _sessionTrimDeg[NUM_JOINTS];
+
+    // Per-joint runtime transmission gain. Initialised from JOINT_CONFIG at
+    // construction; modifiable at runtime via setTransmissionGain() so the
+    // WebComm tune knob can sweep without reflashing. Reboot restores the
+    // compile-time defaults — joint_config.cpp is the persisted source.
+    float _transmissionGain[NUM_JOINTS];
 
     // -------------------------------------------------------------------------
     //  Private helpers

@@ -77,6 +77,30 @@ struct JointConfig {
                                   // Used as the upper clamp in setJointSpeed().
                                   // Real loaded speed will be lower — treat this as a
                                   // physical ceiling, not an achievable operating speed.
+
+    // -------------------------------------------------------------------------
+    //  TRANSMISSION GAIN — anatomical-to-servo mechanical ratio
+    // -------------------------------------------------------------------------
+    //  Ratio: (anatomical joint deviation) / (commanded servo deviation).
+    //
+    //  Most joints drive the bone directly, so gain = 1.0 — a no-op.
+    //  Some joints sit behind a 4-bar / pushrod linkage that under-delivers:
+    //  commanding the servo +30° produces less than +30° at the bone.
+    //
+    //  Applied INSIDE JointModel::jointAngleToPulse() — the single seam where
+    //  joint-relative angle becomes servo-frame angle. Inverted by
+    //  absoluteDegToJointAngle() so the joint↔servo round trip stays
+    //  consistent. Zero deviation is unchanged (neutral pose unaffected) and
+    //  gain == 1.0 is bit-identical to the pre-correction conversion.
+    //
+    //  The corrected (amplified) servo angle is bounded by the 0–270°
+    //  hardware envelope inside JointModel; a clamp event sets a per-joint
+    //  visible flag and logs once. The joint [minAngle, maxAngle] limits are
+    //  ANATOMICAL — they describe the bone, not the servo — so they are
+    //  applied BEFORE the gain correction.
+    //
+    //  Default 1.0. Override per joint in joint_config.cpp.
+    float       transmissionGain;
 };
 
 // =============================================================================

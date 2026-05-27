@@ -751,6 +751,49 @@ void WebComm::broadcastSpeeds() {
 }
 
 // =============================================================================
+//  TRANSMISSION STATE BROADCAST
+//
+//  Emits one line per joint whose transmission gain ≠ 1.0 (i.e. the joints
+//  where the correction is doing real work — by default just ankle pitch L/R).
+//  Each field shows what the foot-IMU acceptance sweep needs to see:
+//    gain     : current runtime gain (post-TRANSMISSION_TUNE)
+//    anat     : commanded anatomical deviation, ° from neutral
+//    servo    : corrected servo-side deviation, ° from neutral
+//    clamp    : 1 if the corrected servo angle saturated the 0–270° envelope
+//
+//  Format: TRANSMISSION:<ch>=g:G,a:A,s:S,c:C; <ch>=...;
+//
+//  Sent on tune commands (parser above) and on client connect so the UI can
+//  build the panel rows lazily — joints not in the message are direct-drive
+//  and need no display.
+// =============================================================================
+void WebComm::broadcastTransmissionState() {
+    if (!_servoCtrl || ws.count() == 0) return;
+    String msg = "TRANSMISSION:";
+    bool any = false;
+    for (uint8_t ch = 0; ch < NUM_JOINTS; ch++) {
+        const float gain = _servoCtrl->getTransmissionGain(ch);
+        // Only joints actually being corrected appear in the broadcast.
+        // Skip with float tolerance so 1.0f exactly is treated as "no-op".
+        if (fabsf(gain - 1.0f) < 1e-4f) continue;
+
+        const float anat  = _servoCtrl->getJointAngle(ch);
+        const float servo = _servoCtrl->correctedServoDeviationDeg(ch, anat);
+        const int   clamp = _servoCtrl->getTransmissionClampHit(ch) ? 1 : 0;
+
+        if (any) msg += ";";
+        msg += String(ch);
+        msg += "=g:" + String(gain, 3);
+        msg +=  ",a:" + String(anat,  2);
+        msg +=  ",s:" + String(servo, 2);
+        msg +=  ",c:" + String(clamp);
+        any = true;
+    }
+    if (!any) msg += "none";
+    ws.textAll(msg);
+}
+
+// =============================================================================
 //  EVENT HANDLER
 // =============================================================================
 
@@ -763,6 +806,7 @@ void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
             broadcastJointInfo();
             broadcastState();
             broadcastSpeeds();   // sync speed sliders on reconnect
+            broadcastTransmissionState();  // sync transmission-gain panel on reconnect
         }
         // Push current calibration state immediately to the new client.
         // Without this, any client that connects after calibration finishes
@@ -1422,7 +1466,47 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                 broadcastSpeeds();
             }
         }
-       
+        // ---------------------------------------------------------------------
+        //  Per-joint transmission gain — runtime override of the anatomical-
+        //  to-servo mechanical ratio. Defaults live in joint_config.cpp; this
+        //  command lets the operator sweep without reflashing.
+        //
+        //  Protocol: CMD:TRANSMISSION_TUNE:<ch>=<gain>[,<ch>=<gain>...]
+        //  Example:  CMD:TRANSMISSION_TUNE:1=0.55,14=0.55
+        //
+        //  JointModel clamps the gain to [0.1, 2.0]; the corrected servo
+        //  command is bounded by the 0–270° hardware envelope, and any
+        //  saturation flips the per-joint TRANSMISSION_CLAMP flag visible in
+        //  the TRANSMISSION broadcast below.
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("TRANSMISSION_TUNE:")) {
+            if (_servoCtrl) {
+                // Mirrors the GAIT_TUNE key=value parser. Key is the channel
+                // index; value is the gain.
+                String params = cmd.substring(18);
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    String pair = (comma == -1) ? params.substring(start)
+                                                : params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq != -1) {
+                        int   ch   = pair.substring(0, eq).toInt();
+                        float gain = pair.substring(eq + 1).toFloat();
+                        if (ch >= 0 && ch < NUM_JOINTS) {
+                            _servoCtrl->setTransmissionGain((uint8_t)ch, gain);
+                        } else {
+                            Serial.printf("[WebComm] TRANSMISSION_TUNE: ch=%d "
+                                          "out of range\n", ch);
+                        }
+                    }
+                    start = (comma == -1) ? params.length() : comma + 1;
+                }
+                // Echo full per-joint state so the UI can re-sync from one
+                // packet — same pattern as broadcastSpeeds().
+                broadcastTransmissionState();
+            }
+        }
         // ---------------------------------------------------------------------
         //  Clear E-stop
         // ---------------------------------------------------------------------

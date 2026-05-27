@@ -15,6 +15,13 @@ JointModel::JointModel()
         _speedDegPerSec[i] = JOINT_SPEED_DEFAULT_DEG_S;
         deadband[i]        = 4.0f;  // µs — 0.54° for 270° servo, 0.36° for 180°
         _sessionTrimDeg[i] = 0.0f;  // no runtime neutral correction until captured
+        // Seed transmission gain from the compile-time config. A bad value
+        // (≤ 0) would silently invert or freeze the conversion, so coerce to
+        // 1.0 here too — jointAngleToPulse() also guards, but a clean default
+        // means getTransmissionGain() never returns the bad value.
+        const float g = JOINT_CONFIG[i].transmissionGain;
+        _transmissionGain[i]    = (g > 0.0f) ? g : 1.0f;
+        transmissionClampHit[i] = false;
     }
 }
 
@@ -203,38 +210,71 @@ void JointModel::update() {
 int JointModel::jointAngleToPulse(uint8_t jointId, float angleDeg) const {
     // This is the core conversion formula.
     //
+    // Step 0: apply the per-joint transmission gain (anatomical-to-servo ratio).
+    //         For a 4-bar linkage, the bone rotates less than the servo by this
+    //         factor — to land at +X° anatomically we must command +X/gain° at
+    //         the servo. gain == 1.0 is a bit-identical no-op for direct-drive
+    //         joints. Zero deviation stays zero (neutral pose unchanged).
+    //
     // Step 1: apply direction and offset from the EFFECTIVE neutral to get the
     //         absolute servo angle:
-    //   servoAngle = effectiveNeutral + direction × jointAngle
+    //   servoAngle = effectiveNeutral + direction × correctedServoDeviation
     //   effectiveNeutral = JOINT_CONFIG.neutralDeg (factory) + sessionTrim
     //
     // Step 2: convert absolute servo angle to pulse width via ServoDriver math
     //
-    // NOTE: angleDeg should already be clamped before this is called. The
-    // [0,270] hardware clamp below still bounds the result after the trim, so
-    // a session trim can never drive the servo past its physical envelope.
+    // NOTE: angleDeg should already be ANATOMICALLY clamped before this is
+    // called (JointModel::clampToLimits applies the JointConfig min/max, which
+    // describe the bone, not the servo). The [0,270] hardware clamp below is
+    // the silent backstop for the amplified servo angle, AND we surface that
+    // clamp via transmissionClampHit[] so an operator-visible saturation
+    // doesn't hide a tune-time mistake (e.g. gain too low for the requested
+    // anatomical range).
     if (jointId >= NUM_JOINTS) return SD_USMIN;
     const JointConfig& jc = JOINT_CONFIG[jointId];
 
-    const float effectiveNeutral = jc.neutralDeg + _sessionTrimDeg[jointId];
-    float servoAngle = effectiveNeutral + (float)jc.direction * angleDeg;
+    // Step 0 — transmission-gain correction. Defensive guard: a non-positive
+    // gain (typo'd config or zero-init bug) would invert or zero the
+    // conversion; treat it as 1.0 instead so the joint stays usable.
+    const float gain          = (_transmissionGain[jointId] > 0.0f)
+                                    ? _transmissionGain[jointId] : 1.0f;
+    const float servoDeviation = (gain == 1.0f) ? angleDeg : (angleDeg / gain);
 
-    // Hardware bounds — servoAngle must stay within 0°–270°.
-    if (servoAngle < 0.0f)           servoAngle = 0.0f;
-    if (servoAngle > SD_ANGLE_RANGE)  servoAngle = SD_ANGLE_RANGE;
+    const float effectiveNeutral = jc.neutralDeg + _sessionTrimDeg[jointId];
+    float servoAngle = effectiveNeutral + (float)jc.direction * servoDeviation;
+
+    // Hardware bounds — servoAngle must stay within 0°–270°. Saturation is
+    // surfaced via transmissionClampHit[] so the operator sees it; const
+    // method, but the flag array is mutable for telemetry purposes.
+    if (servoAngle < 0.0f || servoAngle > SD_ANGLE_RANGE) {
+        const_cast<JointModel*>(this)->transmissionClampHit[jointId] = true;
+        Serial.printf("[JointModel] TRANSMISSION_CLAMP: ch=%d  anat=%.1f°  "
+                      "gain=%.2f  servoDev=%.1f°  servoAbs=%.1f° (out of 0–270°)\n",
+                      jointId, angleDeg, gain, servoDeviation, servoAngle);
+        if (servoAngle < 0.0f)          servoAngle = 0.0f;
+        if (servoAngle > SD_ANGLE_RANGE) servoAngle = SD_ANGLE_RANGE;
+    }
 
     return ServoDriver::degToPulse(servoAngle);
 }
 
 float JointModel::absoluteDegToJointAngle(uint8_t jointId, float absoluteDeg) const {
-    // Exact inverse of jointAngleToPulse step 1 — MUST use the same effective
-    // neutral, or the joint↔servo round trip would not be consistent:
-    //   servoAngle = effectiveNeutral + direction × jointAngle
-    //   jointAngle = (servoAngle − effectiveNeutral) × direction  [direction = ±1]
+    // Exact inverse of jointAngleToPulse — MUST mirror its steps in reverse,
+    // or the joint↔servo round trip would not be consistent.
+    //
+    //   forward:  servoDev   = anatDev / gain
+    //             servoAngle = effectiveNeutral + direction × servoDev
+    //   inverse:  servoDev   = (servoAngle − effectiveNeutral) × direction
+    //             anatDev    = servoDev × gain
+    //
+    // [direction = ±1, so multiply == divide and the inverse is identical.]
     if (jointId >= NUM_JOINTS) return 0.0f;
     const JointConfig& jc = JOINT_CONFIG[jointId];
     const float effectiveNeutral = jc.neutralDeg + _sessionTrimDeg[jointId];
-    return (absoluteDeg - effectiveNeutral) * (float)jc.direction;
+    const float servoDeviation   = (absoluteDeg - effectiveNeutral) * (float)jc.direction;
+    const float gain = (_transmissionGain[jointId] > 0.0f)
+                           ? _transmissionGain[jointId] : 1.0f;
+    return (gain == 1.0f) ? servoDeviation : (servoDeviation * gain);
 }
 
 // =============================================================================
@@ -304,6 +344,46 @@ float JointModel::maxSessionTrimDeg() const {
     for (uint8_t i = 0; i < NUM_JOINTS; ++i)
         if (fabsf(_sessionTrimDeg[i]) > m) m = fabsf(_sessionTrimDeg[i]);
     return m;
+}
+
+// =============================================================================
+//  TRANSMISSION GAIN
+//
+//  Runtime override of the per-joint anatomical-to-servo mechanical ratio.
+//  The gain itself lives in JointConfig (joint_config.cpp) as the persisted
+//  default; this layer holds a session-mutable copy so the WebComm tune knob
+//  can sweep the value during the foot-IMU acceptance test without reflashing.
+//
+//  Bounds [0.1, 2.0]: 0.10 is the lowest plausible reduction ratio (would
+//  amplify command by 10×, almost certainly saturating); 2.0 is the highest
+//  plausible step-up ratio (uncommon for an under-delivering linkage but
+//  cheap to allow). The defensive `gain ≤ 0 → 1.0` guard in
+//  jointAngleToPulse() backstops malformed inputs.
+// =============================================================================
+
+void JointModel::setTransmissionGain(uint8_t jointId, float gain) {
+    if (jointId >= NUM_JOINTS) return;
+    if (gain < 0.1f) gain = 0.1f;
+    if (gain > 2.0f) gain = 2.0f;
+    _transmissionGain[jointId] = gain;
+    transmissionClampHit[jointId] = false;
+    Serial.printf("[JointModel] TRANSMISSION_GAIN: ch=%d  gain=%.3f\n", jointId, gain);
+}
+
+float JointModel::getTransmissionGain(uint8_t jointId) const {
+    if (jointId >= NUM_JOINTS) return 1.0f;
+    return _transmissionGain[jointId];
+}
+
+float JointModel::correctedServoDeviationDeg(uint8_t jointId, float anatomicalDeg) const {
+    if (jointId >= NUM_JOINTS) return 0.0f;
+    const float gain = (_transmissionGain[jointId] > 0.0f)
+                           ? _transmissionGain[jointId] : 1.0f;
+    return (gain == 1.0f) ? anatomicalDeg : (anatomicalDeg / gain);
+}
+
+void JointModel::clearTransmissionClamp() {
+    for (uint8_t i = 0; i < NUM_JOINTS; ++i) transmissionClampHit[i] = false;
 }
 
 // =============================================================================

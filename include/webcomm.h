@@ -43,6 +43,11 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     void broadcastCalibStatus(CalibState state, float progress); // --- ADD
     void broadcastBalanceState(const BalanceState& state);
     void broadcastSpeeds();
+    // Per-joint transmission state — gain, anatomical-vs-corrected-servo
+    // deviation, and clamp flag. Lets the foot-IMU sweep compare commanded
+    // bone angle vs the servo-side command field-by-field. Mirrors
+    // broadcastSpeeds() (call on connect, after tune commands, etc).
+    void broadcastTransmissionState();
     void broadcastGaitState();
     // Sends current WeightShiftConfig to a specific client (called on connect).
     // Firmware is source of truth; client updates sliders without sending back.

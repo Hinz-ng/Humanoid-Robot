@@ -79,6 +79,25 @@ float ServoControl::getEffectiveNeutralDeg(uint8_t channel) const {
     return _model.getEffectiveNeutralDeg(channel);
 }
 
+// --- Transmission gain — pass-throughs to JointModel ---
+void  ServoControl::setTransmissionGain(uint8_t channel, float gain) {
+    _model.setTransmissionGain(channel, gain);
+}
+float ServoControl::getTransmissionGain(uint8_t channel) const {
+    return _model.getTransmissionGain(channel);
+}
+float ServoControl::correctedServoDeviationDeg(uint8_t channel, float anatomicalDeg) const {
+    return _model.correctedServoDeviationDeg(channel, anatomicalDeg);
+}
+bool ServoControl::getTransmissionClampHit(uint8_t channel) const {
+    if (channel >= NUM_JOINTS) return false;
+    return _model.transmissionClampHit[channel];
+}
+void ServoControl::clearTransmissionClamp() { _model.clearTransmissionClamp(); }
+float ServoControl::getJointAngle(uint8_t channel) const {
+    return _model.getJointAngle(channel);
+}
+
 void ServoControl::setJointAngleDirect(uint8_t channel, float angleDeg) {
     _model.setJointAngle(channel, angleDeg, /*immediate=*/true);
 }

@@ -1949,6 +1949,93 @@
                 </div>
             </div>
 
+            <!-- ═══════════════════════════════════════════════════════ -->
+            <!-- HEEL-STRIKE ROLLOVER (off-by-default, open-loop)       -->
+            <!-- ═══════════════════════════════════════════════════════ -->
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Heel-strike rollover</span>
+                    <span class="tune-val" id="tvGaitHeelStrike">OFF</span>
+                </div>
+                <label class="form-label-inline">
+                    <input type="checkbox" id="cbGaitHeelStrike"
+                           onchange="sendGaitKey('heelStrike', this.checked ? 1 : 0); document.getElementById('tvGaitHeelStrike').textContent = this.checked ? 'ON' : 'OFF'">
+                    Enable heel-first contact
+                </label>
+                <div class="small-note">
+                    Late-swing dorsiflexion (toe-up) on the swing ankle so the foot
+                    lands heel-first, then rolls to flat. Replaces the forefoot-edge
+                    vault failure mode. Off by default — verify sign before enabling.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Heel-strike peak bias (deg)</span>
+                    <span class="tune-val" id="tvGaitHeelDeg">6.0</span>
+                </div>
+                <input type="range" id="slGaitHeelDeg" min="0.0" max="12.0" step="0.5" value="6.0"
+                       oninput="updateGaitLabel('heelDeg', this.value); sendGaitKey('heelDeg', parseFloat(this.value).toFixed(1))">
+                <div class="small-note">
+                    Peak dorsiflexion (toe-up) applied at touchdown (deg). Start at 6°;
+                    raise in 1–2° steps after confirming sign. Hard ceiling = 12°.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Heel-strike gate phase</span>
+                    <span class="tune-val" id="tvGaitHeelGate">0.55</span>
+                </div>
+                <input type="range" id="slGaitHeelGate" min="0.05" max="0.90" step="0.05" value="0.55"
+                       oninput="updateGaitLabel('heelGate', this.value); sendGaitKey('heelGate', parseFloat(this.value).toFixed(2))">
+                <div class="small-note">
+                    Half-phase at which the engage ramp starts. Keep below
+                    touchdownGatePhase (default 0.70) so the bias is near-full at contact.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Heel-strike release (ms)</span>
+                    <span class="tune-val" id="tvGaitHeelRelMs">120</span>
+                </div>
+                <input type="range" id="slGaitHeelRelMs" min="0" max="500" step="10" value="120"
+                       oninput="updateGaitLabel('heelRelMs', this.value); sendGaitKey('heelRelMs', parseInt(this.value, 10))">
+                <div class="small-note">
+                    Time (ms) for the bias to decay from peak to flat after the touchdown
+                    latch fires. 0 = snap to flat instantly. 120 ms default ≈ 2–3 servo periods.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Heel-strike sign</span>
+                    <span class="tune-val" id="tvGaitHeelSign">+1</span>
+                </div>
+                <label class="form-label-inline">
+                    <input type="checkbox" id="cbGaitHeelSignNeg"
+                           onchange="const s = this.checked ? -1 : 1; sendGaitKey('heelSign', s); document.getElementById('tvGaitHeelSign').textContent = this.checked ? '-1' : '+1'">
+                    Invert sign (flip to -1 if toe drops)
+                </label>
+                <div class="small-note">
+                    VERIFY FIRST: with enabled=ON at POSE_STEP late-swing, the swing foot
+                    toe should RISE. If it drops instead, check this box to flip to -1.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Heel-strike bias applied (deg)</span>
+                    <span class="tune-val" id="tvGaitHeelBias">0.00</span>
+                </div>
+                <div class="small-note">
+                    Live bias applied to the swing ankle this tick (post-sign, post-clamp).
+                    Ramps 0 → heelDeg across late swing, decays back to 0 after latch fires.
+                    Zero when disabled, IDLE, estopped, or stance leg.
+                </div>
+            </div>
+
             <div class="gait-tune-row">
                 <div class="tune-header">
                     <span>Stabilize hold (ms)</span>
@@ -3597,6 +3684,9 @@ const _gaitTuneMap = {
     strideComplete: { el: "tvGaitStrideComplete", decimals: 2 },
     fwdCom:       { el: "tvGaitFwdCom",     decimals: 1 },
     fwdComLead:   { el: "tvGaitFwdComLead", decimals: 2 },
+    heelDeg:      { el: "tvGaitHeelDeg",    decimals: 1 },
+    heelGate:     { el: "tvGaitHeelGate",   decimals: 2 },
+    heelRelMs:    { el: "tvGaitHeelRelMs",  decimals: 0 },
     stabilizeMs:  { el: "tvGaitStab",       decimals: 0 },
     comLatGain:  { el: "tvGaitComLatGain", decimals: 2 },
     comLatMax:   { el: "tvGaitComLatMax",  decimals: 0 },
@@ -4056,6 +4146,27 @@ function parseGaitState(payload) {
                         parseFloat(v["fwdComLead"]), 2);
         if (v["fwdComMm"] !== undefined)
             set("tvGaitFwdComMm", parseFloat(v["fwdComMm"]).toFixed(2));
+        // Heel-strike rollover — config echoes sync sliders; live bias is a readout.
+        if (v["heelStrike"] !== undefined) {
+            const en = (v["heelStrike"] === "1");
+            const cb = document.getElementById("cbGaitHeelStrike");
+            if (cb) cb.checked = en;
+            set("tvGaitHeelStrike", en ? "ON" : "OFF");
+        }
+        if (v["heelDeg"] !== undefined)
+            _syncSlider("slGaitHeelDeg", "tvGaitHeelDeg", parseFloat(v["heelDeg"]), 1);
+        if (v["heelGate"] !== undefined)
+            _syncSlider("slGaitHeelGate", "tvGaitHeelGate", parseFloat(v["heelGate"]), 2);
+        if (v["heelRelMs"] !== undefined)
+            _syncSlider("slGaitHeelRelMs", "tvGaitHeelRelMs", parseFloat(v["heelRelMs"]), 0);
+        if (v["heelSign"] !== undefined) {
+            const neg = (parseFloat(v["heelSign"]) < 0);
+            const cb = document.getElementById("cbGaitHeelSignNeg");
+            if (cb) cb.checked = neg;
+            set("tvGaitHeelSign", neg ? "-1" : "+1");
+        }
+        if (v["heelBias"] !== undefined)
+            set("tvGaitHeelBias", parseFloat(v["heelBias"]).toFixed(2));
         if (v["stabilizeMs"] !== undefined)
             _syncSlider("slGaitStab", "tvGaitStab", parseFloat(v["stabilizeMs"]), 0);
         if (v["skipNone"] !== undefined) {

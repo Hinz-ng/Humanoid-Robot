@@ -143,7 +143,7 @@ struct GaitConfig {
     // foot is allowed to lift. Gate opens when |wsProgress| >= this value.
     // 0.70 = 70% shift complete. Lower to 0.50 if gate never opens.
     // Raise toward 0.90 if robot falls when foot leaves ground.
-    float liftGateThreshold = 0.7f;  // [0, 1). WS: "liftGate"
+    float liftGateThreshold = 0.45f;  // [0, 1). WS: "liftGate"
 
     // Phase 2 IMU roll threshold (rad) — logged for diagnostics but not yet
     // used as a gate. Will gate foot lift in Phase 2 after single-leg stance
@@ -390,6 +390,30 @@ struct GaitConfig {
     // -----------------------------------------------------------------------
     float fwdComMaxMm    = GAIT_FWD_COM_PROGRESSION_MAX_MM_DEFAULT;    // WS: "fwdCom"
     float fwdComLeadFrac = GAIT_FWD_COM_PROGRESSION_LEAD_FRAC_DEFAULT; // WS: "fwdComLead"
+
+    // -----------------------------------------------------------------------
+    // Heel-strike rollover (off-by-default, open-loop, additive post-IK).
+    //
+    // Applies late-swing dorsiflexion on the SWING ankle to achieve heel-first
+    // contact, then decays to flat over heelStrikeReleaseMs after the touchdown
+    // latch fires. Bias is added AFTER IK — the flat-foot guard checks the
+    // pure IK solution and is unaffected. Default enabled=false → true no-op.
+    //
+    //   heelStrikeEnabled      — master enable. WS: "heelStrike"
+    //   heelStrikeDorsiflexDeg — peak toe-up at contact (deg). WS: "heelDeg"
+    //   heelStrikeGatePhase    — halfPhase at which engage ramp starts.
+    //                            Keep < touchdownGatePhase. WS: "heelGate"
+    //   heelStrikeReleaseMs    — decay from peak to flat after latch (ms).
+    //                            WS: "heelRelMs"
+    //   heelStrikeMaxBiasDeg   — hard clamp (safety backstop; no WS key).
+    //   heelStrikeSign         — ±1 direction override. WS: "heelSign"
+    // -----------------------------------------------------------------------
+    bool     heelStrikeEnabled      = GAIT_HEELSTRIKE_ENABLED_DEFAULT;
+    float    heelStrikeDorsiflexDeg = GAIT_HEELSTRIKE_DORSIFLEX_DEG_DEFAULT;
+    float    heelStrikeGatePhase    = GAIT_HEELSTRIKE_GATE_PHASE_DEFAULT;
+    uint32_t heelStrikeReleaseMs    = GAIT_HEELSTRIKE_RELEASE_MS_DEFAULT;
+    float    heelStrikeMaxBiasDeg   = GAIT_HEELSTRIKE_MAX_BIAS_DEG;
+    float    heelStrikeSign         = GAIT_HEELSTRIKE_SIGN_DEFAULT;
 };
 
 // ---------------------------------------------------------------------------
@@ -595,6 +619,14 @@ struct GaitState {
     // Telemetry only — _buildFootTarget reads the helper directly.
     // ------------------------------------------------------------------
     float fwdComProgressionMm = 0.0f;
+
+    // ------------------------------------------------------------------
+    // Heel-strike rollover — additive ankle-pitch bias applied to the swing
+    // ankle this tick (deg). Zero when disabled, IDLE, estopped, or on the
+    // stance-leg call. Set only when _submitFootTargetIK is called for the
+    // swing side, so the stance call never overwrites it with 0.
+    // ------------------------------------------------------------------
+    float heelStrikeBiasDeg = 0.0f;
 
     // ------------------------------------------------------------------
     // Step-timing instrumentation. Updated at each footfall (before
@@ -998,6 +1030,24 @@ private:
     //      to 0 while tuning fwdComMaxMm up from 0.
     // -----------------------------------------------------------------------
     float _fwdComProgressionMm(float localPhase) const;
+
+    // -----------------------------------------------------------------------
+    //  _heelStrikeBiasDeg — heel-strike rollover ankle-pitch bias.
+    //
+    //  Returns the additive dorsiflexion bias (deg) for the swing ankle this
+    //  tick. Zero when heelStrikeEnabled=false, IDLE, estopped, or
+    //  side != _swingSide. Sign and magnitude determined by GaitConfig fields.
+    //
+    //  Two branches:
+    //    RELEASE (post-contact): _touchdownLocked && _touchdownMs != 0 &&
+    //      heelStrikeReleaseMs > 0 — bias decays peak → 0 via inverted
+    //      smoothstep over heelStrikeReleaseMs from _touchdownMs.
+    //    ENGAGE (pre-contact): bias ramps 0 → peak via smoothstep starting at
+    //      heelStrikeGatePhase within _halfPhase.
+    //
+    //  Result is clamped to ±heelStrikeMaxBiasDeg. Intentionally pure-math.
+    // -----------------------------------------------------------------------
+    float _heelStrikeBiasDeg(Side side) const;
 
     // -----------------------------------------------------------------------
     //  _comLateralTrimMm — W2+W5 continuous lateral CoM foot-placement trim.

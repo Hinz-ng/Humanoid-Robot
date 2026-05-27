@@ -508,7 +508,7 @@ void WebComm::broadcastGaitState() {
                                       ? _swingLeveler->getState()
                                       : SwingFootLevelerState{};
 
-    char buf[1760];
+    char buf[1920];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
@@ -577,6 +577,9 @@ void WebComm::broadcastGaitState() {
         // (mm, post-shape, post-strideScale; 0 on default-OFF / IDLE /
         // estopped). Read against the A/B failure-mode split when sweeping.
         "fwdCom=%.1f,fwdComLead=%.2f,fwdComMm=%.2f,"
+        // Heel-strike rollover — config echoes (enable / peak deg / gate phase /
+        // release ms / sign) + live applied bias on the swing ankle this tick.
+        "heelStrike=%d,heelDeg=%.1f,heelGate=%.2f,heelRelMs=%lu,heelSign=%.0f,heelBias=%.2f,"
         "stabilizeMs=%lu,skipNone=%d,"
         // Per-step timing (updated once per footfall, zero until first complete step).
         "stepMs=%lu,waitMs=%lu,swingMs=%lu,stabMsMeas=%lu,postCtMs=%lu,"
@@ -698,6 +701,13 @@ void WebComm::broadcastGaitState() {
         _gaitCtrl->getConfig().fwdComMaxMm,
         _gaitCtrl->getConfig().fwdComLeadFrac,
         s.fwdComProgressionMm,
+        // Heel-strike rollover — config echoes + live applied bias.
+        static_cast<int>(_gaitCtrl->getConfig().heelStrikeEnabled),
+        _gaitCtrl->getConfig().heelStrikeDorsiflexDeg,
+        _gaitCtrl->getConfig().heelStrikeGatePhase,
+        (unsigned long)_gaitCtrl->getConfig().heelStrikeReleaseMs,
+        _gaitCtrl->getConfig().heelStrikeSign,
+        s.heelStrikeBiasDeg,
         (unsigned long)_gaitCtrl->getConfig().stabilizeMs,
         (int)_gaitCtrl->getConfig().skipStabilizeNone,
         // Per-step timing fields.
@@ -1744,6 +1754,29 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             // toward 0.5 to push the progression earlier in
                             // the swing.
                             cfg.fwdComLeadFrac = constrain(val, 0.05f, 1.0f);
+                        }
+                        else if (key == "heelStrike") cfg.heelStrikeEnabled = (val > 0.5f);
+                        else if (key == "heelDeg") {
+                            // Peak dorsiflexion bias (deg). 0 nulls the bias.
+                            // Hard ceiling = GAIT_HEELSTRIKE_MAX_BIAS_DEG.
+                            cfg.heelStrikeDorsiflexDeg = constrain(val, 0.0f, GAIT_HEELSTRIKE_MAX_BIAS_DEG);
+                        }
+                        else if (key == "heelGate") {
+                            // Engage gate phase [0.05, 0.90). Keep below
+                            // touchdownGatePhase (default 0.70) so the ramp
+                            // is near-full at contact.
+                            cfg.heelStrikeGatePhase = constrain(val, 0.05f, 0.90f);
+                        }
+                        else if (key == "heelRelMs") {
+                            // Release window (ms). 0 = bias snaps to zero on
+                            // touchdown latch. 500 ms cap — longer risks
+                            // spilling into the next half-cycle.
+                            cfg.heelStrikeReleaseMs = (uint32_t)constrain(val, 0.0f, 500.0f);
+                        }
+                        else if (key == "heelSign") {
+                            // ±1 sign flip. Flip to -1 if toe drops instead
+                            // of rising on first hardware test.
+                            cfg.heelStrikeSign = (val >= 0.0f) ? +1.0f : -1.0f;
                         }
                         else if (key == "stabilizeMs") {
                             // 0..1000 ms inter-step hold. 0 = STABILIZING

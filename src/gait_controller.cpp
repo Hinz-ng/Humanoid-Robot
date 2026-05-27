@@ -617,6 +617,38 @@ float GaitController::_fwdComProgressionMm(float localPhase) const {
 }
 
 // ---------------------------------------------------------------------------
+//  _heelStrikeBiasDeg — heel-strike rollover ankle-pitch bias.
+// ---------------------------------------------------------------------------
+float GaitController::_heelStrikeBiasDeg(Side side) const {
+    if (!_cfg.heelStrikeEnabled)          return 0.0f;
+    if (_state.mode == GaitMode::IDLE)    return 0.0f;
+    if (oe_is_estopped())                 return 0.0f;
+    if (side != _swingSide)               return 0.0f;
+
+    const float peak = _cfg.heelStrikeDorsiflexDeg;
+    const float sign = _cfg.heelStrikeSign;
+    const float maxB = _cfg.heelStrikeMaxBiasDeg;
+    float frac = 0.0f;
+
+    // RELEASE branch: post-contact, decay from full bias to zero.
+    if (_touchdownLocked && _touchdownMs != 0 && _cfg.heelStrikeReleaseMs > 0) {
+        const float t = constrain(
+            (float)(millis() - _touchdownMs) / (float)_cfg.heelStrikeReleaseMs,
+            0.0f, 1.0f);
+        const float s = t * t * (3.0f - 2.0f * t);  // smoothstep
+        frac = 1.0f - s;                              // 1 at contact → 0 after window
+    } else {
+        // ENGAGE branch: ramp 0 → 1 across the tail of the swing half-cycle.
+        const float g  = constrain(_cfg.heelStrikeGatePhase, 0.05f, 0.95f);
+        if (_halfPhase < g) return 0.0f;
+        const float lp = constrain((_halfPhase - g) / (1.0f - g), 0.0f, 1.0f);
+        frac = lp * lp * (3.0f - 2.0f * lp);  // smoothstep: 0 at gate → 1 near touchdown
+    }
+
+    return constrain(sign * peak * frac, -maxB, maxB);
+}
+
+// ---------------------------------------------------------------------------
 //  _buildFootTarget — Stage 1: vertical lift only.
 //  Stance leg returns the neutral pose (x=0, y=0, h=stanceHeight).
 //  Swing  leg returns same x,y with h reduced by swingFrac × stepHeight.
@@ -861,9 +893,20 @@ LegIKResult GaitController::_submitFootTargetIK(Side side,
     // JointModel's runtime session trim on the joint↔servo conversion — gait
     // submits raw IK angles and inherits the correction downstream.
     const float pitch_bias = _swingLeveler ? _swingLeveler->anklePitchBiasFor(side) : 0.0f;
+    // Heel-strike bias is additive AFTER IK. The flat-foot guard above checks
+    // r.flat_foot_error_deg from the pure IK solution (bias is not in the IK
+    // target), so a deliberate heel-up attitude at late swing cannot trip the
+    // guard. pitch_bias (swing leveler) and heel_bias sum additively; both are
+    // off-by-default, so there is no interaction in the shipped config.
+    const float heel_bias = _heelStrikeBiasDeg(side);
+    // Update telemetry only on the swing-side call. The stance-side call
+    // returns 0 from _heelStrikeBiasDeg (side != _swingSide guard), but
+    // writing unconditionally would overwrite the swing-side value with 0
+    // on the second call each tick and produce a permanently-zero readout.
+    if (side == _swingSide) _state.heelStrikeBiasDeg = heel_bias;
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_PITCH),   r.hip_pitch_deg);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::KNEE_PITCH),  r.knee_pitch_deg);
-    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_PITCH), r.ankle_pitch_deg + pitch_bias);
+    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_PITCH), r.ankle_pitch_deg + pitch_bias + heel_bias);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_ROLL),    r.hip_roll_deg);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_ROLL),  r.ankle_roll_deg);
 

@@ -60,7 +60,7 @@ constexpr float GAIT_PHASE_RATE_HZ          = 0.7f;  // cycles/sec
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
 // If drag returns at 15 mm, the root cause is the gate, not step height.
-constexpr float GAIT_STEP_HEIGHT_MM         = 7.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 10.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 30.0f;  // Phase 3+; forward stride
 
@@ -539,5 +539,47 @@ constexpr float SWING_LEVELER_OUTPUT_IIR_ALPHA = 0.5f;
 constexpr float SWING_LEVELER_ENGAGE_LIFT_FRAC    = 0.6f;
 constexpr float SWING_LEVELER_PEAK_LIFT_FRAC      = 1.0f;
 constexpr float SWING_LEVELER_DISENGAGE_LIFT_FRAC = 1.01f;
+
+// ============================================================
+// HEEL-STRIKE ROLLOVER  (off-by-default, open-loop, additive)
+// ============================================================
+// Replaces the rigid forefoot-edge vault (land flat → vault forefoot → PE→KE
+// → backward rebound) with a translating rocker contact. Late-swing
+// dorsiflexion (toe-up) makes the foot land heel-first, then rolls to flat as
+// load transfers. Bias is ADDITIVE AFTER IK — the flat-foot guard is
+// unaffected (it checks the pure IK solution, not the final submitted angle).
+// ============================================================
+
+// Master enable at boot. false = true hardware no-op: _heelStrikeBiasDeg()
+// returns 0 unconditionally, ankle-pitch submit is bit-identical to pre-feature.
+constexpr bool GAIT_HEELSTRIKE_ENABLED_DEFAULT = false;
+
+// Peak dorsiflexion (toe-up) applied at touchdown (deg). 6° ≈ rocker contact
+// without consuming significant IK headroom. Raise in 1–2° steps after the
+// sign has been confirmed on hardware (see GAIT_HEELSTRIKE_SIGN_DEFAULT).
+constexpr float GAIT_HEELSTRIKE_DORSIFLEX_DEG_DEFAULT = 5.0f;
+
+// Half-phase fraction at which the engage ramp starts [0..1). Below this the
+// bias is 0; above it the bias ramps 0 → peak via smoothstep. 0.55 is below
+// the default touchdownGatePhase (0.70), so the bias is near-full at contact.
+// INVARIANT: keep < touchdownGatePhase so the ramp is substantially complete
+// before the latch can fire. Never raise above touchdownGatePhase.
+constexpr float GAIT_HEELSTRIKE_GATE_PHASE_DEFAULT = 0.55f;
+
+// Time (ms) for the bias to decay from peak to zero after the touchdown latch
+// fires. 120 ms ≈ 2–3 servo periods; enough to roll to flat without over-
+// dwelling into the next half-cycle's weight transfer.
+constexpr uint32_t GAIT_HEELSTRIKE_RELEASE_MS_DEFAULT = 120;
+
+// Hard ceiling on the applied bias regardless of heelStrikeDorsiflexDeg.
+// Safety backstop: combined with pitch_bias from the swing leveler (also
+// default OFF), the total cannot exceed this even if both features are on.
+constexpr float GAIT_HEELSTRIKE_MAX_BIAS_DEG = 12.0f;
+
+// Sign of the bias relative to the positive ankle-pitch convention.
+// +1.0 = positive ankle_pitch_deg corresponds to toe-up (dorsiflexed).
+// SIGN UNVERIFIED — confirm on first hardware run with heelStrikeEnabled=1
+// at POSE_STEP peak/late-swing: toe should RISE. If toe DROPS, flip to -1.
+constexpr float GAIT_HEELSTRIKE_SIGN_DEFAULT = -1.0f;
 
 #endif // PROJECT_WIDE_DEFS_H

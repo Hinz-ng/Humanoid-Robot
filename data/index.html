@@ -1787,6 +1787,19 @@
 
             <div class="gait-tune-row">
                 <div class="tune-header">
+                    <span>Stance inset (mm)</span>
+                    <span class="tune-val" id="tvGaitStanceInset">0</span>
+                </div>
+                <input type="range" id="slGaitStanceInset" min="0" max="30" step="1" value="0"
+                       oninput="updateGaitLabel('stanceInset', this.value); sendGaitKey('stanceInset_mm', this.value)">
+                <div class="small-note">
+                    Adduction: pulls both feet inward toward midline. 0 = nominal width.
+                    Sign unverified — confirm inward direction on hardware before raising.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
                     <span>Step length (mm)</span>
                     <span class="tune-val" id="tvGaitStepLen">10</span>
                 </div>
@@ -3673,9 +3686,10 @@ const _gaitTuneMap = {
     liftGate:   { el: "tvGaitGate",     decimals: 2 },
     // wsThreshDeg is stored in deg in the slider but sent as rad
     wsThreshDeg:{ el: "tvGaitWsThresh", decimals: 1 },
-    stepH:      { el: "tvGaitStep",     decimals: 0 },
-    stanceH:    { el: "tvGaitStance",   decimals: 0 },
-    stepLen:    { el: "tvGaitStepLen",  decimals: 0 },
+    stepH:        { el: "tvGaitStep",         decimals: 0 },
+    stanceH:      { el: "tvGaitStance",       decimals: 0 },
+    stanceInset:  { el: "tvGaitStanceInset",  decimals: 0 },
+    stepLen:      { el: "tvGaitStepLen",      decimals: 0 },
     captureGain: { el: "tvGaitCapGain", decimals: 2 },
     captureMax:  { el: "tvGaitCapMax",  decimals: 0 },
     swingApex:   { el: "tvGaitSwingApex",  decimals: 2 },
@@ -4098,6 +4112,9 @@ function parseGaitState(payload) {
     if (!_tuneActive) {
         _syncSlider("slGaitStep", "tvGaitStep", stepH, 0);
         _syncSlider("slGaitStance", "tvGaitStance", stanceH, 0);
+        if (v["stanceInset"] !== undefined)
+            _syncSlider("slGaitStanceInset", "tvGaitStanceInset",
+                        parseFloat(v["stanceInset"]), 0);
         const stepLen = parseFloat(v["stepLen"] || "0");
         _syncSlider("slGaitStepLen", "tvGaitStepLen", stepLen, 0);
         _syncSlider("slGaitCapGain", "tvGaitCapGain", capGain, 2);

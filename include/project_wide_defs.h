@@ -26,7 +26,7 @@
 // DEFAULT_DEG_S: comfortable default for UI interaction — not too sluggish, not snappy.
 // Recalculate MAX_DEG_S if SD_ANGLE_RANGE changes (servo_driver.h):
 //   max_us_per_tick = (MAX_DEG_S / SD_ANGLE_RANGE) * (SD_USMAX - SD_USMIN) * UPDATE_INTERVAL_S
-#define JOINT_SPEED_DEFAULT_DEG_S   200.0f   // All joints at boot
+#define JOINT_SPEED_DEFAULT_DEG_S   300.0f   // All joints at boot
 #define JOINT_SPEED_MIN_DEG_S        1.0f   // Floor — prevents silent frozen-joint bugs
 // No global MAX: upper clamp is now per-joint (JointConfig::noLoadSpeedDegS).
 
@@ -62,7 +62,7 @@ constexpr float GAIT_PHASE_RATE_HZ          = 0.7f;  // cycles/sec
 // If drag returns at 15 mm, the root cause is the gate, not step height.
 constexpr float GAIT_STEP_HEIGHT_MM         = 10.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
-constexpr float GAIT_STEP_LENGTH_MM         = 30.0f;  // Phase 3+; forward stride
+constexpr float GAIT_STEP_LENGTH_MM         = 32.0f;  // Phase 3+; forward stride
 
 // Session neutral-trim safety gate (deg). JointModel::captureSessionNeutral()
 // rejects the whole capture if any joint is further than this from its factory
@@ -117,6 +117,24 @@ constexpr float GAIT_WEIGHT_SHIFT_THRESHOLD_RAD = 0.10f; // ~5.7° — min roll 
 // to construct FootTargets. Must stay inside LegIK's safe range (130–189 mm).
 // Lower = deeper crouch = more knee flexion at neutral.
 constexpr float GAIT_STANCE_HEIGHT_MM           = 185.0f;
+
+// Idle/standing stance-width inset (mm). Positive = both feet pulled
+// symmetrically INWARD toward the body midline (adduction). The lateral
+// posture baseline — sagittal analog is GAIT_STANCE_HEIGHT_MM above.
+//
+// Applied as the y_mm baseline in _buildFootTarget. FootTarget.y_mm uses
+// outward(+) / inward(-) in each leg's own frame (gait_types.h), so an
+// inset of +N becomes t.y_mm = -N on BOTH legs — symmetric adduction.
+// LegIK's frontal solve enforces the flat-foot constraint
+// (ankle_roll = -hip_roll) for any y_mm, so hip-roll and ankle-roll
+// coordinate automatically and the sole stays flat. Do NOT add a hand-
+// coordinated ankle-roll bias.
+//
+// 0.0 ships bit-identical to pre-change (t.y_mm baseline = 0). Tune up
+// in ~2 mm steps at runtime via CMD:GAIT_TUNE:stanceInset_mm=...
+// Sign is UNVERIFIED until confirmed on hardware in IDLE: a positive
+// inset must move both feet toward the midline.
+constexpr float GAIT_STANCE_INSET_MM            = 6.0f;
 
 // Static fore-aft offset applied to every FootTarget.x_mm built by GaitController.
 // Compensates for CoM ≠ hip-pitch axis: with x_mm=0 the foot lands directly under

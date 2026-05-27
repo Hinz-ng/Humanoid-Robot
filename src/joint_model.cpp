@@ -278,6 +278,11 @@ void JointModel::clearSessionNeutral() {
     Serial.println("[JointModel] Session neutral trim cleared — factory neutral restored.");
 }
 
+void JointModel::setSessionTrim(uint8_t jointId, float trimDeg) {
+    if (jointId >= NUM_JOINTS) return;
+    _sessionTrimDeg[jointId] = trimDeg;
+}
+
 float JointModel::getSessionTrim(uint8_t jointId) const {
     if (jointId >= NUM_JOINTS) return 0.0f;
     return _sessionTrimDeg[jointId];

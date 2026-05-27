@@ -162,6 +162,15 @@ struct GaitConfig {
     // (L_THIGH + L_SHANK).
     float stanceHeightMm    = GAIT_STANCE_HEIGHT_MM;
 
+    // Idle/standing stance-width inset (mm). Positive = both feet pulled
+    // INWARD toward the body midline (adduction). Applied as the y_mm
+    // baseline inside _buildFootTarget so it composes with WeightShift,
+    // comLatTrim, lateral capture, and BalanceCorrection automatically.
+    // Lateral posture analog of stanceHeightMm — see GAIT_STANCE_INSET_MM
+    // header block in project_wide_defs.h for sign convention + caveats.
+    // WS key: "stanceInset_mm".
+    float stanceInsetMm     = GAIT_STANCE_INSET_MM;
+
     // Swing foot peak vertical clearance (mm). Bounded by the caller so
     // stanceHeightMm - stepHeightMm stays inside IK's safe range.
     float stepHeightMm      = GAIT_STEP_HEIGHT_MM;

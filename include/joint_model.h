@@ -144,6 +144,14 @@ public:
     // Zero every joint's session trim — revert to pure factory neutral.
     void  clearSessionNeutral();
 
+    // Programmatic per-joint session trim setter (servo-degree offset from
+    // factory neutral). Unlike captureSessionNeutral(), this writes one joint
+    // at a time and does NOT snapshot the current pose. Used to encode a
+    // posture parameter (e.g. stance-width inset) as the session neutral so
+    // all command sources inherit the offset automatically.
+    // No servo motion — only the joint-coordinate origin shifts.
+    void  setSessionTrim(uint8_t jointId, float trimDeg);
+
     // Session-trim queries (telemetry / UI).
     float getSessionTrim(uint8_t jointId)     const;  // signed servo-deg, one joint
     float getEffectiveNeutralDeg(uint8_t jointId) const;  // factory neutral + trim

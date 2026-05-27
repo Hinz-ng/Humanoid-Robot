@@ -511,7 +511,7 @@ void WebComm::broadcastGaitState() {
     char buf[1920];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
-        "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,"
+        "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,stanceInset=%.1f,"
         // Gait config fields the UI sliders need to sync (firmware is source
         // of truth). Single-key sends in the UI rely on these never being
         // stale, so they live in the continuous broadcast.
@@ -598,6 +598,7 @@ void WebComm::broadcastGaitState() {
         _gaitCtrl->getConfig().stepHeightMm,
         _gaitCtrl->getConfig().stanceHeightMm,
         _gaitCtrl->getConfig().stepLengthMm,
+        _gaitCtrl->getConfig().stanceInsetMm,
         _gaitCtrl->getConfig().phaseRateHz,
         _gaitCtrl->getConfig().liftGateThreshold,
         _gaitCtrl->getConfig().wsThresholdRad,
@@ -1627,6 +1628,66 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         else if (key == "stanceH_mm") {
                             const float minStance = 130.0f + cfg.stepHeightMm;
                             cfg.stanceHeightMm = constrain(val, minStance, gaitMaxReachMm);
+                        }
+                        else if (key == "stanceInset_mm") {
+                            // Symmetric inward stance-width inset (mm).
+                            // Positive = both feet move toward midline.
+                            // 30 mm ceiling: well below frontal IK reach
+                            // even when stacked with WS lateral shift,
+                            // comLatTrim, and balance dy. Negative values
+                            // (abduction past nominal) blocked to keep the
+                            // semantic unambiguous — widen stance via
+                            // hardware geometry, not a negative inset.
+                            cfg.stanceInsetMm = constrain(val, 0.0f, 30.0f);
+                            // Route through JointModel session neutral trim.
+                            // The inset is expressed as the session-neutral
+                            // shift on the four frontal joints (both hip_rolls
+                            // and ankle_rolls) so all command sources — gait,
+                            // balance, recovery, UI — inherit it from the
+                            // joint-coordinate origin, not from a task-space
+                            // y_mm offset that only applies inside
+                            // _buildFootTarget.
+                            //
+                            // Mechanism: solveFrontal(-inset, h_frontal) gives
+                            // hip_roll_deg and ankle_roll_deg (flat-foot pair)
+                            // for the inset position. session_trim = direction *
+                            // joint_angle_at_inset converts to servo-degree
+                            // space (see JointModel::jointAngleToPulse).
+                            // Directions from joint_config.cpp:
+                            //   R_hip_roll dir=+1, L_hip_roll dir=-1
+                            //   R_ankle_roll dir=+1, L_ankle_roll dir=-1
+                            //
+                            // Limitation: trim was computed for the current
+                            // stanceHeightMm. If stanceH changes later the
+                            // inset_mm is preserved but the trim is slightly
+                            // stale (second-order error for small insets);
+                            // re-send stanceInset_mm after changing stanceH
+                            // to recompute exactly. No motion occurs on
+                            // setSessionTrimDeg — only the coordinate origin
+                            // shifts; the next tick's IK call lands the
+                            // servos at the inset position.
+                            if (_servoCtrl) {
+                                const float h_frontal =
+                                    cfg.stanceHeightMm - CHAIN_HEIGHT_DELTA_MM;
+                                // Inline the frontal IK (solveFrontal is private).
+                                // hip_roll = atan2(-inset, h_frontal) — negative
+                                //   because inset is adduction (inward, y<0).
+                                // ankle_roll = -hip_roll (LegIK flat-foot invariant).
+                                // session_trim = direction * joint_angle_at_inset
+                                //   (jointAngleToPulse: servo = effectiveNeutral
+                                //    + direction*jointAngle).
+                                //   R_hip dir=+1: trim = +hipRollDeg
+                                //   L_hip dir=-1: trim = -hipRollDeg
+                                //   R_ankle dir=+1: trim = -hipRollDeg (ankle=-hip)
+                                //   L_ankle dir=-1: trim = +hipRollDeg
+                                const float hipRollDeg = (h_frontal >= 20.0f)
+                                    ? atan2f(-cfg.stanceInsetMm, h_frontal) * RAD_TO_DEG
+                                    : 0.0f;
+                                _servoCtrl->setSessionTrimDeg(IDX_R_HIP_ROLL,    hipRollDeg);
+                                _servoCtrl->setSessionTrimDeg(IDX_L_HIP_ROLL,   -hipRollDeg);
+                                _servoCtrl->setSessionTrimDeg(IDX_R_ANKLE_ROLL, -hipRollDeg);
+                                _servoCtrl->setSessionTrimDeg(IDX_L_ANKLE_ROLL,  hipRollDeg);
+                            }
                         }
                         else if (key == "stepLength_mm") {
                             // Hard cap at 20% of stance height to protect IK

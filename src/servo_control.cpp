@@ -72,6 +72,7 @@ float ServoControl::getTargetAngle(uint8_t channel) {
 // --- Runtime session neutral trim — pass-throughs to JointModel ---
 bool  ServoControl::captureSessionNeutral()       { return _model.captureSessionNeutral(); }
 void  ServoControl::clearSessionNeutral()         { _model.clearSessionNeutral(); }
+void  ServoControl::setSessionTrimDeg(uint8_t ch, float trimDeg) { _model.setSessionTrim(ch, trimDeg); }
 bool  ServoControl::hasSessionTrim()        const { return _model.hasSessionTrim(); }
 float ServoControl::maxSessionTrimDeg()     const { return _model.maxSessionTrimDeg(); }
 float ServoControl::getEffectiveNeutralDeg(uint8_t channel) const {

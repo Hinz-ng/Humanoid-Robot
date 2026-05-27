@@ -71,6 +71,7 @@ public:
     //  to WebComm. Every command source already inherits the correction.
     bool  captureSessionNeutral();                  // snapshot current pose as neutral
     void  clearSessionNeutral();                    // revert to factory neutral
+    void  setSessionTrimDeg(uint8_t ch, float trimDeg); // programmatic per-joint trim
     bool  hasSessionTrim()    const;                // any joint trimmed?
     float maxSessionTrimDeg() const;                // largest |trim|, servo-deg
     float getEffectiveNeutralDeg(uint8_t channel) const;  // factory neutral + trim

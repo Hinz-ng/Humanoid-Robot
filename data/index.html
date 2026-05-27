@@ -2010,29 +2010,27 @@
 
             <div class="gait-tune-row">
                 <div class="tune-header">
-                    <span>Heel-strike sign</span>
-                    <span class="tune-val" id="tvGaitHeelSign">+1</span>
+                    <span>Heel-strike bias applied (deg)</span>
+                    <span class="tune-val" id="tvGaitHeelBias">0.00</span>
                 </div>
-                <label class="form-label-inline">
-                    <input type="checkbox" id="cbGaitHeelSignNeg"
-                           onchange="const s = this.checked ? -1 : 1; sendGaitKey('heelSign', s); document.getElementById('tvGaitHeelSign').textContent = this.checked ? '-1' : '+1'">
-                    Invert sign (flip to -1 if toe drops)
-                </label>
                 <div class="small-note">
-                    VERIFY FIRST: with enabled=ON at POSE_STEP late-swing, the swing foot
-                    toe should RISE. If it drops instead, check this box to flip to -1.
+                    Live bias on the active ankle this tick (always negative —
+                    dorsiflex). During ENGAGE: ramps 0 → −heelDeg across the
+                    window [heelGate, touchdownGate], then HOLDS at the peak
+                    until contact. During RELEASE: decays smoothly to 0 over
+                    heelRelMs. Survives the half-cycle role swap.
                 </div>
             </div>
 
             <div class="gait-tune-row">
                 <div class="tune-header">
-                    <span>Heel-strike bias applied (deg)</span>
-                    <span class="tune-val" id="tvGaitHeelBias">0.00</span>
+                    <span>Heel-strike phase</span>
+                    <span class="tune-val" id="tvGaitHeelPhase">ENGAGE</span>
                 </div>
                 <div class="small-note">
-                    Live bias applied to the swing ankle this tick (post-sign, post-clamp).
-                    Ramps 0 → heelDeg across late swing, decays back to 0 after latch fires.
-                    Zero when disabled, IDLE, estopped, or stance leg.
+                    Current heel-strike phase: ENGAGE (phase-based, on the swing
+                    leg), RELEASE (timer-based, on the just-planted leg), or IDLE
+                    (no bias active). Active leg shown next to it: L or R.
                 </div>
             </div>
 
@@ -4159,14 +4157,22 @@ function parseGaitState(payload) {
             _syncSlider("slGaitHeelGate", "tvGaitHeelGate", parseFloat(v["heelGate"]), 2);
         if (v["heelRelMs"] !== undefined)
             _syncSlider("slGaitHeelRelMs", "tvGaitHeelRelMs", parseFloat(v["heelRelMs"]), 0);
-        if (v["heelSign"] !== undefined) {
-            const neg = (parseFloat(v["heelSign"]) < 0);
-            const cb = document.getElementById("cbGaitHeelSignNeg");
-            if (cb) cb.checked = neg;
-            set("tvGaitHeelSign", neg ? "-1" : "+1");
-        }
         if (v["heelBias"] !== undefined)
             set("tvGaitHeelBias", parseFloat(v["heelBias"]).toFixed(2));
+        // Compose ENGAGE/RELEASE/IDLE + active-side label. Released bias is
+        // shown even when the bias has decayed close to zero, so the operator
+        // can see the timer running. Bias-magnitude threshold avoids flicker
+        // when the engage frac is exactly 0 below the gate phase.
+        if (v["heelRelAct"] !== undefined || v["heelBias"] !== undefined) {
+            const relAct  = (v["heelRelAct"] === "1");
+            const sideIdx = parseInt(v["heelSide"] || "0", 10);
+            const sideLbl = (sideIdx === 1) ? "R" : "L";
+            const biasMag = Math.abs(parseFloat(v["heelBias"] || "0"));
+            const phase   = relAct           ? "RELEASE " + sideLbl :
+                            (biasMag > 0.01) ? "ENGAGE  " + sideLbl :
+                                               "IDLE";
+            set("tvGaitHeelPhase", phase);
+        }
         if (v["stabilizeMs"] !== undefined)
             _syncSlider("slGaitStab", "tvGaitStab", parseFloat(v["stabilizeMs"]), 0);
         if (v["skipNone"] !== undefined) {

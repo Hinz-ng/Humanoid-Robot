@@ -392,28 +392,32 @@ struct GaitConfig {
     float fwdComLeadFrac = GAIT_FWD_COM_PROGRESSION_LEAD_FRAC_DEFAULT; // WS: "fwdComLead"
 
     // -----------------------------------------------------------------------
-    // Heel-strike rollover (off-by-default, open-loop, additive post-IK).
+    // Heel-strike rollover (off-by-default, hybrid phase+timer, additive
+    // post-IK). The sign is intrinsically NEGATIVE (dorsiflex) — baked into
+    // _heelStrikeBiasDeg(), not user-configurable.
     //
-    // Applies late-swing dorsiflexion on the SWING ankle to achieve heel-first
-    // contact, then decays to flat over heelStrikeReleaseMs after the touchdown
-    // latch fires. Bias is added AFTER IK — the flat-foot guard checks the
-    // pure IK solution and is unaffected. Default enabled=false → true no-op.
+    // ENGAGE  — phase-based: ramps 0→1 across [heelStrikeGatePhase,
+    //           touchdownGatePhase], then HOLDS at 1.0 until contact occurs.
+    //           Full peak is reached BEFORE touchdown, eliminating the
+    //           engage→release upward jump.
+    // RELEASE — timer-based, decoupled from swing-side ownership. Starts from
+    //           the live engage snapshot at touchdown (or _advanceHalf as
+    //           fallback when touchdown is missed), decays to 0 via smoothstep
+    //           over heelStrikeReleaseMs. Survives the half-cycle role swap.
     //
     //   heelStrikeEnabled      — master enable. WS: "heelStrike"
-    //   heelStrikeDorsiflexDeg — peak toe-up at contact (deg). WS: "heelDeg"
-    //   heelStrikeGatePhase    — halfPhase at which engage ramp starts.
-    //                            Keep < touchdownGatePhase. WS: "heelGate"
-    //   heelStrikeReleaseMs    — decay from peak to flat after latch (ms).
+    //   heelStrikeDorsiflexDeg — peak dorsiflex MAGNITUDE (deg). WS: "heelDeg"
+    //   heelStrikeGatePhase    — halfPhase at which engage ramp STARTS.
+    //                            Must be < touchdownGatePhase. WS: "heelGate"
+    //   heelStrikeReleaseMs    — decay window after release start (ms).
     //                            WS: "heelRelMs"
-    //   heelStrikeMaxBiasDeg   — hard clamp (safety backstop; no WS key).
-    //   heelStrikeSign         — ±1 direction override. WS: "heelSign"
+    //   heelStrikeMaxBiasDeg   — hard clamp on |bias| (no WS key; safety only).
     // -----------------------------------------------------------------------
     bool     heelStrikeEnabled      = GAIT_HEELSTRIKE_ENABLED_DEFAULT;
     float    heelStrikeDorsiflexDeg = GAIT_HEELSTRIKE_DORSIFLEX_DEG_DEFAULT;
     float    heelStrikeGatePhase    = GAIT_HEELSTRIKE_GATE_PHASE_DEFAULT;
     uint32_t heelStrikeReleaseMs    = GAIT_HEELSTRIKE_RELEASE_MS_DEFAULT;
     float    heelStrikeMaxBiasDeg   = GAIT_HEELSTRIKE_MAX_BIAS_DEG;
-    float    heelStrikeSign         = GAIT_HEELSTRIKE_SIGN_DEFAULT;
 };
 
 // ---------------------------------------------------------------------------
@@ -621,12 +625,25 @@ struct GaitState {
     float fwdComProgressionMm = 0.0f;
 
     // ------------------------------------------------------------------
-    // Heel-strike rollover — additive ankle-pitch bias applied to the swing
-    // ankle this tick (deg). Zero when disabled, IDLE, estopped, or on the
-    // stance-leg call. Set only when _submitFootTargetIK is called for the
-    // swing side, so the stance call never overwrites it with 0.
+    // Heel-strike rollover — telemetry mirror, refreshed once per tick in
+    // _updateHeelStrike() so the bias on whichever leg currently carries it
+    // (swing during ENGAGE; the just-planted leg during RELEASE, which may
+    // be the stance leg after the role swap) is visible to the UI.
+    //
+    //   heelStrikeBiasDeg        live applied bias on the active leg this
+    //                            tick (signed; always <= 0 by sign convention).
+    //   heelStrikeReleaseActive  true while the timer-based release is
+    //                            in progress. Goes true at touchdown (or the
+    //                            _advanceHalf fallback) and false when the
+    //                            release window elapses. Survives role swap.
+    //   heelStrikeActiveSide     leg carrying the bias right now: 0=LEFT,
+    //                            1=RIGHT. Matches _swingSide during engage,
+    //                            and the just-released (now stance) leg
+    //                            during release.
     // ------------------------------------------------------------------
-    float heelStrikeBiasDeg = 0.0f;
+    float   heelStrikeBiasDeg       = 0.0f;
+    bool    heelStrikeReleaseActive = false;
+    uint8_t heelStrikeActiveSide    = 0;
 
     // ------------------------------------------------------------------
     // Step-timing instrumentation. Updated at each footfall (before
@@ -854,6 +871,55 @@ private:
     void _resetCompliance();
 
     // -----------------------------------------------------------------------
+    // Heel-strike rollover — decoupled-timer release state.
+    //
+    // Modelled on W4 compliance: ENGAGE is computed per-tick from _halfPhase
+    // and _swingSide, but RELEASE is owned by these three members and is
+    // independent of the FSM. Starting a release snapshots the current engage
+    // fraction (continuous transition) and records the active leg + start
+    // timestamp; the decay then runs on time alone, surviving the role swap.
+    //
+    //   _heelStrikeActiveSide      which leg owns the active bias.
+    //                              During ENGAGE this tracks _swingSide;
+    //                              during RELEASE this is frozen at the leg
+    //                              that just touched down (so the bias keeps
+    //                              applying to the just-planted foot even
+    //                              after _advanceHalf() flips _swingSide).
+    //   _heelStrikeReleaseStartMs  millis() at the release trigger.
+    //                              0 (sentinel) = no release in progress.
+    //   _heelStrikePeakFrac        engage fraction (0..1) at the moment the
+    //                              release started. The release decays from
+    //                              this value down to 0 — so the engage→release
+    //                              transition is C0-continuous (no jump).
+    // -----------------------------------------------------------------------
+    Side     _heelStrikeActiveSide     = Side::LEFT;
+    uint32_t _heelStrikeReleaseStartMs = 0;
+    float    _heelStrikePeakFrac       = 0.0f;
+
+    // Engage fraction (0..1) at the given half-phase. Ramps via smoothstep on
+    // the window [heelStrikeGatePhase, touchdownGatePhase], then HOLDS at 1.0
+    // until lp = 1.0. Pure-math, used by both the live engage path and the
+    // peak snapshot when a release starts.
+    float _heelStrikeEngageFrac(float lp) const;
+
+    // Snapshot the current engage fraction and start the timer-based release
+    // on the current swing side. No-op if a release is already in progress
+    // (one release per swing — second triggers would re-snapshot and overshoot).
+    // Called from the touchdown latch fire block and from the _advanceHalf
+    // fallback. Inlined-call site; not a public API.
+    void _startHeelStrikeRelease();
+
+    // Per-tick: refresh telemetry mirror, and clear release state once the
+    // window has elapsed. Modelled on _updateCompliance(). Call once per
+    // update() before any _heelStrikeBiasDeg() consumer reads.
+    void _updateHeelStrike();
+
+    // Zero all heel-strike state + telemetry mirror. Call on mode entry
+    // (start), init, and recovery entry — NOT at half-cycle boundaries, where
+    // an in-progress release must survive the role swap.
+    void _resetHeelStrike();
+
+    // -----------------------------------------------------------------------
     // Touchdown trim suppression — phase-gate state for the W2/W5 trim.
     //
     // _comLateralTrimMm() is const and runs several times per tick, so the
@@ -1032,20 +1098,22 @@ private:
     float _fwdComProgressionMm(float localPhase) const;
 
     // -----------------------------------------------------------------------
-    //  _heelStrikeBiasDeg — heel-strike rollover ankle-pitch bias.
+    //  _heelStrikeBiasDeg — heel-strike rollover ankle-pitch bias for `side`.
     //
-    //  Returns the additive dorsiflexion bias (deg) for the swing ankle this
-    //  tick. Zero when heelStrikeEnabled=false, IDLE, estopped, or
-    //  side != _swingSide. Sign and magnitude determined by GaitConfig fields.
+    //  Returns the additive dorsiflexion bias (deg) on the requested leg this
+    //  tick. The bias is intrinsically NEGATIVE (sign baked in, not user
+    //  configurable). Zero when heelStrikeEnabled=false or estopped.
     //
-    //  Two branches:
-    //    RELEASE (post-contact): _touchdownLocked && _touchdownMs != 0 &&
-    //      heelStrikeReleaseMs > 0 — bias decays peak → 0 via inverted
-    //      smoothstep over heelStrikeReleaseMs from _touchdownMs.
-    //    ENGAGE (pre-contact): bias ramps 0 → peak via smoothstep starting at
-    //      heelStrikeGatePhase within _halfPhase.
+    //  Two branches, selected by RELEASE state (not by latch state):
+    //    RELEASE — _heelStrikeReleaseStartMs != 0: timer-based decay from
+    //      _heelStrikePeakFrac → 0 via smoothstep over heelStrikeReleaseMs.
+    //      Only applies when side == _heelStrikeActiveSide, so the just-
+    //      planted leg keeps its bias even after the role swap.
+    //    ENGAGE — no release in progress: phase-based ramp from 0 → 1 across
+    //      [heelStrikeGatePhase, touchdownGatePhase], HOLDS at 1 until contact.
+    //      Only applies when side == _swingSide and mode != IDLE.
     //
-    //  Result is clamped to ±heelStrikeMaxBiasDeg. Intentionally pure-math.
+    //  Result is clamped to ±heelStrikeMaxBiasDeg. Pure-math.
     // -----------------------------------------------------------------------
     float _heelStrikeBiasDeg(Side side) const;
 

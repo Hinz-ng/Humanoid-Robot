@@ -578,8 +578,9 @@ void WebComm::broadcastGaitState() {
         // estopped). Read against the A/B failure-mode split when sweeping.
         "fwdCom=%.1f,fwdComLead=%.2f,fwdComMm=%.2f,"
         // Heel-strike rollover — config echoes (enable / peak deg / gate phase /
-        // release ms / sign) + live applied bias on the swing ankle this tick.
-        "heelStrike=%d,heelDeg=%.1f,heelGate=%.2f,heelRelMs=%lu,heelSign=%.0f,heelBias=%.2f,"
+        // release ms) + live applied bias and release-active flag. Sign is
+        // intrinsic to the helper (always dorsiflex/negative), not transported.
+        "heelStrike=%d,heelDeg=%.1f,heelGate=%.2f,heelRelMs=%lu,heelBias=%.2f,heelRelAct=%d,heelSide=%d,"
         "stabilizeMs=%lu,skipNone=%d,"
         // Per-step timing (updated once per footfall, zero until first complete step).
         "stepMs=%lu,waitMs=%lu,swingMs=%lu,stabMsMeas=%lu,postCtMs=%lu,"
@@ -701,13 +702,15 @@ void WebComm::broadcastGaitState() {
         _gaitCtrl->getConfig().fwdComMaxMm,
         _gaitCtrl->getConfig().fwdComLeadFrac,
         s.fwdComProgressionMm,
-        // Heel-strike rollover — config echoes + live applied bias.
+        // Heel-strike rollover — config echoes + live applied bias +
+        // release-active flag + active-side index (0=LEFT, 1=RIGHT).
         static_cast<int>(_gaitCtrl->getConfig().heelStrikeEnabled),
         _gaitCtrl->getConfig().heelStrikeDorsiflexDeg,
         _gaitCtrl->getConfig().heelStrikeGatePhase,
         (unsigned long)_gaitCtrl->getConfig().heelStrikeReleaseMs,
-        _gaitCtrl->getConfig().heelStrikeSign,
         s.heelStrikeBiasDeg,
+        static_cast<int>(s.heelStrikeReleaseActive),
+        static_cast<int>(s.heelStrikeActiveSide),
         (unsigned long)_gaitCtrl->getConfig().stabilizeMs,
         (int)_gaitCtrl->getConfig().skipStabilizeNone,
         // Per-step timing fields.
@@ -1773,11 +1776,10 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             // spilling into the next half-cycle.
                             cfg.heelStrikeReleaseMs = (uint32_t)constrain(val, 0.0f, 500.0f);
                         }
-                        else if (key == "heelSign") {
-                            // ±1 sign flip. Flip to -1 if toe drops instead
-                            // of rising on first hardware test.
-                            cfg.heelStrikeSign = (val >= 0.0f) ? +1.0f : -1.0f;
-                        }
+                        // NOTE: "heelSign" used to live here. Sign is now baked
+                        // into _heelStrikeBiasDeg() as intrinsically dorsiflex
+                        // (negative). Removed to prevent confusion — confirmed
+                        // on hardware, not configurable.
                         else if (key == "stabilizeMs") {
                             // 0..1000 ms inter-step hold. 0 = STABILIZING
                             // collapses to ~1 tick (maximally continuous).

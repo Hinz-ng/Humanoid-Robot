@@ -541,45 +541,61 @@ constexpr float SWING_LEVELER_PEAK_LIFT_FRAC      = 1.0f;
 constexpr float SWING_LEVELER_DISENGAGE_LIFT_FRAC = 1.01f;
 
 // ============================================================
-// HEEL-STRIKE ROLLOVER  (off-by-default, open-loop, additive)
+// HEEL-STRIKE ROLLOVER  (off-by-default, hybrid phase+timer)
 // ============================================================
 // Replaces the rigid forefoot-edge vault (land flat → vault forefoot → PE→KE
-// → backward rebound) with a translating rocker contact. Late-swing
-// dorsiflexion (toe-up) makes the foot land heel-first, then rolls to flat as
-// load transfers. Bias is ADDITIVE AFTER IK — the flat-foot guard is
-// unaffected (it checks the pure IK solution, not the final submitted angle).
+// → backward rebound) with a translating rocker contact. The bias is
+// intrinsically DORSIFLEXIVE: applied as a NEGATIVE ankle-pitch offset
+// (positive ankle_pitch is plantar-flexion in this joint convention; heel-up
+// = negative). The sign is baked into _heelStrikeBiasDeg() and is NOT user-
+// configurable — confirmed on hardware, not exposed in the UI.
+//
+// Bias is ADDITIVE AFTER IK — the flat-foot guard is unaffected (it checks
+// the pure IK solution, not the final submitted angle).
+//
+// Hybrid timing (post-redesign — modelled on W4 compliance decay):
+//   ENGAGE  — phase-based: ramp 0→1 across [heelStrikeGatePhase, touchdown-
+//             GatePhase], then HOLD at 1.0 until contact occurs. Full peak
+//             is reached BEFORE touchdown; no jump at the engage→release
+//             transition.
+//   RELEASE — timer-based, decoupled from swing-side ownership: starts with
+//             a snapshot of the engage frac (continuous, no upward jump),
+//             decays to 0 over heelStrikeReleaseMs via smoothstep. Survives
+//             the half-cycle role swap exactly as W4 compliance does.
+//   FALLBACK — if touchdown is never detected during the swing, _advanceHalf
+//             starts the release from the current peak instead of snapping.
 // ============================================================
 
 // Master enable at boot. false = true hardware no-op: _heelStrikeBiasDeg()
 // returns 0 unconditionally, ankle-pitch submit is bit-identical to pre-feature.
 constexpr bool GAIT_HEELSTRIKE_ENABLED_DEFAULT = false;
 
-// Peak dorsiflexion (toe-up) applied at touchdown (deg). 6° ≈ rocker contact
-// without consuming significant IK headroom. Raise in 1–2° steps after the
-// sign has been confirmed on hardware (see GAIT_HEELSTRIKE_SIGN_DEFAULT).
-constexpr float GAIT_HEELSTRIKE_DORSIFLEX_DEG_DEFAULT = 5.0f;
+// Peak dorsiflexion magnitude (deg). The actual bias is the negative of this
+// times the engage/release fraction. 5° ≈ rocker contact without consuming
+// significant IK headroom. Recommended tuning range 5–7°.
+constexpr float GAIT_HEELSTRIKE_DORSIFLEX_DEG_DEFAULT = 3.0f;
 
 // Half-phase fraction at which the engage ramp starts [0..1). Below this the
-// bias is 0; above it the bias ramps 0 → peak via smoothstep. 0.55 is below
-// the default touchdownGatePhase (0.70), so the bias is near-full at contact.
-// INVARIANT: keep < touchdownGatePhase so the ramp is substantially complete
-// before the latch can fire. Never raise above touchdownGatePhase.
-constexpr float GAIT_HEELSTRIKE_GATE_PHASE_DEFAULT = 0.55f;
+// bias is 0; above it the bias ramps 0 → peak via smoothstep over the window
+// [heelStrikeGatePhase, touchdownGatePhase], then HOLDS at peak until contact.
+// Default 0.50 puts full peak at touchdownGatePhase (default 0.70). Recommended
+// tuning range 0.45–0.55. INVARIANT: must remain strictly less than
+// touchdownGatePhase so the engage window has nonzero width.
+constexpr float GAIT_HEELSTRIKE_GATE_PHASE_DEFAULT = 0.45f;
 
-// Time (ms) for the bias to decay from peak to zero after the touchdown latch
-// fires. 120 ms ≈ 2–3 servo periods; enough to roll to flat without over-
-// dwelling into the next half-cycle's weight transfer.
-constexpr uint32_t GAIT_HEELSTRIKE_RELEASE_MS_DEFAULT = 120;
+// Time (ms) for the bias to decay from its release-snapshot value to zero
+// after touchdown (or _advanceHalf fallback). 240 ms is long enough for the
+// foot to roll smoothly to flat without a one-tick collapse, and short enough
+// that the bias is gone before the next half-cycle's lift-off. Tuning range
+// 200–280 ms. Independent of FSM state — runs to completion across the role
+// swap, mirroring W4 compliance.
+constexpr uint32_t GAIT_HEELSTRIKE_RELEASE_MS_DEFAULT = 250;
 
-// Hard ceiling on the applied bias regardless of heelStrikeDorsiflexDeg.
-// Safety backstop: combined with pitch_bias from the swing leveler (also
-// default OFF), the total cannot exceed this even if both features are on.
+// Hard ceiling on the applied bias magnitude regardless of heelStrike-
+// DorsiflexDeg. Safety backstop: combined with pitch_bias from the swing
+// leveler (also default OFF), the total cannot exceed this even if both
+// features are on. The actual bias is always negative (dorsiflex); clamp
+// is symmetric so the magnitude check is unambiguous.
 constexpr float GAIT_HEELSTRIKE_MAX_BIAS_DEG = 12.0f;
-
-// Sign of the bias relative to the positive ankle-pitch convention.
-// +1.0 = positive ankle_pitch_deg corresponds to toe-up (dorsiflexed).
-// SIGN UNVERIFIED — confirm on first hardware run with heelStrikeEnabled=1
-// at POSE_STEP peak/late-swing: toe should RISE. If toe DROPS, flip to -1.
-constexpr float GAIT_HEELSTRIKE_SIGN_DEFAULT = -1.0f;
 
 #endif // PROJECT_WIDE_DEFS_H

@@ -221,6 +221,7 @@ void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController*
     memset(_stepRingSwingMs,  0, sizeof(_stepRingSwingMs));
     _clearTouchdownLatch();
     _resetCompliance();
+    _resetHeelStrike();
     _resetTrimSuppression();
     _state.touchdownSide = 0;   // not cleared by _clearTouchdownLatch; explicit on init
     Serial.println("[GaitCtrl] Initialized.");
@@ -284,6 +285,7 @@ void GaitController::start(GaitMode mode) {
         _state.meanSwingMsR     = 0.0f;
         _clearTouchdownLatch();
         _resetCompliance();
+        _resetHeelStrike();
         _resetTrimSuppression();
         if (_ws) _ws->trigger(ShiftDirection::NONE);
         Serial.println("[GaitCtrl] IDLE — weight shift centered.");
@@ -311,6 +313,7 @@ void GaitController::start(GaitMode mode) {
     _stepRingCount    = 0;
     _clearTouchdownLatch();
     _resetCompliance();
+    _resetHeelStrike();
     _resetTrimSuppression();
     _triggerShiftForSwing(Side::LEFT);  // begin LEFT-swing shift immediately
 
@@ -617,35 +620,143 @@ float GaitController::_fwdComProgressionMm(float localPhase) const {
 }
 
 // ---------------------------------------------------------------------------
-//  _heelStrikeBiasDeg — heel-strike rollover ankle-pitch bias.
+//  _heelStrikeEngageFrac — phase-based engage fraction in [0..1].
+//
+//  Smoothstep ramp on [g, td] where g = heelStrikeGatePhase and td =
+//  touchdownGatePhase. HOLDS at 1.0 for lp >= td so the bias has already
+//  reached peak by the time the touchdown latch can fire (which by design
+//  cannot happen before _halfPhase > touchdownGatePhase). The hold is the
+//  whole point of the redesign — the previous version spread the smoothstep
+//  across [g, 1.0] and only reached frac≈0.26 at the earliest touchdown.
+//
+//  The g < td invariant is enforced by the WS parser (heelGate is clamped
+//  above), but this guard is still defensive — a future config path that
+//  bypasses the parser must not divide by zero or run a degenerate window.
+// ---------------------------------------------------------------------------
+float GaitController::_heelStrikeEngageFrac(float lp) const {
+    const float g_raw  = _cfg.heelStrikeGatePhase;
+    const float td_raw = _cfg.touchdownGatePhase;
+    // Defensive clamp: keep at least 0.01 of window width between g and td.
+    const float g  = constrain(g_raw, 0.05f, 0.95f);
+    const float td = constrain(td_raw, g + 0.01f, 1.0f);
+    const float lpc = constrain(lp, 0.0f, 1.0f);
+    if (lpc <= g)  return 0.0f;
+    if (lpc >= td) return 1.0f;             // <- HOLD at peak until contact
+    const float r = (lpc - g) / (td - g);
+    return r * r * (3.0f - 2.0f * r);       // smoothstep
+}
+
+// ---------------------------------------------------------------------------
+//  _startHeelStrikeRelease — snapshot peak frac, lock active side, start timer.
+//
+//  Called at the touchdown latch fire site and (as a fallback) at the top of
+//  _advanceHalf() when no touchdown was detected during the swing. The peak
+//  snapshot is the live engage fraction at this exact tick — so the bias is
+//  bit-continuous across the engage→release transition (no jump). Re-entry
+//  is a no-op: if a release is already in progress, do not overwrite the
+//  active-side or restart the timer.
+// ---------------------------------------------------------------------------
+void GaitController::_startHeelStrikeRelease() {
+    if (!_cfg.heelStrikeEnabled)         return;
+    if (_heelStrikeReleaseStartMs != 0)  return;   // already releasing
+    _heelStrikePeakFrac       = _heelStrikeEngageFrac(_halfPhase);
+    _heelStrikeActiveSide     = _swingSide;
+    _heelStrikeReleaseStartMs = millis();
+    Serial.printf("[GaitCtrl] HEEL release start  side=%s  peakFrac=%.3f  "
+                  "lp=%.3f\n",
+                  sideName(_heelStrikeActiveSide),
+                  _heelStrikePeakFrac,
+                  _halfPhase);
+}
+
+// ---------------------------------------------------------------------------
+//  _updateHeelStrike — per-tick telemetry refresh + release-complete cleanup.
+//
+//  Modelled on _updateCompliance(). Runs once per update() before any
+//  consumer reads. Refreshes the public telemetry mirror so the UI sees the
+//  live bias regardless of which leg currently carries it (swing during
+//  ENGAGE; the just-planted leg during RELEASE, which becomes the stance leg
+//  after _advanceHalf). Clears the release state when its window elapses.
+// ---------------------------------------------------------------------------
+void GaitController::_updateHeelStrike() {
+    // Step 1 — clear release state if the window has elapsed.
+    if (_heelStrikeReleaseStartMs != 0) {
+        const uint32_t relMs   = _cfg.heelStrikeReleaseMs;
+        const uint32_t elapsed = millis() - _heelStrikeReleaseStartMs;
+        if (relMs == 0 || elapsed >= relMs) {
+            _heelStrikeReleaseStartMs = 0;
+            _heelStrikePeakFrac       = 0.0f;
+            Serial.println("[GaitCtrl] HEEL release complete.");
+        }
+    }
+
+    // Step 2 — refresh telemetry mirror. During RELEASE the bias is on the
+    // active (just-planted) leg; during ENGAGE the bias is on the swing leg.
+    if (_heelStrikeReleaseStartMs != 0) {
+        _state.heelStrikeActiveSide    = static_cast<uint8_t>(_heelStrikeActiveSide);
+        _state.heelStrikeBiasDeg       = _heelStrikeBiasDeg(_heelStrikeActiveSide);
+        _state.heelStrikeReleaseActive = true;
+    } else {
+        _state.heelStrikeActiveSide    = static_cast<uint8_t>(_swingSide);
+        _state.heelStrikeBiasDeg       = _heelStrikeBiasDeg(_swingSide);
+        _state.heelStrikeReleaseActive = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  _resetHeelStrike — zero all heel-strike state + telemetry.
+//
+//  Called on init, start (both IDLE and non-IDLE), and recovery entry. NOT
+//  called from _advanceHalf — an in-progress release MUST be allowed to
+//  finish smoothly across the role swap.
+// ---------------------------------------------------------------------------
+void GaitController::_resetHeelStrike() {
+    _heelStrikeReleaseStartMs       = 0;
+    _heelStrikePeakFrac             = 0.0f;
+    _heelStrikeActiveSide           = _swingSide;
+    _state.heelStrikeBiasDeg        = 0.0f;
+    _state.heelStrikeReleaseActive  = false;
+    _state.heelStrikeActiveSide     = static_cast<uint8_t>(_swingSide);
+}
+
+// ---------------------------------------------------------------------------
+//  _heelStrikeBiasDeg — additive ankle-pitch bias for the requested side.
+//
+//  Sign is intrinsically NEGATIVE (dorsiflex). Two branches, selected by
+//  whether a timer-based release is in progress — NOT by the touchdown
+//  latch state. The release branch is the source of truth across the role
+//  swap; the engage branch only applies when no release is active.
 // ---------------------------------------------------------------------------
 float GaitController::_heelStrikeBiasDeg(Side side) const {
-    if (!_cfg.heelStrikeEnabled)          return 0.0f;
-    if (_state.mode == GaitMode::IDLE)    return 0.0f;
-    if (oe_is_estopped())                 return 0.0f;
-    if (side != _swingSide)               return 0.0f;
+    if (!_cfg.heelStrikeEnabled) return 0.0f;
+    if (oe_is_estopped())        return 0.0f;
 
     const float peak = _cfg.heelStrikeDorsiflexDeg;
-    const float sign = _cfg.heelStrikeSign;
     const float maxB = _cfg.heelStrikeMaxBiasDeg;
     float frac = 0.0f;
 
-    // RELEASE branch: post-contact, decay from full bias to zero.
-    if (_touchdownLocked && _touchdownMs != 0 && _cfg.heelStrikeReleaseMs > 0) {
-        const float t = constrain(
-            (float)(millis() - _touchdownMs) / (float)_cfg.heelStrikeReleaseMs,
+    if (_heelStrikeReleaseStartMs != 0) {
+        // RELEASE — timer-based, side-locked. Survives the role swap because
+        // _heelStrikeActiveSide is frozen at the moment the release started.
+        if (side != _heelStrikeActiveSide) return 0.0f;
+        const uint32_t relMs = _cfg.heelStrikeReleaseMs;
+        if (relMs == 0) return 0.0f;
+        const float t    = constrain(
+            (float)(millis() - _heelStrikeReleaseStartMs) / (float)relMs,
             0.0f, 1.0f);
-        const float s = t * t * (3.0f - 2.0f * t);  // smoothstep
-        frac = 1.0f - s;                              // 1 at contact → 0 after window
+        const float ease = 1.0f - (t * t * (3.0f - 2.0f * t));  // smoothstep
+        frac = _heelStrikePeakFrac * ease;
     } else {
-        // ENGAGE branch: ramp 0 → 1 across the tail of the swing half-cycle.
-        const float g  = constrain(_cfg.heelStrikeGatePhase, 0.05f, 0.95f);
-        if (_halfPhase < g) return 0.0f;
-        const float lp = constrain((_halfPhase - g) / (1.0f - g), 0.0f, 1.0f);
-        frac = lp * lp * (3.0f - 2.0f * lp);  // smoothstep: 0 at gate → 1 near touchdown
+        // ENGAGE — phase-based, only on the live swing leg. The IDLE guard
+        // is on this branch only (a release that began mid-walk and got
+        // interrupted by stop() is cleared via _resetHeelStrike anyway).
+        if (_state.mode == GaitMode::IDLE) return 0.0f;
+        if (side != _swingSide)            return 0.0f;
+        frac = _heelStrikeEngageFrac(_halfPhase);
     }
 
-    return constrain(sign * peak * frac, -maxB, maxB);
+    // Sign baked in: bias is intrinsically dorsiflex (negative ankle_pitch).
+    return constrain(-peak * frac, -maxB, maxB);
 }
 
 // ---------------------------------------------------------------------------
@@ -898,12 +1009,13 @@ LegIKResult GaitController::_submitFootTargetIK(Side side,
     // target), so a deliberate heel-up attitude at late swing cannot trip the
     // guard. pitch_bias (swing leveler) and heel_bias sum additively; both are
     // off-by-default, so there is no interaction in the shipped config.
+    //
+    // _heelStrikeBiasDeg returns the bias for THIS side: nonzero on the swing
+    // leg during ENGAGE, and on the just-planted leg during RELEASE (which is
+    // the stance leg after _advanceHalf flips the role). The per-side write
+    // happens here; the telemetry mirror is refreshed once per tick by
+    // _updateHeelStrike, so this call site no longer writes _state.* fields.
     const float heel_bias = _heelStrikeBiasDeg(side);
-    // Update telemetry only on the swing-side call. The stance-side call
-    // returns 0 from _heelStrikeBiasDeg (side != _swingSide guard), but
-    // writing unconditionally would overwrite the swing-side value with 0
-    // on the second call each tick and produce a permanently-zero readout.
-    if (side == _swingSide) _state.heelStrikeBiasDeg = heel_bias;
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_PITCH),   r.hip_pitch_deg);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::KNEE_PITCH),  r.knee_pitch_deg);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_PITCH), r.ankle_pitch_deg + pitch_bias + heel_bias);
@@ -981,6 +1093,16 @@ void GaitController::_advanceHalf() {
         return;
     }
 
+    // Heel-strike fallback: if no touchdown was detected during this swing
+    // (impact detector failed or was disabled), kick off the timer-based
+    // release NOW so the bias smooth-decays instead of snapping to 0 when
+    // _swingSide flips below. _startHeelStrikeRelease() is a no-op when the
+    // feature is off OR a release is already in progress (the normal
+    // touchdown-fire path), so this is safe to call unconditionally.
+    // Must run BEFORE _swingSide flips: the helper snapshots _swingSide as
+    // the active side, and the release belongs to the leg that just landed.
+    _startHeelStrikeRelease();
+
     _swingSide        = otherSide(_swingSide);
     _halfPhase        = 0.0f;
     _state.cycleXDispl_mm = 0.0f;
@@ -989,6 +1111,10 @@ void GaitController::_advanceHalf() {
     // New swing leg = new half-cycle: previous latch is no longer meaningful.
     // Telemetry mirror also wiped so the UI shows a clean "no detection yet"
     // state until the new swing leg actually triggers.
+    // NOTE: heel-strike state is deliberately NOT cleared here — the release
+    // timer continues across this boundary so the just-planted foot can roll
+    // smoothly to flat. _updateHeelStrike clears the release on its own when
+    // the window elapses. This mirrors how _resetCompliance is also NOT called.
     _clearTouchdownLatch();
     // skipStabilizeNone=false (default): center WeightShift so structural/IIR
     // transients damp during the hold. _triggerShiftForSwing() for the new
@@ -1042,6 +1168,12 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // the estop early-return so the decay is purely time-based and continues
     // through any FSM path; _buildFootTarget reads _complianceOffsetMm.
     _updateCompliance();
+
+    // Heel-strike — refresh telemetry mirror and run release-complete cleanup
+    // once per tick. Mirrors the placement of _updateCompliance: before the
+    // estop early-return so the decay is purely time-based and continues
+    // smoothly through any FSM path, including across the role swap.
+    _updateHeelStrike();
 
     // Publish swing-leg hint to WeightShift FIRST. Reflects last tick's
     // substate; consumed on next tick's WS update (2.5 ms staleness).
@@ -1345,6 +1477,14 @@ void GaitController::update(float dt_s, const IMUState& imuState,
                 _state.complianceOffsetMm = _complianceOffsetMm;
                 _state.complianceActive   = true;
             }
+
+            // Heel-strike — start the timer-based RELEASE at touchdown. The
+            // helper snapshots the live engage fraction (continuous transition,
+            // no upward jump) and locks _heelStrikeActiveSide to the current
+            // swing leg, so the bias keeps applying to the just-planted foot
+            // through the _advanceHalf role swap and out the other side.
+            // _startHeelStrikeRelease is a no-op when heelStrikeEnabled=false.
+            _startHeelStrikeRelease();
 
             Serial.printf("[GaitCtrl] TOUCHDOWN  swing=%s  phase=%.3f  "
                           "x=%.1f mm  delta_g=%.3f\n",
@@ -1797,6 +1937,10 @@ void GaitController::triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad) 
     // trajectory anyway. Reset it on entry purely so the telemetry panel does
     // not show a stale decay carried over from the interrupted gait swing.
     _resetCompliance();
+    // Recovery uses a separate trajectory (open-loop directional catch step),
+    // not the engage/release model. Wipe heel-strike state so a release in
+    // progress when the disturbance hit does not leak into the recovery ankle.
+    _resetHeelStrike();
 
     _state.mode    = GaitMode::RECOVERY_STEP;
     _state.running = true;

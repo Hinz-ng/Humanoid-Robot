@@ -521,12 +521,14 @@ void WebComm::broadcastWeightShiftConfig(AsyncWebSocketClient* client) {
     if (!_weightShift || !client) return;
     const WeightShiftConfig& cfg = _weightShift->getConfig();
     const float spDeg = cfg.setpoint_shift_rad * (180.0f / (float)M_PI);
-    char buf[192];
+    char buf[224];
     snprintf(buf, sizeof(buf),
         "WSHIFT_STATE:ankle=%.1f,lateral_mm=%.1f,forward_mm=%.1f,"
-        "torso=%.1f,ramp=%.0f,phase_delay=%.0f,setpoint_deg=%.2f",
+        "torso=%.1f,ramp=%.0f,phase_delay=%.0f,setpoint_deg=%.2f,"
+        "swingPreload=%.2f",
         cfg.ankle_shift_deg, cfg.lateral_shift_mm, cfg.forward_lean_mm,
-        cfg.torso_shift_deg, cfg.ramp_ms, cfg.shift_phase_delay_ms, spDeg
+        cfg.torso_shift_deg, cfg.ramp_ms, cfg.shift_phase_delay_ms, spDeg,
+        cfg.swingPreloadCompleteFrac
     );
     client->text(buf);
 }
@@ -1137,6 +1139,13 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             // Swing-before-stance phase delay in ms.
             // 0 = simultaneous ramp. 500 = default (swing 0.5s before stance).
             cfg.shift_phase_delay_ms = constrain(val, 0.0f, 2000.0f);
+        }
+                        else if (key == "swingPreload") {
+            // Swing-bias preload completion fraction. 1.0 = no front-load
+            // (bit-identical to the unmodified (1-liftFrac) mask). Lower toward
+            // ~0.5 to reach full swing bias earlier in the descent. Clamped to
+            // (0.05, 1.0].
+            cfg.swingPreloadCompleteFrac = constrain(val, 0.05f, 1.0f);
         }
                     }
                     start = (comma == -1) ? params.length() : comma + 1;

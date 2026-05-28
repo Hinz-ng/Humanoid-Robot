@@ -1339,7 +1339,24 @@
                     Swing ankle starts first; stance ankle follows after this delay.
                     0 = simultaneous (no phasing).
                 </div>
-            </div>            <div class="wshift-tune-row">
+            </div>
+
+            <div class="wshift-tune-row">
+                <div class="tune-header">
+                    <span>Swing preload frac</span>
+                    <span class="tune-val" id="tvWsSwingPreload">1.00</span>
+                </div>
+                <input type="range" id="slWsSwingPreload" min="0.05" max="1.0" step="0.05" value="1.0"
+                       oninput="updateWSTuneLabel('swingPreload', this.value); sendWSKey('swingPreload', parseFloat(this.value).toFixed(2))">
+                <div class="small-note">
+                    Front-loads the swing-side ankle-roll bias so slow ankle servos
+                    reach the commanded attitude before touchdown. 1.0 = no front-load
+                    (identical to legacy mask). Lower toward 0.5 to reach full bias
+                    earlier in the descent.
+                </div>
+            </div>
+
+            <div class="wshift-tune-row">
                 <div class="tune-header">
                     <span>Ankle shift (°)</span>
                     <span class="tune-val" id="tvWsAnkle">15.5</span>
@@ -3388,6 +3405,7 @@ function initWebSocket() {
             _syncSlider("slWsTorso",      "tvWsTorso",       parseFloat(v["torso"]       ?? "0"),   1);
             _syncSlider("slWsRamp",       "tvWsRamp",        parseFloat(v["ramp"]        ?? "500"), 0);
             _syncSlider("slWsPhaseDelay", "tvWsPhaseDelay",  parseFloat(v["phase_delay"] ?? "500"), 0);
+            _syncSlider("slWsSwingPreload", "tvWsSwingPreload", parseFloat(v["swingPreload"] ?? "1.0"), 2);
             if (v["setpoint_deg"] !== undefined) {
                 _syncSlider("slWsSp", "tvWsSp", parseFloat(v["setpoint_deg"]), 1);
             }
@@ -3807,6 +3825,7 @@ const _wsTuneMap = {
     setpoint:    { el: "tvWsSp",         decimals: 1 },
     ramp:        { el: "tvWsRamp",       decimals: 0 },
     phase_delay: { el: "tvWsPhaseDelay", decimals: 0 },
+    swingPreload:{ el: "tvWsSwingPreload", decimals: 2 },
     ankle:       { el: "tvWsAnkle",      decimals: 1 },
     lateral_mm:  { el: "tvWsLateral",    decimals: 1 },
     forward_mm:  { el: "tvWsForward",    decimals: 1 },

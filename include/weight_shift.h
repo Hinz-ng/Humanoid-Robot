@@ -21,6 +21,7 @@
 #include <Arduino.h>
 #include "joint_config.h"
 #include "motion_manager.h"
+#include "project_wide_defs.h"   // GAIT_WS_SWING_PRELOAD_COMPLETE_FRAC_DEFAULT
 #include "side.h"   // Side / SIDE_COUNT / sideIdx — Phase 2 refactor
 
 class BalanceController;
@@ -69,6 +70,15 @@ struct WeightShiftConfig {
     // Swing ankle starts immediately; stance starts after this delay.
     // Set to 0 for simultaneous ramp (disables phasing).
     float shift_phase_delay_ms = 0.0f;
+
+    // Swing-bias preload completion fraction. Front-loads the swing-side ankle-
+    // roll bias mask so the slow ankle servos reach the commanded attitude
+    // BEFORE touchdown instead of only at contact. The swing scale becomes
+    //   clamp((1 - liftFrac) / swingPreloadCompleteFrac, 0, 1)
+    // (see _swingBiasScale). 1.0 reduces EXACTLY to the unmodified
+    // (1 - liftFrac) mask. Runtime-tunable via WEIGHT_SHIFT_TUNE:swingPreload=...,
+    // clamped to (0.05, 1.0]. See GAIT_WS_SWING_PRELOAD_COMPLETE_FRAC_DEFAULT.
+    float swingPreloadCompleteFrac = GAIT_WS_SWING_PRELOAD_COMPLETE_FRAC_DEFAULT;
 
     // Stage 2: Body lateral shift (mm) at progress = ±1.
     // SIGN CONVENTION (current default is negative — adduction strategy):
@@ -165,6 +175,12 @@ public:
     void setSwingLegMask(SwingLeg swing, float liftFrac);
 
 private:
+    // Front-loaded swing-side ankle-roll bias scale for the current tick.
+    // Returns clamp((1 - _swingLiftFrac) / completeFrac, 0, 1) where
+    // completeFrac = clamp(_cfg.swingPreloadCompleteFrac, 0.05, 1.0). At
+    // swingPreloadCompleteFrac == 1.0 this equals (1 - _swingLiftFrac) exactly.
+    float _swingBiasScale() const;
+
     BalanceController* _bal = nullptr;
     MotionManager*     _mm  = nullptr;
     WeightShiftConfig  _cfg;

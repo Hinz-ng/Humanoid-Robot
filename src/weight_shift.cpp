@@ -95,6 +95,16 @@ void WeightShift::trigger(ShiftDirection dir) {
 }
 
 // ---------------------------------------------------------------------------
+//  _swingBiasScale  -  front-loaded swing-side ankle-roll bias scale. See
+//  header + GAIT_WS_SWING_PRELOAD_COMPLETE_FRAC_DEFAULT. At completeFrac == 1.0
+//  this is exactly (1 - _swingLiftFrac).
+// ---------------------------------------------------------------------------
+float WeightShift::_swingBiasScale() const {
+    const float completeFrac = constrain(_cfg.swingPreloadCompleteFrac, 0.05f, 1.0f);
+    return constrain((1.0f - _swingLiftFrac) / completeFrac, 0.0f, 1.0f);
+}
+
+// ---------------------------------------------------------------------------
 void WeightShift::update(float dt_s) {
     if (_bal == nullptr || _mm == nullptr) return;
     if (oe_is_estopped()) return;
@@ -155,8 +165,8 @@ void WeightShift::update(float dt_s) {
     // (liftFrac=1) the swing foot's bias is zero; the IK-computed flat ankle
     // wins on SOURCE_BALANCE -> SOURCE_GAIT arbitration only because the
     // additive bias term is now zero on that leg.
-    const float scaleL = (_swingMask == SwingLeg::LEFT)  ? (1.0f - _swingLiftFrac) : 1.0f;
-    const float scaleR = (_swingMask == SwingLeg::RIGHT) ? (1.0f - _swingLiftFrac) : 1.0f;
+    const float scaleL = (_swingMask == SwingLeg::LEFT)  ? _swingBiasScale() : 1.0f;
+    const float scaleR = (_swingMask == SwingLeg::RIGHT) ? _swingBiasScale() : 1.0f;
 
     // Sign convention preserved char-for-char from pre-Phase-2 (see
     // _submitAnkleRollBias): bias_r = -rightProgress × amp, bias_l = +leftProgress × amp.

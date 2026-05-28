@@ -106,6 +106,23 @@ constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.1f;
 // Clamped to (0.05, 1.0] in GAIT_TUNE.
 constexpr float GAIT_STRIDE_COMPLETE_FRAC_DEFAULT = 0.1f;
 
+// WeightShift swing-bias preload completion fraction. The swing-side ankle-roll
+// bias is masked by (1 - liftFrac); that mask only reaches full magnitude (the
+// commanded ankle_shift) at peak swing — i.e. AT contact. The slow ankle servos
+// cannot reach the commanded attitude that late, so the swing foot lands canted
+// inward. This front-loads the mask: the swing scale becomes
+//   scaleSwing = clamp((1 - liftFrac) / swingPreloadCompleteFrac, 0, 1)
+// so full bias is reached by the time liftFrac has fallen to
+// (1 - swingPreloadCompleteFrac) — earlier in the descent — then held, giving
+// the servo time to achieve the attitude before touchdown.
+//
+// 1.0 = no front-load; reduces EXACTLY to the unmodified (1 - liftFrac) mask
+// (since 1 - liftFrac is already in [0, 1], the clamp is identity). Ship at 1.0 —
+// flashing must change nothing until tuned down at runtime. Lower toward ~0.5 to
+// reach full swing bias halfway through the descent. Clamped to (0.05, 1.0] in
+// WEIGHT_SHIFT_TUNE.
+constexpr float GAIT_WS_SWING_PRELOAD_COMPLETE_FRAC_DEFAULT = 1.0f;
+
 // TUNING NOTE: Reduced from 0.15 (~8.5°) → 0.10 (~5.7°). The previous value
 // was chosen conservatively for Phase 2 diagnostics. At 0.10 rad the gate opens
 // when the CoM is meaningfully over the stance foot without requiring a large

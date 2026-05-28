@@ -68,6 +68,8 @@ void GaitController::_clearTouchdownLatch() {
     _state.touchdownSwingX_mm = 0.0f;
     _state.touchdownLocked    = false;
     _state.touchdownSwingVelX_mm_s = 0.0f;
+    _state.touchdownSwingFootRollRad = 0.0f;
+    _state.touchdownTorsoRollRad     = 0.0f;
     // touchdownSide is not reset — it carries the side that the (now-cleared)
     // event referred to. UI reads it together with touchdownSeen; when seen=0
     // the UI treats side as "n/a". Leaving it intact avoids a flicker between
@@ -1474,6 +1476,16 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _state.touchdownSwingX_mm = _touchdownLockedX_mm;
             _state.touchdownSide      = static_cast<uint8_t>(_swingSide);
             _state.touchdownLocked    = true;
+
+            // Measurement snapshot (telemetry only — no control effect): the
+            // swing foot's IMU roll from its per-foot estimator, and the
+            // neutral-corrected torso roll. Lets a swing-preload A/B sweep
+            // observe the landed swing attitude objectively.
+            const StateEstimator* swingEst = _footEst[sideIdx(_swingSide)];
+            _state.touchdownSwingFootRollRad =
+                swingEst ? swingEst->getState().roll : 0.0f;
+            _state.touchdownTorsoRollRad =
+                _lastImuState.roll - _cfg.torsoRollNeutralRad;
 
             // W4 — touchdown compliance. The same early-contact event that
             // latches the swing leg also fires a brief stance-height yield:

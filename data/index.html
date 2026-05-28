@@ -1563,6 +1563,10 @@
                 <div class="bal-out-val" id="gdTdSide">—</div></div>
             <div class="bal-out-cell"><div class="bal-out-lbl">TD swing-x (mm)</div>
                 <div class="bal-out-val" id="gdTdX">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">TD foot roll (°)</div>
+                <div class="bal-out-val" id="gdTdFootRoll">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">TD torso roll (°)</div>
+                <div class="bal-out-val" id="gdTdTorsoRoll">—</div></div>
             <div class="bal-out-cell"><div class="bal-out-lbl">Recovery sub</div>
                 <div class="bal-out-val" id="gdRcvSub">—</div></div>
         </div>
@@ -4775,6 +4779,11 @@ function parseGaitState(payload) {
         gdSet("gdTdPh",   tdSeenD ? parseFloat(v["tdPh"] || "0").toFixed(3) : "—");
         gdSet("gdTdSide", tdSeenD ? (parseInt(v["tdSide"] || "0") === 0 ? "LEFT" : "RIGHT") : "—");
         gdSet("gdTdX",    tdSeenD ? parseFloat(v["tdX"] || "0").toFixed(1) : "—");
+        // Roll snapshots transported in rad; shown in degrees for readability.
+        gdSet("gdTdFootRoll",  tdSeenD
+            ? (parseFloat(v["tdFootRoll"]  || "0") * 180 / Math.PI).toFixed(1) : "—");
+        gdSet("gdTdTorsoRoll", tdSeenD
+            ? (parseFloat(v["tdTorsoRoll"] || "0") * 180 / Math.PI).toFixed(1) : "—");
         if (mode === 5) {
             const rcvSubN2 = ["TRIGGERED","LIFTING","LANDING","DAMP_HOLD","SOFT_RETURN","DONE"];
             const rcvSub2  = parseInt(v["rsub"] || "0");

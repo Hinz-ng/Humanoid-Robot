@@ -282,6 +282,8 @@ void setup() {
     // detector as an advisory signal during late swing. Detector ownership
     // stays here; gait sees a read-only pointer.
     gaitController.setFootImpactDetector(&footImpactDetector);
+    // Read-only foot estimators for touchdown roll telemetry (no control use).
+    gaitController.setFootEstimators(&leftFootEstimator, &rightFootEstimator);
 #endif
 
     Serial.println("System Ready.");

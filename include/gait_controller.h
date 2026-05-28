@@ -596,6 +596,18 @@ struct GaitState {
     // velocity is not currently included). Reset on _advanceHalf().
     float   touchdownSwingVelX_mm_s = 0.0f;
 
+    // Swing foot's IMU roll (rad), and the neutral-corrected torso roll (rad),
+    // sampled at the moment the touchdown latch fires this half-cycle. Pure
+    // measurement, no control effect — captured next to touchdownSwingX_mm so
+    // an A/B sweep of the swing-preload front-load can observe the landed swing
+    // attitude objectively instead of eyeballing it. Both 0 when no touchdown
+    // this swing (or the swing foot estimator is unavailable). Reset on
+    // _advanceHalf().
+    //   touchdownSwingFootRollRad  swing foot estimator IMUState.roll.
+    //   touchdownTorsoRollRad      torso IMUState.roll - torsoRollNeutralRad.
+    float   touchdownSwingFootRollRad = 0.0f;
+    float   touchdownTorsoRollRad     = 0.0f;
+
     // ------------------------------------------------------------------
     // W4 — Touchdown-compliance telemetry. Telemetry-only — the control
     // stack reads the private _complianceOffsetMm member, not these.
@@ -745,12 +757,23 @@ public:
     // consumer.
     void setFootImpactDetector(FootImpactDetector* d) { _impact = d; }
 
+    // Wire per-foot estimators (Side-indexed: LEFT, RIGHT). Optional and
+    // read-only — used only to snapshot the swing foot's IMU roll into
+    // GaitState at touchdown (telemetry). nullptr leaves the field at 0.
+    void setFootEstimators(const StateEstimator* left,
+                           const StateEstimator* right) {
+        _footEst[sideIdx(Side::LEFT)]  = left;
+        _footEst[sideIdx(Side::RIGHT)] = right;
+    }
+
 private:
     MotionManager*     _mm           = nullptr;
     WeightShift*       _ws           = nullptr;
     BalanceController* _bal          = nullptr;
     SwingFootLeveler*  _swingLeveler = nullptr;
     FootImpactDetector* _impact      = nullptr;   // Stage 0/1 — observational
+    // Per-foot estimators — read-only, touchdown roll telemetry only.
+    const StateEstimator* _footEst[SIDE_COUNT] = { nullptr, nullptr };
 
     GaitConfig   _cfg;
     GaitState    _state;

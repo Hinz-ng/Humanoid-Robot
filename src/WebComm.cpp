@@ -547,7 +547,7 @@ void WebComm::broadcastGaitState() {
                                       ? _swingLeveler->getState()
                                       : SwingFootLevelerState{};
 
-    char buf[1920];
+    char buf[2048];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,stanceInset=%.1f,"
@@ -573,7 +573,10 @@ void WebComm::broadcastGaitState() {
         //   tdPh   - _halfPhase at first gated detection
         //   tdSide - 0=LEFT 1=RIGHT (matches Side enum)
         //   tdX    - swing-leg stride x snapshot (mm) at detection
+        //   tdFootRoll - swing foot IMU roll (rad) at detection
+        //   tdTorsoRoll - neutral-corrected torso roll (rad) at detection
         "tdEn=%d,tdGate=%.2f,tdSeen=%d,tdLkd=%d,tdPh=%.3f,tdSide=%d,tdX=%.1f,"
+        "tdFootRoll=%.4f,tdTorsoRoll=%.4f,"
         // Touchdown trim suppression (W2/W5 phase-gate) — config echoes plus
         // the live suppression-active flag.
         //   tdTrimSup    - master enable (config)
@@ -698,6 +701,8 @@ void WebComm::broadcastGaitState() {
         s.touchdownPhase,
         static_cast<int>(s.touchdownSide),
         s.touchdownSwingX_mm,
+        s.touchdownSwingFootRollRad,
+        s.touchdownTorsoRollRad,
         // Touchdown trim suppression — config + live suppression flag.
         static_cast<int>(_gaitCtrl->getConfig().touchdownTrimSuppressEnabled),
         (unsigned long)_gaitCtrl->getConfig().touchdownTrimHoldMs,

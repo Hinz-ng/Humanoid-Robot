@@ -84,7 +84,7 @@ struct WeightShiftConfig {
     // TUNING NOTE: Increased magnitude from -10 → -15 mm. More CoM transfer
     // means more weight on the stance leg at gate-open time, reducing drag risk.
     // If the robot leans excessively to one side, reduce toward -12 mm.
-    float lateral_shift_mm = -12.0f;
+    float lateral_shift_mm = -19.0f;
 
     // Stage 2: Body forward shift (mm) at |progress| = 1. Replaces ankle_pitch_tilt_deg.
     // Both feet receive an x_mm offset of -|progress| × forward_lean_mm so the foot

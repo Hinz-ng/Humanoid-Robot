@@ -787,7 +787,19 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
     //
     // Normal trajectory runs for all other cases (latch not set, or stance leg).
     if (isSwing && _touchdownLocked) {
-        t.h_sagittal_mm = _touchdownLockedH_mm;
+        // X stays frozen (existing logic, applied below)
+        // Smoothly ramp h from the detection snapshot to stanceHeight over
+        // the post-detection portion of the half-cycle using smoothstep.
+        const float remaining = 1.0f - _touchdownLockedPhase;
+        float h_target = _cfg.stanceHeightMm;
+        if (remaining > 1e-3f) {
+            const float u = (localPhase - _touchdownLockedPhase) / remaining;
+            const float t_norm = constrain(u, 0.0f, 1.0f);
+            const float s = t_norm * t_norm * (3.0f - 2.0f * t_norm);
+            h_target = _touchdownLockedH_mm
+                     + (_cfg.stanceHeightMm - _touchdownLockedH_mm) * s;
+        }
+        t.h_sagittal_mm = h_target;
     } else {
         const float liftMm = isSwing ? (swingFrac * _cfg.stepHeightMm) : 0.0f;
         t.h_sagittal_mm = _cfg.stanceHeightMm - liftMm;

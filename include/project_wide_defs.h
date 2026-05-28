@@ -134,7 +134,7 @@ constexpr float GAIT_STANCE_HEIGHT_MM           = 185.0f;
 // in ~2 mm steps at runtime via CMD:GAIT_TUNE:stanceInset_mm=...
 // Sign is UNVERIFIED until confirmed on hardware in IDLE: a positive
 // inset must move both feet toward the midline.
-constexpr float GAIT_STANCE_INSET_MM            = 6.0f;
+constexpr float GAIT_STANCE_INSET_MM            = 0.0f;
 
 // Static fore-aft offset applied to every FootTarget.x_mm built by GaitController.
 // Compensates for CoM ≠ hip-pitch axis: with x_mm=0 the foot lands directly under
@@ -145,7 +145,7 @@ constexpr float GAIT_STANCE_INSET_MM            = 6.0f;
 //
 // Tune from 0 in ±1mm increments until ankle-pitch IK output sits near each
 // joint's neutralDeg in standing pose. Typical magnitude: ≤ 10 mm.
-constexpr float GAIT_STANCE_X_OFFSET_MM         = -0.0f;
+constexpr float GAIT_STANCE_X_OFFSET_MM         = -1.0f;
 
 // Hold duration (ms) GaitController inserts between half-cycles. Weight shift
 // is centered (trigger NONE) and held for this duration so mechanical/IIR

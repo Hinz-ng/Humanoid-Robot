@@ -47,11 +47,11 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
 // ▼  RIGHT LEG  ──────────────────────────────────────────────────────────────────────
 
     //  Ankle Roll  — 270° servo, 0.18 s/60° → 333 °/s
-    {  0,  "right_ankle_roll",    129.0f,  +1,  -25.0f,  +25.0f,  270.0f,  333.0f,  1.00f  },  // TUNE
+    {  0,  "right_ankle_roll",    130.0f,  +1,  -25.0f,  +25.0f,  270.0f,  333.0f,  1.00f  },  // TUNE
 
     //  Ankle Pitch (QY3242BLS)  — 180° servo, 0.085 s/60° → 706 °/s
     //  4-bar linkage: 0.60 anat°/servo° unloaded (5–20°, 2026-05-27).
-    {  1,  "right_ankle_pitch",   137.0f,  +1,  -60.0f,  +60.0f,  180.0f,  706.0f,  0.72f  },  // TUNE
+    {  1,  "right_ankle_pitch",   136.0f,  +1,  -60.0f,  +60.0f,  180.0f,  706.0f,  0.72f  },  // TUNE
 
     //  Knee Pitch (same servo as hip roll)  — 270° servo, 0.12 s/60° → 500 °/s
     {  2,  "right_knee_pitch",    137.0f,  -1,  0.0f, +100.0f,  270.0f,  500.0f,  1.00f  },  // TUNE  (txGain unverified)
@@ -84,7 +84,7 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
     { 12,  "left_hip_roll",       128.0f,  -1,  -20.0f,  +80.0f,  270.0f,  500.0f,  1.00f  },  // TUNE  (txGain unverified)
     { 13,  "left_knee_pitch",     137.0f,  +1,    0.0f,  +100.0f,  270.0f,  500.0f,  1.00f  },  // TUNE  (txGain unverified)
     //  Left ankle pitch — same 4-bar linkage as right; mirrors txGain.
-    { 14,  "left_ankle_pitch",    119.0f,  -1,  -60.0f,  +60.0f,  180.0f,  706.0f,  0.72f  },  // TUNE
+    { 14,  "left_ankle_pitch",    120.0f,  -1,  -60.0f,  +60.0f,  180.0f,  706.0f,  0.72f  },  // TUNE
     { 15,  "left_ankle_roll",     134.0f,  -1,  -25.0f,  +25.0f,  270.0f,  333.0f,  1.00f  },  // TUNE
 
 };

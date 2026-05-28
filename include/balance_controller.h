@@ -167,7 +167,6 @@ struct BalanceState {
     float effective_kp   = 0.0f;  // actual Kp this tick (with boost applied)
     float ankle_cmd_deg  = 0.0f;
     float hip_cmd_deg    = 0.0f;
-    float torso_cmd_deg  = 0.0f;
     bool  pitch_active   = false;
     bool  roll_active    = false;
     float roll_error          = 0.0f;
@@ -176,26 +175,12 @@ struct BalanceState {
     float effective_kp_roll   = 0.0f;
     float ankle_roll_cmd_deg  = 0.0f;
     float hip_roll_cmd_deg    = 0.0f;
-    float torso_roll_cmd_deg  = 0.0f;
     bool  fell = false;
 
     // --- Catch-step recovery telemetry (Stage 0) ---
     bool     recovery_flag     = false;  // true when debounced conditions met
     uint16_t saturation_count  = 0;      // current saturation streak (ticks)
     uint16_t recovery_debounce = 0;      // current debounce streak (ticks)
-};
-
-// Snapshot of BalanceController's PD output, consumed by TorsoStabilizer.
-// computeCorrection() caches the clamped pitch/roll PD output each tick; the
-// torso controller scales these rather than running its own PD (parity).
-struct BalancePDOutput {
-    float pitch_u_clamped = 0.0f;  // clamped pitch PD output (deg)
-    float roll_u_clamped  = 0.0f;  // clamped roll PD output (deg)
-    float pitch_rate_filt = 0.0f;  // filtered pitch rate (rad/s)
-    float roll_rate_filt  = 0.0f;  // filtered roll rate (rad/s)
-    bool  pitch_active    = false; // pitch PD enabled this tick
-    bool  roll_active     = false; // roll PD enabled this tick
-    bool  valid           = false; // false until update() passes all gates
 };
 
 class BalanceController {
@@ -245,16 +230,11 @@ public:
     // computeCorrection() runs the pitch + roll PD in mm space. Pure computation —
     // does NOT submit to any joints. Called every tick from update().
     // Intermediate clamped-degree values are cached in _ts_pitch_u_clamped /
-    // _ts_roll_u_clamped and exposed via getPDOutput() for TorsoStabilizer.
+    // _ts_roll_u_clamped for BalanceState telemetry (p_err / p_u broadcast).
     BalanceCorrection computeCorrection(const IMUState& state);
 
     // Returns the most recent correction. Valid=false until update() has run once.
     BalanceCorrection getLastCorrection() const { return _lastCorrection; }
-
-    // Returns the clamped pitch/roll PD output (deg) + filtered rates from the
-    // last update(). TorsoStabilizer consumes this instead of running its own
-    // PD. .valid is false until update() has run once past all gates.
-    BalancePDOutput getPDOutput() const;
 
 private:
     ServoControl*    _servo;
@@ -281,11 +261,10 @@ private:
 
     // Task-space filter state.
     BalanceCorrection _lastCorrection;
-    bool              _pdValid = false;  // PD output valid (update passed gates)
     float _dx_filtered_mm    = 0.0f;
     float _dy_filtered_mm    = 0.0f;
-    // Intermediate PD values cached by computeCorrection so update()
-    // can use them for torso submission and BalanceState telemetry.
+    // Intermediate PD values cached by computeCorrection for BalanceState
+    // telemetry (surfaced as pitch_error / u_clamped, broadcast p_err / p_u).
     float _ts_pitch_u_clamped = 0.0f;
     float _ts_roll_u_clamped  = 0.0f;
     float _ts_pitch_error     = 0.0f;

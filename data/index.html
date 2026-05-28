@@ -728,10 +728,6 @@
                 <div class="bal-out-lbl">Hip pitch (°)</div>
                 <div class="bal-out-val" id="bHip">—</div>
             </div>
-            <div class="bal-out-cell">
-                <div class="bal-out-lbl">Torso pitch (°)</div>
-                <div class="bal-out-val" id="bTorso">—</div>
-            </div>
         </div>
         <div class="section-label">Roll outputs</div>
         <div class="bal-outputs mb-14">
@@ -750,10 +746,6 @@
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">Hip roll (°)</div>
                 <div class="bal-out-val" id="bRHip">—</div>
-            </div>
-            <div class="bal-out-cell">
-                <div class="bal-out-lbl">Torso roll (°)</div>
-                <div class="bal-out-val" id="bRTorso">—</div>
             </div>
         </div>
 
@@ -782,16 +774,6 @@
                 <div class="tune-header"><span>Max correction (°)</span><span class="tune-val" id="tvMax">15</span></div>
                 <input type="range" id="slMax" min="1" max="30" step="1" value="15"
                        oninput="updateTuneLabel('max',this.value); sendBalanceKey('max', this.value)">
-            </div>
-
-            <div class="bal-tune-row">
-                <!--
-                    Torso pitch ratio — raw gain on the pitch PD output applied
-                    to the torso joint. Verify torso_pitch direction before use.
-                -->
-                <div class="tune-header"><span>Torso ratio</span><span class="tune-val" id="tvTorso">0.00</span></div>
-                <input type="range" id="slTorso" min="0" max="1" step="0.05" value="0"
-                       oninput="updateTuneLabel('torso',this.value); sendBalanceKey('torso', this.value)">
             </div>
 
             <!-- Live read-out of correction_sign. The bring-up inversion buttons
@@ -878,12 +860,6 @@
                        oninput="updateRollTuneLabel('max_r',this.value); sendBalanceKey('max_r', this.value)">
             </div>
 
-            <div class="bal-tune-row">
-                <div class="tune-header"><span>Torso roll ratio</span><span class="tune-val" id="tvTorso_r">0.00</span></div>
-                <input type="range" id="slTorso_r" min="0" max="1" step="0.05" value="0"
-                       oninput="updateRollTuneLabel('t_roll',this.value); sendBalanceKey('t_roll', this.value)">
-            </div>
-
             <!-- Live read-out only — see pitch comment above. Override via
                  CMD:BALANCE_TUNE:sign_r=-1 from serial. -->
             <div class="bal-tune-row grid-span-2-mt4">
@@ -904,17 +880,6 @@
                 </span>
             </summary>
             <div class="mt-10">
-                <!-- Joint-space torso balance — independent toggle.
-                     Default ON (matches firmware). When OFF, torso pitch/roll
-                     servos are not driven by BalanceController even if task-space
-                     leg corrections (dx/dy) are active. -->
-                <div class="flex-row-gap-bottom">
-                    <span class="label-inline-medium">Torso bal.</span>
-                    <button id="btnTbOff" class="btn-bal-off btn-sign"
-                            onclick="setTorsoBalance(false)">OFF</button>
-                    <button id="btnTbOn"  class="btn-bal-on btn-sign btn-sign-active"
-                            onclick="setTorsoBalance(true)">ON (joint-space)</button>
-                </div>
                 <!-- Live readouts -->
                 <div class="bal-outputs mb-10">
                     <div class="bal-out-cell">
@@ -959,6 +924,200 @@
 
     </div><!-- /.bal-body -->
 </div><!-- /.bal-panel -->
+
+<!-- ── Torso Balance Panel (independent joint-space PD) ────────────────── -->
+<div class="bal-panel">
+
+    <div class="bal-header" onclick="toggleTorsoPanel()">
+        <h3>⚖ Torso Balance</h3>
+        <span class="bal-chevron" id="torsoChevron">▼</span>
+    </div>
+
+    <div class="bal-body hidden" id="torsoBody">
+
+        <!-- Status badges + independent pitch / roll enable buttons -->
+        <div class="flex-row-wrap-gap">
+            <div class="flex-col-gap-sm">
+                <div class="flex-row-gap-sm">
+                    <span class="label-inline-small">PITCH</span>
+                    <span class="bal-status disabled" id="tPitchStatus">OFF</span>
+                    <button class="btn-bal-on"  id="tPitchOnBtn"  onclick="sendCmd('TORSO_PITCH_ON')">Enable</button>
+                    <button class="btn-bal-off hidden" id="tPitchOffBtn" onclick="sendCmd('TORSO_PITCH_OFF')">Disable</button>
+                </div>
+                <div class="flex-row-gap-sm">
+                    <span class="label-inline-small">ROLL</span>
+                    <span class="bal-status disabled" id="tRollStatus">OFF</span>
+                    <button class="btn-bal-on"  id="tRollOnBtn"  onclick="sendCmd('TORSO_ROLL_ON')">Enable</button>
+                    <button class="btn-bal-off hidden" id="tRollOffBtn" onclick="sendCmd('TORSO_ROLL_OFF')">Disable</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live output cells -->
+        <div class="section-label">Pitch outputs</div>
+        <div class="bal-outputs mb-8">
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Pitch error</div>
+                <div class="bal-out-val" id="tbErr">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">u (clamped °)</div>
+                <div class="bal-out-val" id="tbU">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Torso pitch cmd (°)</div>
+                <div class="bal-out-val" id="tbCmd">—</div>
+            </div>
+        </div>
+        <div class="section-label">Roll outputs</div>
+        <div class="bal-outputs mb-14">
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Roll error</div>
+                <div class="bal-out-val" id="tbRErr">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">u_roll (clamped °)</div>
+                <div class="bal-out-val" id="tbRU">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Torso roll cmd (°)</div>
+                <div class="bal-out-val" id="tbRCmd">—</div>
+            </div>
+        </div>
+
+        <!-- Pitch tuning sliders — each sends CMD:TORSO_TUNE on change -->
+        <div class="section-label section-divider">Pitch controller gains</div>
+        <div class="bal-tune-grid">
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Kp</span><span class="tune-val" id="tvtKp">0.00</span></div>
+                <input type="range" id="sltKp" min="0" max="60" step="0.5" value="0"
+                       oninput="updateTorsoTuneLabel('Kp',this.value); sendTorsoKey('Kp', this.value)">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Kd</span><span class="tune-val" id="tvtKd">0.00</span></div>
+                <input type="range" id="sltKd" min="0" max="3" step="0.02" value="0"
+                       oninput="updateTorsoTuneLabel('Kd',this.value); sendTorsoKey('Kd', this.value)">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Setpoint (°)</span><span class="tune-val" id="tvtSp">0.0</span></div>
+                <input type="range" id="sltSp" min="-15" max="15" step="0.5" value="0"
+                       oninput="updateTorsoTuneLabel('setpoint',this.value); sendTorsoKey('setpoint', (this.value * Math.PI / 180).toFixed(5))">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Deadband (°)</span><span class="tune-val" id="tvtDb">2.0</span></div>
+                <input type="range" id="sltDb" min="0" max="10" step="0.1" value="2.0"
+                       oninput="updateTorsoTuneLabel('deadband',this.value); sendTorsoKey('deadband', (this.value * Math.PI / 180).toFixed(5))">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Deriv LPF α</span><span class="tune-val" id="tvtDlpf">0.85</span></div>
+                <input type="range" id="sltDlpf" min="0" max="0.99" step="0.01" value="0.85"
+                       oninput="updateTorsoTuneLabel('d_lpf',this.value); sendTorsoKey('d_lpf', this.value)">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Max correction (°)</span><span class="tune-val" id="tvtMax">15</span></div>
+                <input type="range" id="sltMax" min="1" max="30" step="1" value="15"
+                       oninput="updateTorsoTuneLabel('max',this.value); sendTorsoKey('max', this.value)">
+            </div>
+
+            <!-- Live read-out of correction_sign. Override via serial:
+                 CMD:TORSO_TUNE:sign=-1. Verify torso_pitch direction on hardware
+                 before raising gains — torso joints have no end-stops. -->
+            <div class="bal-tune-row grid-span-2-mt4">
+                <div class="tune-header">
+                    <span>Correction sign (read-only)</span>
+                    <span class="tune-val" id="tvtSign">−1</span>
+                </div>
+            </div>
+
+        </div><!-- /pitch tune grid -->
+
+        <!-- Roll tuning sliders -->
+        <div class="section-label section-divider">Roll controller gains</div>
+        <div class="bal-tune-grid">
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Kp_roll</span><span class="tune-val" id="tvtKp_r">0.00</span></div>
+                <input type="range" id="sltKp_r" min="0" max="60" step="0.5" value="0"
+                       oninput="updateTorsoTuneLabel('Kp_r',this.value); sendTorsoKey('Kp_r', this.value)">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Kd_roll</span><span class="tune-val" id="tvtKd_r">0.00</span></div>
+                <input type="range" id="sltKd_r" min="0" max="3" step="0.02" value="0"
+                       oninput="updateTorsoTuneLabel('Kd_r',this.value); sendTorsoKey('Kd_r', this.value)">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Setpoint roll (°)</span><span class="tune-val" id="tvtSp_r">0.0</span></div>
+                <input type="range" id="sltSp_r" min="-10" max="10" step="0.5" value="0"
+                       oninput="updateTorsoTuneLabel('sp_r',this.value); sendTorsoKey('sp_r', (this.value * Math.PI / 180).toFixed(5))">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Deadband roll (°)</span><span class="tune-val" id="tvtDb_r">2.0</span></div>
+                <input type="range" id="sltDb_r" min="0" max="10" step="0.1" value="2.0"
+                       oninput="updateTorsoTuneLabel('db_r',this.value); sendTorsoKey('db_r', (this.value * Math.PI / 180).toFixed(5))">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Deriv LPF α roll</span><span class="tune-val" id="tvtDlpf_r">0.85</span></div>
+                <input type="range" id="sltDlpf_r" min="0" max="0.99" step="0.01" value="0.85"
+                       oninput="updateTorsoTuneLabel('dlpf_r',this.value); sendTorsoKey('dlpf_r', this.value)">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Max correction roll (°)</span><span class="tune-val" id="tvtMax_r">15</span></div>
+                <input type="range" id="sltMax_r" min="1" max="30" step="1" value="15"
+                       oninput="updateTorsoTuneLabel('max_r',this.value); sendTorsoKey('max_r', this.value)">
+            </div>
+
+            <div class="bal-tune-row grid-span-2-mt4">
+                <div class="tune-header">
+                    <span>Roll correction sign (read-only)</span>
+                    <span class="tune-val" id="tvtSign_r">−1</span>
+                </div>
+            </div>
+
+        </div><!-- /roll tune grid -->
+
+        <!-- Output shaping -->
+        <div class="section-label section-divider">Output shaping</div>
+        <div class="bal-tune-grid">
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>IIR α</span><span class="tune-val" id="tvtIir">0.60</span></div>
+                <input type="range" id="sltIir" min="0" max="0.99" step="0.01" value="0.60"
+                       oninput="updateTorsoTuneLabel('iir',this.value); sendTorsoKey('iir', this.value)">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Max rate (°/tick)</span><span class="tune-val" id="tvtRate">0.30</span></div>
+                <input type="range" id="sltRate" min="0.05" max="2.0" step="0.05" value="0.30"
+                       oninput="updateTorsoTuneLabel('rate',this.value); sendTorsoKey('rate', this.value)">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Velocity damp Kv</span><span class="tune-val" id="tvtKv">0.00</span></div>
+                <input type="range" id="sltKv" min="0" max="5" step="0.05" value="0"
+                       oninput="updateTorsoTuneLabel('damping',this.value); sendTorsoKey('damping', this.value)">
+            </div>
+
+            <div class="bal-tune-row">
+                <div class="tune-header"><span>Output clamp (°)</span><span class="tune-val" id="tvtOmx">15</span></div>
+                <input type="range" id="sltOmx" min="1" max="30" step="1" value="15"
+                       oninput="updateTorsoTuneLabel('out_max',this.value); sendTorsoKey('out_max', this.value)">
+            </div>
+
+        </div><!-- /shaping tune grid -->
+
+    </div><!-- /.bal-body -->
+</div><!-- /.torso bal-panel -->
 
 <!-- ── Catch-Step Recovery Panel (Stage 0 — detection only) ───────────── -->
 <div class="rcv-panel">
@@ -3002,7 +3161,6 @@ function initWebSocket() {
             const pU      = parseFloat(v["p_u"]   || "0").toFixed(3);
             const pAnkle  = parseFloat(v["p_ank"] || "0").toFixed(2);
             const pHip    = parseFloat(v["p_hip"] || "0").toFixed(2);
-            const pTorso  = parseFloat(v["p_trs"] || "0").toFixed(2);
             const Kp      = parseFloat(v["Kp"]    || "0");
             const Kd      = parseFloat(v["Kd"]    || "0");
             const spRad   = parseFloat(v["sp"]    || "0");
@@ -3017,7 +3175,6 @@ function initWebSocket() {
             document.getElementById("bU").textContent     = pU;
             document.getElementById("bAnkle").textContent = pAnkle;
             document.getElementById("bHip").textContent   = pHip;
-            document.getElementById("bTorso").textContent = pTorso;
 
             // ── Roll live output cells ────────────────────────────────────────
             const rErrRad = parseFloat(v["r_err"] || "0");
@@ -3027,7 +3184,6 @@ function initWebSocket() {
             document.getElementById("bRU").textContent     = rU.toFixed(3);
             document.getElementById("bRAnkle").textContent = parseFloat(v["r_ank"] || "0").toFixed(2);
             document.getElementById("bRHip").textContent   = parseFloat(v["r_hip"] || "0").toFixed(2);
-            document.getElementById("bRTorso").textContent = parseFloat(v["r_trs"] || "0").toFixed(2);
 
             // ── Gait Diagnostics panel — PD outputs + balance dx/dy ──────────
             // The diag panel needs roll/pitch PD output, error, and effective
@@ -3056,7 +3212,6 @@ function initWebSocket() {
                 _syncSlider("slKd",    "tvKd",    Kd,                          2);
                 _syncSlider("slSp",    "tvSp",    spRad * 180 / Math.PI,      1);
                 _syncSlider("slMax",   "tvMax",   parseFloat(v["mx"]  || "15"), 0);
-                _syncSlider("slTorso", "tvTorso", parseFloat(v["t_r"] || "0"),  2);
                 const sign = parseFloat(v["sgn"] || "1");
                 document.getElementById("tvSign").textContent = sign >= 0 ? "+1" : "−1";
 
@@ -3065,7 +3220,6 @@ function initWebSocket() {
                 _syncSlider("slKd_r",    "tvKd_r",    parseFloat(v["Kd_r"]  || "0.2"), 2);
                 _syncSlider("slSp_r",    "tvSp_r",    parseFloat(v["sp_r"]  || "0") * 180 / Math.PI, 1);
                 _syncSlider("slMax_r",   "tvMax_r",   parseFloat(v["mx_r"]  || "8"),   0);
-                _syncSlider("slTorso_r", "tvTorso_r", parseFloat(v["t_rr"]  || "0"),   2);
                 const signR = parseFloat(v["sgn_r"] || "-1");
                 document.getElementById("tvSign_r").textContent = signR >= 0 ? "+1" : "−1";
 
@@ -3110,14 +3264,6 @@ function initWebSocket() {
                 if (dxEl) dxEl.textContent = parseFloat(v["dx"] || "0").toFixed(2);
                 if (dyEl) dyEl.textContent = parseFloat(v["dy"] || "0").toFixed(2);
             }
-            // Joint-space torso balance toggle sync (tb=1 default).
-            if (v["tb"] !== undefined) {
-                const tbOn = v["tb"] === "1";
-                const tbOff = document.getElementById("btnTbOff");
-                const tbOnB = document.getElementById("btnTbOn");
-                if (tbOff)  tbOff.className  = "btn-bal-off btn-sign" + (!tbOn ? " btn-sign-active" : "");
-                if (tbOnB)  tbOnB.className  = "btn-bal-on btn-sign"  + ( tbOn ? " btn-sign-active" : "");
-            }
             // Stage 0: catch-step recovery telemetry.
             if (v["rcv"] !== undefined) {
                 const rcvFlag = v["rcv"] === "1";
@@ -3160,6 +3306,70 @@ function initWebSocket() {
                 // p_err is pitch error (pitch - setpoint), close enough to raw pitch for display.
                 if (ppEl) ppEl.textContent = pErrDeg + "°";
                 if (rrEl) rrEl.textContent = rErrDeg + "°";
+            }
+        }
+        else if (msg.startsWith("TORSO:")) {
+            // Independent torso stabiliser telemetry — mirrors the BALANCE:
+            // handler but drives the Torso Balance panel.
+            const v = {};
+            msg.substring(6).split(",").forEach(pair => {
+                const eq = pair.indexOf("=");
+                if (eq !== -1) v[pair.substring(0, eq)] = pair.substring(eq + 1);
+            });
+
+            const pitchEn = v["p_en"] === "1";
+            const rollEn  = v["r_en"] === "1";
+
+            // Status badges + enable/disable button visibility.
+            const _setTBadge = (badgeId, onBtnId, offBtnId, active) => {
+                const badge = document.getElementById(badgeId);
+                if (badge) {
+                    badge.textContent = active ? "ACTIVE" : "OFF";
+                    badge.className   = active ? "bal-status active" : "bal-status disabled";
+                }
+                const onB  = document.getElementById(onBtnId);
+                const offB = document.getElementById(offBtnId);
+                if (onB)  onB.style.display  = active ? "none"         : "inline-block";
+                if (offB) offB.style.display = active ? "inline-block" : "none";
+            };
+            _setTBadge("tPitchStatus", "tPitchOnBtn", "tPitchOffBtn", pitchEn);
+            _setTBadge("tRollStatus",  "tRollOnBtn",  "tRollOffBtn",  rollEn);
+
+            // Live output cells.
+            const tpErrDeg = (parseFloat(v["p_err"] || "0") * 180 / Math.PI).toFixed(3);
+            document.getElementById("tbErr").textContent  = tpErrDeg + "°";
+            document.getElementById("tbU").textContent    = parseFloat(v["p_u"]   || "0").toFixed(3);
+            document.getElementById("tbCmd").textContent  = parseFloat(v["p_cmd"] || "0").toFixed(2);
+            const trErrDeg = (parseFloat(v["r_err"] || "0") * 180 / Math.PI).toFixed(3);
+            document.getElementById("tbRErr").textContent = trErrDeg + "°";
+            document.getElementById("tbRU").textContent   = parseFloat(v["r_u"]   || "0").toFixed(3);
+            document.getElementById("tbRCmd").textContent = parseFloat(v["r_cmd"] || "0").toFixed(2);
+
+            // Sync sliders to firmware (guarded while user is dragging).
+            if (!_tuneActive) {
+                // Pitch
+                _syncSlider("sltKp",   "tvtKp",   parseFloat(v["Kp"]  || "0"), 2);
+                _syncSlider("sltKd",   "tvtKd",   parseFloat(v["Kd"]  || "0"), 2);
+                _syncSlider("sltSp",   "tvtSp",   parseFloat(v["sp"]  || "0") * 180 / Math.PI, 1);
+                _syncSlider("sltDb",   "tvtDb",   parseFloat(v["db"]  || "0") * 180 / Math.PI, 1);
+                _syncSlider("sltDlpf", "tvtDlpf", parseFloat(v["dlpf"] || "0.85"), 2);
+                _syncSlider("sltMax",  "tvtMax",  parseFloat(v["mx"]  || "15"), 0);
+                const sgn = parseFloat(v["sgn"] || "-1");
+                document.getElementById("tvtSign").textContent = sgn >= 0 ? "+1" : "−1";
+                // Roll
+                _syncSlider("sltKp_r",   "tvtKp_r",   parseFloat(v["Kp_r"]   || "0"), 2);
+                _syncSlider("sltKd_r",   "tvtKd_r",   parseFloat(v["Kd_r"]   || "0"), 2);
+                _syncSlider("sltSp_r",   "tvtSp_r",   parseFloat(v["sp_r"]   || "0") * 180 / Math.PI, 1);
+                _syncSlider("sltDb_r",   "tvtDb_r",   parseFloat(v["db_r"]   || "0") * 180 / Math.PI, 1);
+                _syncSlider("sltDlpf_r", "tvtDlpf_r", parseFloat(v["dlpf_r"] || "0.85"), 2);
+                _syncSlider("sltMax_r",  "tvtMax_r",  parseFloat(v["mx_r"]   || "15"), 0);
+                const sgnR = parseFloat(v["sgn_r"] || "-1");
+                document.getElementById("tvtSign_r").textContent = sgnR >= 0 ? "+1" : "−1";
+                // Output shaping
+                _syncSlider("sltIir",  "tvtIir",  parseFloat(v["iir"]  || "0.60"), 2);
+                _syncSlider("sltRate", "tvtRate", parseFloat(v["rate"] || "0.30"), 2);
+                _syncSlider("sltKv",   "tvtKv",   parseFloat(v["kv"]   || "0"),    2);
+                _syncSlider("sltOmx",  "tvtOmx",  parseFloat(v["omx"]  || "15"),   0);
             }
         }
         else if (msg.startsWith("WSHIFT_STATE:")) {
@@ -3245,6 +3455,15 @@ function updatePoseList(csv) {
 function toggleBalPanel() {
     const body    = document.getElementById("balBody");
     const chevron = document.getElementById("balChevron");
+    const open    = body.style.display !== "none";
+    body.style.display   = open ? "none"  : "block";
+    chevron.classList.toggle("open", !open);
+}
+
+// ── Torso Balance panel collapse toggle (mirror toggleBalPanel) ──────────────
+function toggleTorsoPanel() {
+    const body    = document.getElementById("torsoBody");
+    const chevron = document.getElementById("torsoChevron");
     const open    = body.style.display !== "none";
     body.style.display   = open ? "none"  : "block";
     chevron.classList.toggle("open", !open);
@@ -3346,7 +3565,6 @@ function updateTuneLabel(id, rawVal) {
         max:      { el: "tvMax",   decimals: 0 },
         ankle:    { el: "tvAnkle", decimals: 2 },
         hip:      { el: "tvHip",   decimals: 2 },
-        torso:    { el: "tvTorso", decimals: 2 },
     };
     const m = map[id];
     if (m) document.getElementById(m.el).textContent = parseFloat(rawVal).toFixed(m.decimals);
@@ -3364,7 +3582,6 @@ const _rollTuneMap = {
     max_r:  { el: "tvMax_r",   decimals: 0 },
     a_roll: { el: "tvAnkle_r", decimals: 2 },
     h_roll: { el: "tvHip_r",   decimals: 2 },
-    t_roll: { el: "tvTorso_r", decimals: 2 },
 };
 function updateRollTuneLabel(id, rawVal) {
     _setTuneActive();
@@ -3374,7 +3591,7 @@ function updateRollTuneLabel(id, rawVal) {
 
 // Roll tune is now folded into sendBalanceKey — every roll slider uses
 // the same single-key helper with its firmware-side key (Kp_r, Kd_r, sp_r,
-// a_roll, h_roll, t_roll, max_r). No separate sender needed.
+// max_r). No separate sender needed.
 
 // ── Single-key BALANCE_TUNE send (replaces the prior bundled sendTune). ──────
 // See "CONFIGURATION OWNERSHIP" header: one slider touch = one CMD, one key.
@@ -3409,17 +3626,42 @@ function updateBoostLabel(id, val) {
 // Boost knobs fold into sendBalanceKey too. The slider for boost_thresh is
 // in degrees; the oninput call site does the deg->rad conversion inline.
 
-// Joint-space torso balance toggle.
-// Sends torso_bal=0|1; the active-button styling is also synced from the
-// `tb=` field in the BALANCE: packet (handles startup state + multi-client).
-function setTorsoBalance(enable) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        const val = enable ? 1 : 0;
-        ws.send(`CMD:BALANCE_TUNE:torso_bal=${val}`);
-        document.getElementById("btnTbOff").className = "btn-bal-off btn-sign" + (!enable ? " btn-sign-active" : "");
-        document.getElementById("btnTbOn").className  = "btn-bal-on btn-sign"  + ( enable ? " btn-sign-active" : "");
+// ── Torso Balance tuning (independent TORSO_TUNE subsystem) ──────────────────
+// Label map for the Torso panel sliders. Mirrors updateTuneLabel's structure.
+const _torsoTuneMap = {
+    Kp:       { el: "tvtKp",    decimals: 2 },
+    Kd:       { el: "tvtKd",    decimals: 2 },
+    setpoint: { el: "tvtSp",    decimals: 1 },
+    deadband: { el: "tvtDb",    decimals: 1 },
+    d_lpf:    { el: "tvtDlpf",  decimals: 2 },
+    max:      { el: "tvtMax",   decimals: 0 },
+    Kp_r:     { el: "tvtKp_r",   decimals: 2 },
+    Kd_r:     { el: "tvtKd_r",   decimals: 2 },
+    sp_r:     { el: "tvtSp_r",   decimals: 1 },
+    db_r:     { el: "tvtDb_r",   decimals: 1 },
+    dlpf_r:   { el: "tvtDlpf_r", decimals: 2 },
+    max_r:    { el: "tvtMax_r",  decimals: 0 },
+    iir:      { el: "tvtIir",   decimals: 2 },
+    rate:     { el: "tvtRate",  decimals: 2 },
+    damping:  { el: "tvtKv",    decimals: 2 },
+    out_max:  { el: "tvtOmx",   decimals: 0 },
+};
+function updateTorsoTuneLabel(id, rawVal) {
+    _setTuneActive();
+    const m = _torsoTuneMap[id];
+    if (m && document.getElementById(m.el)) {
+        document.getElementById(m.el).textContent = parseFloat(rawVal).toFixed(m.decimals);
     }
 }
+// Single-key TORSO_TUNE send — mirrors sendBalanceKey. Angle keys (setpoint,
+// deadband) are converted deg->rad inline at the oninput call site.
+function sendTorsoKey(key, val) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const msg = `CMD:TORSO_TUNE:${key}=${val}`;
+    ws.send(msg);
+    console.log("[WS TX]", msg);
+}
+
 function updateTsLabel(key, val) {
     _setTuneActive();
     if (key === "dx_per_deg") document.getElementById("tvDxPerDeg").textContent = parseFloat(val).toFixed(1);

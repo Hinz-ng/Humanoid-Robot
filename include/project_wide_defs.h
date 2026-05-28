@@ -60,9 +60,9 @@ constexpr float GAIT_PHASE_RATE_HZ          = 0.7f;  // cycles/sec
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
 // If drag returns at 15 mm, the root cause is the gate, not step height.
-constexpr float GAIT_STEP_HEIGHT_MM         = 10.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 8.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
-constexpr float GAIT_STEP_LENGTH_MM         = 32.0f;  // Phase 3+; forward stride
+constexpr float GAIT_STEP_LENGTH_MM         = 30.0f;  // Phase 3+; forward stride
 
 // Session neutral-trim safety gate (deg). JointModel::captureSessionNeutral()
 // rejects the whole capture if any joint is further than this from its factory
@@ -152,7 +152,7 @@ constexpr float GAIT_STANCE_X_OFFSET_MM         = -1.0f;
 // transients damp before the next direction is commanded. Should be ≥ ~5×
 // the IIR time constant from WeightShiftConfig::ankle_tilt_smooth_alpha.
 // At alpha=0.90 / 400 Hz, τ ≈ 25 ms → 150 ms gives ~6τ.
-constexpr uint32_t GAIT_STABILIZE_MS            = 0;
+constexpr uint32_t GAIT_STABILIZE_MS            = 200;
 constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 
 // ============================================================

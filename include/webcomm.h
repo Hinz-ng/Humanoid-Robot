@@ -42,6 +42,9 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     void broadcastFootImpact();
     void broadcastCalibStatus(CalibState state, float progress); // --- ADD
     void broadcastBalanceState(const BalanceState& state);
+    // Independent torso stabiliser telemetry (TORSO: packet). Rate-limited to
+    // 20 Hz internally. No-op if no TorsoStabilizer is wired.
+    void broadcastTorsoState();
     void broadcastSpeeds();
     // Per-joint transmission state — gain, anatomical-vs-corrected-servo
     // deviation, and clamp flag. Lets the foot-IMU sweep compare commanded
@@ -53,8 +56,8 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // Firmware is source of truth; client updates sliders without sending back.
     void broadcastWeightShiftConfig(AsyncWebSocketClient* client);
     void setBalanceController(BalanceController* bal);
-    // Wire the joint-space torso stabiliser — owns the torso pitch/roll config
-    // (TorsoConfig) that BALANCE_TUNE torso keys write to and BALANCE: broadcasts.
+    // Wire the joint-space torso stabiliser — an independent subsystem with its
+    // own TorsoConfig, tuned via TORSO_TUNE and broadcast in the TORSO: packet.
     void setTorsoStabilizer(TorsoStabilizer* ts);
     // Wire the joint authority layer. Call once in setup() after motionManager.init().
     // When wired, slider commands are routed through MotionManager so they silently
@@ -89,6 +92,7 @@ private:
     BalanceController* _balCtrl         = nullptr;
     TorsoStabilizer*   _torsoStab       = nullptr;  // joint-space torso balance
     uint32_t           _lastBalanceBroadcast_us = 0;
+    uint32_t           _lastTorsoBroadcast_us   = 0;
     MotionManager*     _motionManager   = nullptr;  // joint authority layer
     WeightShift*       _weightShift     = nullptr;  // gait: CoM lateral shift
     GaitController*    _gaitCtrl            = nullptr;

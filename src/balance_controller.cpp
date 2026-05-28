@@ -46,7 +46,6 @@ void BalanceController::resetOutputState() {
     _ts_pitch_error      = 0.0f;
     _ts_roll_error       = 0.0f;
     _lastCorrection      = {};
-    _pdValid             = false;
     _cfg.swing_leveler_roll_bias_l_deg = 0.0f;
     _cfg.swing_leveler_roll_bias_r_deg = 0.0f;
 
@@ -153,7 +152,6 @@ float BalanceController::_shapeOutput(uint8_t jIdx, float rawCmd,
 // ---------------------------------------------------------------------------
 BalanceState BalanceController::update(const IMUState& state) {
     BalanceState out = {};
-    _pdValid = false;  // set true only after all gates pass (see end of fn)
 
     // =========================================================================
     //  FALL DETECTION
@@ -233,7 +231,7 @@ BalanceState BalanceController::update(const IMUState& state) {
     //  which GaitController merges into FootTargets before LegIK::solve(). Leg
     //  joints are NOT submitted here. The WeightShift ankle-roll bias is
     //  submitted via _submitAnkleRollBias(). Torso pitch/roll are joint-space
-    //  and live in TorsoStabilizer, which consumes getPDOutput() after this.
+    //  and owned entirely by TorsoStabilizer (its own PD, no coupling here).
     // =========================================================================
     _lastCorrection = computeCorrection(state);
 
@@ -257,25 +255,8 @@ BalanceState BalanceController::update(const IMUState& state) {
     }
 
     _updateRecoveryDetection(out, state);
-    _pdValid   = true;   // PD output (getPDOutput) valid for TorsoStabilizer
     _lastState = out;
     return out;
-}
-
-// ---------------------------------------------------------------------------
-//  getPDOutput — snapshot of the clamped PD output for TorsoStabilizer.
-//  Valid only when the last update() ran past all gates (_pdValid).
-// ---------------------------------------------------------------------------
-BalancePDOutput BalanceController::getPDOutput() const {
-    BalancePDOutput o;
-    o.pitch_u_clamped = _ts_pitch_u_clamped;
-    o.roll_u_clamped  = _ts_roll_u_clamped;
-    o.pitch_rate_filt = _pitchRateFiltered;
-    o.roll_rate_filt  = _rollRateFiltered;
-    o.pitch_active    = _cfg.pitch_enabled;
-    o.roll_active     = _cfg.roll_enabled;
-    o.valid           = _pdValid;
-    return o;
 }
 
 // ---------------------------------------------------------------------------
@@ -287,8 +268,8 @@ BalancePDOutput BalanceController::getPDOutput() const {
 //
 //  Side effects (intentional):
 //    _pitchRateFiltered, _rollRateFiltered — updated (must happen once per tick).
-//    _ts_pitch_u_clamped, _ts_roll_u_clamped — cached for torso submission in
-//      update()'s task-space branch.
+//    _ts_pitch_u_clamped, _ts_roll_u_clamped — cached for BalanceState
+//      telemetry (surfaced as u_clamped / u_roll_clamped, broadcast p_u).
 //    _dx_filtered_mm, _dy_filtered_mm — IIR state for the mm outputs.
 //
 //  Does NOT submit to any joints; does NOT touch MotionManager.

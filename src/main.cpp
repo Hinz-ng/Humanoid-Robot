@@ -393,10 +393,10 @@ void loop() {
             // to gaitController.update() so catch-step detection can observe the
             // recovery flag fresh.
             BalanceState balState = balanceController.update(state);
-            // Torso stabiliser (joint-space) consumes the balance PD output;
-            // runs after balance, before gait — torso joints are not in the
-            // IK chain so ordering vs gait is immaterial for them.
-            torsoStabilizer.update(balanceController.getPDOutput());
+            // Torso stabiliser (joint-space) runs its own pitch/roll PD on the
+            // torso IMUState — independent of balance. Torso joints are not in
+            // the IK chain so ordering vs gait is immaterial for them.
+            torsoStabilizer.update(state);
             const BalanceCorrection bc = balanceController.getLastCorrection();
             gaitController.update(dt, state, &bc, &balState, footSnapPtr);
 
@@ -415,6 +415,7 @@ void loop() {
             webComm.broadcastFootImpact();
 #endif
             webComm.broadcastBalanceState(balState);
+            webComm.broadcastTorsoState();
             webComm.broadcastGaitState();
 
             // Broadcast calibration progress at 10 Hz (rate-limited inside broadcastCalibStatus).

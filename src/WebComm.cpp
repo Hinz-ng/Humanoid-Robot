@@ -382,30 +382,27 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
     _lastBalanceBroadcast_us = now;
 
     const BalanceConfig& cfg = _balCtrl->getConfig();
-    const TorsoConfig    tcfg = _torsoStab ? _torsoStab->getConfig() : TorsoConfig();
     // buf sized for full pitch + roll + task-space + recovery telemetry
-    // + recovery thresholds + boost + dx/dy + iir config fields (~640 chars).
+    // + recovery thresholds + boost + dx/dy + iir config fields (~600 chars).
     char buf[800];
     snprintf(buf, sizeof(buf),
         // Controller enable flags + overall active state
         "BALANCE:p_en=%d,r_en=%d,"
         "eff_kp=%.2f,eff_kpr=%.2f,"           // effective Kp (with boost)
         // Pitch live outputs
-        "p_err=%.4f,p_u=%.3f,p_ank=%.2f,p_hip=%.2f,p_trs=%.2f,"
+        "p_err=%.4f,p_u=%.3f,p_ank=%.2f,p_hip=%.2f,"
         // Roll live outputs
-        "r_err=%.4f,r_u=%.3f,r_ank=%.2f,r_hip=%.2f,r_trs=%.2f,"
-        // Pitch config (t_r = torso pitch ratio)
-        "Kp=%.3f,Kd=%.3f,sp=%.4f,t_r=%.2f,sgn=%.1f,mx=%.1f,"
-        // Roll config (t_rr = torso roll ratio)
-        "Kp_r=%.3f,Kd_r=%.3f,sp_r=%.4f,t_rr=%.2f,sgn_r=%.1f,mx_r=%.1f,"
+        "r_err=%.4f,r_u=%.3f,r_ank=%.2f,r_hip=%.2f,"
+        // Pitch config
+        "Kp=%.3f,Kd=%.3f,sp=%.4f,sgn=%.1f,mx=%.1f,"
+        // Roll config
+        "Kp_r=%.3f,Kd_r=%.3f,sp_r=%.4f,sgn_r=%.1f,mx_r=%.1f,"
         // Safety
         "fell=%d,"
         // Weight shift telemetry — progress and ramping flag for UI progress bar.
         "ws_prog=%.2f,ws_ramp=%d,ws_rp=%.2f,ws_lp=%.2f,"
         // Live task-space foot-target corrections.
         "dx=%.2f,dy=%.2f,"
-        // Joint-space torso balance master enable.
-        "tb=%d,"
         // Stage 0: catch-step recovery detection telemetry.
         "rcv=%d,sat=%u,rdb=%u,"
         "bias_l=%.2f,bias_r=%.2f,"
@@ -422,14 +419,12 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         state.effective_kp,
         state.effective_kp_roll,
         state.pitch_error,   state.u_clamped,
-        state.ankle_cmd_deg, state.hip_cmd_deg, state.torso_cmd_deg,
+        state.ankle_cmd_deg, state.hip_cmd_deg,
         state.roll_error,    state.u_roll_clamped,
-        state.ankle_roll_cmd_deg, state.hip_roll_cmd_deg, state.torso_roll_cmd_deg,
+        state.ankle_roll_cmd_deg, state.hip_roll_cmd_deg,
         cfg.Kp, cfg.Kd, cfg.pitch_setpoint_rad,
-        tcfg.pitch_ratio,
         cfg.correction_sign, cfg.max_correction_deg,
         cfg.Kp_roll, cfg.Kd_roll, cfg.roll_setpoint_rad,
-        tcfg.roll_ratio,
         cfg.roll_correction_sign, cfg.max_roll_correction_deg,
         (int)state.fell,
         _weightShift ? _weightShift->getState().progress        : 0.0f,
@@ -438,7 +433,6 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
         _weightShift ? _weightShift->getState().left_progress    : 0.0f,
         _balCtrl->getLastCorrection().dx_mm,
         _balCtrl->getLastCorrection().dy_mm,
-        (int)tcfg.enabled,
         (int)state.recovery_flag,
         (unsigned)state.saturation_count,
         (unsigned)state.recovery_debounce,
@@ -458,6 +452,49 @@ void WebComm::broadcastBalanceState(const BalanceState& state) {
     );
     _sendFiltered(buf);
 }
+
+// =============================================================================
+//  TORSO STABILISER STATE BROADCAST
+//  Protocol: "TORSO:p_en=..,r_en=..,p_err=..,p_u=..,p_cmd=..,r_err=..,r_u=..,
+//             r_cmd=..,<config echoes for slider sync>"
+//  Independent of BALANCE:. Same 20 Hz cadence. Config echoes let the Torso
+//  panel sliders sync to firmware state instead of pushing HTML defaults.
+// =============================================================================
+void WebComm::broadcastTorsoState() {
+    if (ws.count() == 0 || _torsoStab == nullptr) return;
+    const uint32_t INTERVAL_US = 50000;  // 20 Hz
+    uint32_t now = micros();
+    if ((now - _lastTorsoBroadcast_us) < INTERVAL_US) return;
+    _lastTorsoBroadcast_us = now;
+
+    const TorsoConfig& cfg = _torsoStab->getConfig();
+    const TorsoState   st  = _torsoStab->getState();
+    char buf[420];
+    snprintf(buf, sizeof(buf),
+        "TORSO:p_en=%d,r_en=%d,"
+        // Pitch live outputs
+        "p_err=%.4f,p_u=%.3f,p_cmd=%.2f,"
+        // Roll live outputs
+        "r_err=%.4f,r_u=%.3f,r_cmd=%.2f,"
+        // Pitch config
+        "Kp=%.3f,Kd=%.3f,sp=%.4f,db=%.4f,dlpf=%.3f,sgn=%.1f,mx=%.1f,"
+        // Roll config
+        "Kp_r=%.3f,Kd_r=%.3f,sp_r=%.4f,db_r=%.4f,dlpf_r=%.3f,sgn_r=%.1f,mx_r=%.1f,"
+        // Output shaping
+        "iir=%.3f,rate=%.3f,kv=%.3f,omx=%.1f",
+        (int)cfg.pitch_enabled, (int)cfg.roll_enabled,
+        st.pitch_error, st.pitch_u_clamped, st.pitch_cmd_deg,
+        st.roll_error,  st.roll_u_clamped,  st.roll_cmd_deg,
+        cfg.Kp, cfg.Kd, cfg.pitch_setpoint_rad, cfg.pitch_deadband_rad,
+        cfg.derivative_lpf_alpha, cfg.correction_sign, cfg.max_correction_deg,
+        cfg.Kp_roll, cfg.Kd_roll, cfg.roll_setpoint_rad, cfg.roll_deadband_rad,
+        cfg.roll_derivative_lpf_alpha, cfg.roll_correction_sign, cfg.max_roll_correction_deg,
+        cfg.output_iir_alpha, cfg.max_output_rate_deg_per_tick,
+        cfg.output_damping_kv, cfg.max_output_deg
+    );
+    _sendFiltered(buf);
+}
+
 // =============================================================================
 //  GAIT STATE BROADCAST
 //  Protocol: "GAIT:phase=X.XXX,mode=N,sub=N,liftL=X.X,liftR=X.X,ws=X.XXX,gate=0|1"
@@ -1014,6 +1051,41 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             Serial.println("[WebComm] CMD: ROLL_OFF");
         }
         // ---------------------------------------------------------------------
+        //  Torso stabiliser enable / disable — independent of leg balance.
+        // ---------------------------------------------------------------------
+        else if (cmd == "TORSO_PITCH_ON") {
+            if (_torsoStab) {
+                TorsoConfig cfg = _torsoStab->getConfig();
+                cfg.pitch_enabled = true;
+                _torsoStab->setConfig(cfg);
+            }
+            Serial.println("[WebComm] CMD: TORSO_PITCH_ON");
+        }
+        else if (cmd == "TORSO_PITCH_OFF") {
+            if (_torsoStab) {
+                TorsoConfig cfg = _torsoStab->getConfig();
+                cfg.pitch_enabled = false;
+                _torsoStab->setConfig(cfg);
+            }
+            Serial.println("[WebComm] CMD: TORSO_PITCH_OFF");
+        }
+        else if (cmd == "TORSO_ROLL_ON") {
+            if (_torsoStab) {
+                TorsoConfig cfg = _torsoStab->getConfig();
+                cfg.roll_enabled = true;
+                _torsoStab->setConfig(cfg);
+            }
+            Serial.println("[WebComm] CMD: TORSO_ROLL_ON");
+        }
+        else if (cmd == "TORSO_ROLL_OFF") {
+            if (_torsoStab) {
+                TorsoConfig cfg = _torsoStab->getConfig();
+                cfg.roll_enabled = false;
+                _torsoStab->setConfig(cfg);
+            }
+            Serial.println("[WebComm] CMD: TORSO_ROLL_OFF");
+        }
+        // ---------------------------------------------------------------------
         //  Weight shift commands
         //  Protocol: CMD:WEIGHT_SHIFT:left | right | center
         // ---------------------------------------------------------------------
@@ -1306,8 +1378,6 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         else if (cmd.startsWith("BALANCE_TUNE:")) {
             if (_balCtrl) {
                 BalanceConfig cfg = _balCtrl->getConfig();
-                TorsoConfig   tcfg = _torsoStab ? _torsoStab->getConfig()
-                                                : TorsoConfig();
                 String params = cmd.substring(13);
                 int start = 0;
                 while (start < (int)params.length()) {
@@ -1339,7 +1409,6 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         else if (key == "d_lpf")    cfg.derivative_lpf_alpha       = val;
                         else if (key == "tau")      cfg.servo_lag_compensation_s   = val;
                         else if (key == "rate")     cfg.max_output_rate_deg_per_tick = val;
-                        else if (key == "torso")    tcfg.pitch_ratio       = val;
                         else if (key == "max")      cfg.max_correction_deg = val;
                         else if (key == "sign")     cfg.correction_sign        = val;
                         // ── Roll fields ───────────────────────────────────────
@@ -1358,7 +1427,6 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             }
                         }
                         else if (key == "sp_r")     cfg.roll_setpoint_rad      = val;
-                        else if (key == "t_roll")   tcfg.roll_ratio            = val;
                         else if (key == "max_r")    cfg.max_roll_correction_deg = val;
                         else if (key == "sign_r")   cfg.roll_correction_sign   = val;
                         else if (key == "iir")      cfg.output_iir_alpha = constrain(val, 0.0f, 0.99f);
@@ -1385,22 +1453,61 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         else if (key == "fall_det")  cfg.fall_detection_enabled     = (val > 0.5f);
                         else if (key == "dx_per_deg") cfg.pitch_to_dx_mm_per_deg = constrain(val, 0.5f, 6.0f);
                         else if (key == "dy_per_deg") cfg.roll_to_dy_mm_per_deg  = constrain(val, 0.5f, 6.0f);
-                        // Joint-space torso balance master enable. When false,
-                        // torso pitch/roll are not submitted by TorsoStabilizer
-                        // even if pitch_ratio / roll_ratio are non-zero.
-                        else if (key == "torso_bal") tcfg.enabled = (val > 0.5f);
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
                 // Legacy joint-space leg balance was retired in the consolidation
                 // refactor: ankle/hip ratios no longer exist. Torso pitch/roll
-                // balance now lives in TorsoStabilizer (separate TorsoConfig).
+                // balance is a fully independent subsystem — see TORSO_TUNE.
                 _balCtrl->setConfig(cfg);
-                if (_torsoStab) _torsoStab->setConfig(tcfg);
-                Serial.printf("[WebComm] BALANCE_TUNE: Kp=%.3f Kd=%.3f sp=%.4f  "
-                               "torso_pitch=%.2f torso_roll=%.2f\n",
-                               cfg.Kp, cfg.Kd, cfg.pitch_setpoint_rad,
-                               tcfg.pitch_ratio, tcfg.roll_ratio);
+                Serial.printf("[WebComm] BALANCE_TUNE: Kp=%.3f Kd=%.3f sp=%.4f\n",
+                               cfg.Kp, cfg.Kd, cfg.pitch_setpoint_rad);
+            }
+        }
+        // ---------------------------------------------------------------------
+        //  Torso stabiliser tuning — independent joint-space PD.
+        //  Protocol: CMD:TORSO_TUNE:key=value[,key=value...]
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("TORSO_TUNE:")) {
+            if (_torsoStab) {
+                TorsoConfig cfg = _torsoStab->getConfig();
+                String params = cmd.substring(11);
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    String pair = (comma == -1) ? params.substring(start)
+                                                : params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq != -1) {
+                        String key = pair.substring(0, eq);
+                        float  val = pair.substring(eq + 1).toFloat();
+                        // ── Pitch ──────────────────────────────────────────
+                        if      (key == "Kp")       cfg.Kp = constrain(val, 0.0f, BALANCE_KP_MAX);
+                        else if (key == "Kd")       cfg.Kd = constrain(val, 0.0f, BALANCE_KD_MAX);
+                        else if (key == "setpoint") cfg.pitch_setpoint_rad   = val;
+                        else if (key == "deadband") cfg.pitch_deadband_rad   = constrain(val, 0.0f, 0.20f);
+                        else if (key == "d_lpf")    cfg.derivative_lpf_alpha = constrain(val, 0.0f, 0.99f);
+                        else if (key == "sign")     cfg.correction_sign      = val;
+                        else if (key == "max")      cfg.max_correction_deg   = val;
+                        // ── Roll ───────────────────────────────────────────
+                        else if (key == "Kp_r")     cfg.Kp_roll = constrain(val, 0.0f, BALANCE_KP_MAX);
+                        else if (key == "Kd_r")     cfg.Kd_roll = constrain(val, 0.0f, BALANCE_KD_MAX);
+                        else if (key == "sp_r")     cfg.roll_setpoint_rad         = val;
+                        else if (key == "db_r")     cfg.roll_deadband_rad         = constrain(val, 0.0f, 0.20f);
+                        else if (key == "dlpf_r")   cfg.roll_derivative_lpf_alpha = constrain(val, 0.0f, 0.99f);
+                        else if (key == "sign_r")   cfg.roll_correction_sign      = val;
+                        else if (key == "max_r")    cfg.max_roll_correction_deg   = val;
+                        // ── Output shaping ─────────────────────────────────
+                        else if (key == "iir")      cfg.output_iir_alpha             = constrain(val, 0.0f, 0.99f);
+                        else if (key == "rate")     cfg.max_output_rate_deg_per_tick = val;
+                        else if (key == "damping")  cfg.output_damping_kv            = val;
+                        else if (key == "out_max")  cfg.max_output_deg               = val;
+                    }
+                    start = (comma == -1) ? params.length() : comma + 1;
+                }
+                _torsoStab->setConfig(cfg);
+                Serial.printf("[WebComm] TORSO_TUNE: Kp=%.3f Kd=%.3f Kp_r=%.3f Kd_r=%.3f\n",
+                               cfg.Kp, cfg.Kd, cfg.Kp_roll, cfg.Kd_roll);
             }
         }
        

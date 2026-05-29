@@ -60,7 +60,7 @@ constexpr float GAIT_PHASE_RATE_HZ          = 0.7f;  // cycles/sec
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
 // If drag returns at 15 mm, the root cause is the gate, not step height.
-constexpr float GAIT_STEP_HEIGHT_MM         = 8.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 10.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 30.0f;  // Phase 3+; forward stride
 
@@ -461,6 +461,23 @@ constexpr float    GAIT_TD_COMPLIANCE_DEPTH_MM_DEFAULT = 2.0f;   // mm of yield
 constexpr uint32_t GAIT_TD_COMPLIANCE_DECAY_MS_DEFAULT = 200;    // recovery time
 
 // ============================================================
+// H-RESTORE  (deferred swing-leg stance-height restoration)
+// ============================================================
+// After an early touchdown the swing leg's h is frozen at the touchdown
+// snapshot (no in-swing re-extension — re-extending a planted leg forward of
+// the CoM produces a backward braking impulse). The deficit between that
+// frozen h and stanceHeightMm is then restored across the NEXT stance phase,
+// gated on the new stance leg's _halfPhase, surviving the role swap with no h
+// discontinuity. This removes the instantaneous h snap at _advanceHalf that
+// otherwise causes a backward impulse.
+//
+// hRestoreCompleteFrac is the new-half phase at which the restore completes —
+// the foot is ~under the hip here, so re-extending it no longer brakes the
+// body. Clamped (0.05, 1.0] at use.
+constexpr bool  GAIT_H_RESTORE_ENABLED_DEFAULT       = true;
+constexpr float GAIT_H_RESTORE_COMPLETE_FRAC_DEFAULT = 0.5f;
+
+// ============================================================
 // TOUCHDOWN TRIM SUPPRESSION  (phase-gate of the W2/W5 lateral trim)
 // ============================================================
 // The W2/W5 lateral CoM trim (_comLateralTrimMm) is driven by torso roll. At
@@ -616,7 +633,7 @@ constexpr float GAIT_HEELSTRIKE_DORSIFLEX_DEG_DEFAULT = 3.0f;
 // Default 0.50 puts full peak at touchdownGatePhase (default 0.70). Recommended
 // tuning range 0.45–0.55. INVARIANT: must remain strictly less than
 // touchdownGatePhase so the engage window has nonzero width.
-constexpr float GAIT_HEELSTRIKE_GATE_PHASE_DEFAULT = 0.45f;
+constexpr float GAIT_HEELSTRIKE_GATE_PHASE_DEFAULT = 0.2f;
 
 // Time (ms) for the bias to decay from its release-snapshot value to zero
 // after touchdown (or _advanceHalf fallback). 240 ms is long enough for the
@@ -624,7 +641,7 @@ constexpr float GAIT_HEELSTRIKE_GATE_PHASE_DEFAULT = 0.45f;
 // that the bias is gone before the next half-cycle's lift-off. Tuning range
 // 200–280 ms. Independent of FSM state — runs to completion across the role
 // swap, mirroring W4 compliance.
-constexpr uint32_t GAIT_HEELSTRIKE_RELEASE_MS_DEFAULT = 250;
+constexpr uint32_t GAIT_HEELSTRIKE_RELEASE_MS_DEFAULT = 500;
 
 // Hard ceiling on the applied bias magnitude regardless of heelStrike-
 // DorsiflexDeg. Safety backstop: combined with pitch_bias from the swing

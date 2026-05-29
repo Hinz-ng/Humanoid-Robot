@@ -1869,6 +1869,47 @@
             </div>
         </div>
 
+        <!-- H-restore panel — deferred swing-leg stance-height restoration.
+             After an early touchdown the swing leg's h is frozen at the
+             touchdown snapshot; the deficit is restored across the NEXT stance
+             phase (gated on the new stance leg's phase), removing the h snap at
+             the role swap that caused a backward impulse. Mirrors the W4
+             compliance panel; knobs ride the GAIT_TUNE command. -->
+        <div class="panel-subtitle-divider">
+            H-restore (deferred stance-height)
+            <span id="hRestoreEnBadge" class="gait-mode-badge gait-mode-run" style="margin-left:8px;">ENABLED</span>
+        </div>
+        <div class="gait-btn-row">
+            <button class="btn-gait-step" id="btnHRestoreToggle" onclick="toggleHRestore()">
+                H-restore: ON
+            </button>
+        </div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Restore state</div>
+                <div class="bal-out-val" id="hRestoreActiveCell">—</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Active offset (mm)</div>
+                <div class="bal-out-val" id="hRestoreOffsetCell">0.00</div>
+            </div>
+        </div>
+        <div class="gait-tune-grid">
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Restore completion frac</span>
+                    <span class="tune-val" id="tvHRestoreFrac">0.50</span>
+                </div>
+                <input type="range" id="slHRestoreFrac" min="0.05" max="1.0" step="0.05" value="0.5"
+                       oninput="updateGaitLabel('hRestoreFrac', this.value); sendGaitKey('hRestoreFrac', parseFloat(this.value).toFixed(2))">
+                <div class="small-note">
+                    New-half phase at which the just-planted leg returns to full
+                    stance height (foot ~under the hip). Lower = quicker
+                    re-extension. Default 0.50.
+                </div>
+            </div>
+        </div>
+
         <!-- Runtime session neutral trim — global servo-drift compensation. -->
         <div class="panel-subtitle-divider">
             Session neutral trim (servo-drift)
@@ -3974,6 +4015,7 @@ const _gaitTuneMap = {
     latCaptureMax:  { el: "tvGaitLatCapMax",  decimals: 0 },
     torsoNeutralRoll:  { el: "tvGaitTorsoNeutralRoll",  decimals: 3 },
     torsoNeutralPitch: { el: "tvGaitTorsoNeutralPitch", decimals: 3 },
+    hRestoreFrac:      { el: "tvHRestoreFrac",          decimals: 2 },
 };
 
 function updateGaitLabel(id, rawVal) {
@@ -4137,6 +4179,14 @@ function updateComplianceLabel(elId, rawVal, decimals) {
     _setTuneActive();
     const el = document.getElementById(elId);
     if (el) el.textContent = parseFloat(rawVal).toFixed(decimals);
+}
+
+// H-restore master enable. Unlike compliance (its own command), the h-restore
+// knobs ride the GAIT_TUNE command, so the toggle sends via sendGaitKey.
+function toggleHRestore() {
+    const btn = document.getElementById('btnHRestoreToggle');
+    const enable = btn && btn.textContent.indexOf('OFF') !== -1;
+    sendGaitKey('hRestore', enable ? 1 : 0);
 }
 
 function setGateMode(mode) {
@@ -4651,6 +4701,45 @@ function parseGaitState(payload) {
         if (!_tuneActive) {
             _syncSlider("slComplianceDepth", "tvComplianceDepth", cmpDepth, 1);
             _syncSlider("slComplianceDecay", "tvComplianceDecay", cmpDecay, 0);
+        }
+    }
+
+    // H-restore panel. Deferred swing-leg stance-height restoration.
+    // Fields: hRestore (config enable), hRestoreFrac (config completion phase),
+    //         hRestoreOff (live offset applied to the restoring leg this tick,
+    //         <=0), hRestoreAct (restore in progress). Mirrors the W4 panel.
+    {
+        const hrEn   = (v["hRestore"]    === "1");
+        const hrAct  = (v["hRestoreAct"] === "1");
+        const hrOff  = parseFloat(v["hRestoreOff"]  || "0");
+        const hrFrac = parseFloat(v["hRestoreFrac"] || "0.5");
+
+        const enBadge = document.getElementById("hRestoreEnBadge");
+        if (enBadge) {
+            enBadge.textContent = hrEn ? "ENABLED" : "DISABLED";
+            enBadge.className   = "gait-mode-badge " + (hrEn ? "gait-mode-run" : "gait-mode-idle");
+        }
+        const hrBtn = document.getElementById("btnHRestoreToggle");
+        if (hrBtn) {
+            hrBtn.textContent = hrEn ? "H-restore: ON" : "H-restore: OFF";
+            hrBtn.style.background = hrEn ? "#1565c0" : "#e65100";
+        }
+
+        // Active-state indicator + live offset.
+        const actEl = document.getElementById("hRestoreActiveCell");
+        if (actEl) {
+            actEl.textContent = hrAct ? "RESTORING" : "—";
+            actEl.style.color = hrAct ? "#ffc107" : "#888";
+        }
+        const offEl = document.getElementById("hRestoreOffsetCell");
+        if (offEl) {
+            offEl.textContent = hrOff.toFixed(2);
+            offEl.style.color = hrAct ? "#ffc107" : "#888";
+        }
+
+        // Completion-fraction slider sync (guarded while user is dragging).
+        if (!_tuneActive) {
+            _syncSlider("slHRestoreFrac", "tvHRestoreFrac", hrFrac, 2);
         }
     }
 

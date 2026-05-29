@@ -131,6 +131,65 @@ void GaitController::_updateCompliance() {
 }
 
 // ---------------------------------------------------------------------------
+//  _resetHRestore — zero the deferred h-restore state + telemetry mirror.
+//
+//  Called on init, start (both IDLE and non-IDLE), and recovery entry. NOT
+//  called at half-cycle boundaries: the restore is ARMED in _advanceHalf and
+//  must survive the role swap to run across the next stance phase (mirrors
+//  _resetCompliance, which is likewise never called at the boundary).
+// ---------------------------------------------------------------------------
+void GaitController::_resetHRestore() {
+    _hRestoreActive         = false;
+    _hRestoreSide           = _swingSide;
+    _hRestoreDeficitMm      = 0.0f;
+    _state.hRestoreActive   = false;
+    _state.hRestoreOffsetMm = 0.0f;
+}
+
+// ---------------------------------------------------------------------------
+//  _updateHRestore — per-tick h-restore cleanup + telemetry refresh.
+//
+//  When a restore is active the just-planted leg's h is held below
+//  stanceHeightMm by a deficit that decays to zero over the new stance leg's
+//  phase, gated on _halfPhase, completing at hRestoreCompleteFrac (foot ~under
+//  the hip). This clears the restore once that phase is reached and refreshes
+//  the telemetry mirror with the offset that WILL be applied this tick.
+//
+//  Phase-based, NOT time-based: the deficit must track the SAME _halfPhase
+//  that _buildFootTarget feeds the restoring leg, so the telemetry and the
+//  applied offset agree exactly. Runs once per update() beside
+//  _updateCompliance(), ahead of the estop early-return so it stays phase-clean
+//  on every path.
+// ---------------------------------------------------------------------------
+void GaitController::_updateHRestore() {
+    if (!_hRestoreActive) {
+        _state.hRestoreActive   = false;
+        _state.hRestoreOffsetMm = 0.0f;
+        return;
+    }
+
+    const float frac = constrain(_cfg.hRestoreCompleteFrac, 0.05f, 1.0f);
+
+    // Restore completes once the new stance leg's phase reaches frac — the
+    // foot is ~under the hip, so the deficit is fully recovered.
+    if (_halfPhase >= frac) {
+        _hRestoreActive         = false;
+        _hRestoreDeficitMm      = 0.0f;
+        _state.hRestoreActive   = false;
+        _state.hRestoreOffsetMm = 0.0f;
+        return;
+    }
+
+    // Telemetry mirror: the offset that WILL be applied to the restoring leg
+    // this tick (<= 0), computed identically to the _buildFootTarget block.
+    const float p    = constrain(_halfPhase / frac, 0.0f, 1.0f);
+    const float ease = p * p * (3.0f - 2.0f * p);          // smoothstep
+    const float restoreOffset = _hRestoreDeficitMm * (1.0f - ease);
+    _state.hRestoreActive   = true;
+    _state.hRestoreOffsetMm = -restoreOffset;
+}
+
+// ---------------------------------------------------------------------------
 //  _resetTrimSuppression — zero the touchdown trim-suppression state.
 //
 //  Called on mode entry (start) and init. NOT called at half-cycle
@@ -223,6 +282,7 @@ void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController*
     memset(_stepRingSwingMs,  0, sizeof(_stepRingSwingMs));
     _clearTouchdownLatch();
     _resetCompliance();
+    _resetHRestore();
     _resetHeelStrike();
     _resetTrimSuppression();
     _state.touchdownSide = 0;   // not cleared by _clearTouchdownLatch; explicit on init
@@ -315,6 +375,7 @@ void GaitController::start(GaitMode mode) {
     _stepRingCount    = 0;
     _clearTouchdownLatch();
     _resetCompliance();
+    _resetHRestore();
     _resetHeelStrike();
     _resetTrimSuppression();
     _triggerShiftForSwing(Side::LEFT);  // begin LEFT-swing shift immediately
@@ -789,19 +850,21 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
     //
     // Normal trajectory runs for all other cases (latch not set, or stance leg).
     if (isSwing && _touchdownLocked) {
-        // X stays frozen (existing logic, applied below)
-        // Smoothly ramp h from the detection snapshot to stanceHeight over
-        // the post-detection portion of the half-cycle using smoothstep.
-        const float remaining = 1.0f - _touchdownLockedPhase;
-        float h_target = _cfg.stanceHeightMm;
-        if (remaining > 1e-3f) {
-            const float u = (localPhase - _touchdownLockedPhase) / remaining;
-            const float t_norm = constrain(u, 0.0f, 1.0f);
-            const float s = t_norm * t_norm * (3.0f - 2.0f * t_norm);
-            h_target = _touchdownLockedH_mm
-                     + (_cfg.stanceHeightMm - _touchdownLockedH_mm) * s;
-        }
-        t.h_sagittal_mm = h_target;
+        // X stays frozen (applied below as locked*strideScale).
+        // Freeze h at the touchdown snapshot, expressed as a deficit below
+        // stanceHeight and scaled by strideScale so it fades EXACTLY like the
+        // x-freeze (t.x_mm += _touchdownLockedX_mm * strideScale) and every
+        // other gait-transient offset:
+        //   strideScale == 1 (active gait): h == _touchdownLockedH_mm — the foot
+        //       is held at the touchdown snapshot; re-extending a planted foot
+        //       mid-swing would brake the body backward. In-gait re-extension is
+        //       deferred to the next stance phase by the h-restore block below.
+        //   strideScale 1→0 (STOP ramp): h eases smoothly back to stanceHeight,
+        //       so gait termination produces no h discontinuity on EITHER leg.
+        //   strideScale == 0 (IDLE / standing-stance submit): freeze contributes
+        //       nothing — the idle pose can never inherit a frozen height.
+        const float freezeDeficit = _cfg.stanceHeightMm - _touchdownLockedH_mm;
+        t.h_sagittal_mm = _cfg.stanceHeightMm - freezeDeficit * strideScale;
     } else {
         const float liftMm = isSwing ? (swingFrac * _cfg.stepHeightMm) : 0.0f;
         t.h_sagittal_mm = _cfg.stanceHeightMm - liftMm;
@@ -815,6 +878,31 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
     // exactly 0 whenever no compliance event is active, so this line is a
     // no-op on every normal tick.
     t.h_sagittal_mm += _complianceOffsetMm;
+
+    // H-restore — deferred swing-leg stance-height restoration. The leg that
+    // latched a touchdown last swing had its h frozen below stanceHeightMm;
+    // _advanceHalf armed a restore on it, and it is now the stance leg. Re-
+    // extend it back to full stance height across this stance phase, gated on
+    // localPhase, so the planted foot eases down to nominal instead of snapping
+    // at the role swap (the snap produced a backward braking impulse). Applied
+    // to the restoring leg only — the new swing leg runs its normal trajectory.
+    // At localPhase 0 the offset equals the full deficit, so the commanded h is
+    // exactly _touchdownLockedH_mm (continuous with the frozen value at the end
+    // of the previous half); at localPhase >= frac the offset is 0.
+    //
+    // strideScale gates the offset exactly like the freeze above and like
+    // stride / capture / comLatTrim: full in active gait (strideScale==1), faded
+    // through the STOP ramp (1→0), and ZERO in IDLE / standing-stance submits
+    // (strideScale==0). The strideScale==0 case is what makes the idle pose
+    // structurally immune to a lingering restore — the offset cannot reach the
+    // feet when no gait cycle is running, independent of _hRestoreActive.
+    if (_hRestoreActive && _hRestoreSide == (isRight ? Side::RIGHT : Side::LEFT)) {
+        const float frac = constrain(_cfg.hRestoreCompleteFrac, 0.05f, 1.0f);
+        const float p    = constrain(localPhase / frac, 0.0f, 1.0f);
+        const float ease = p * p * (3.0f - 2.0f * p);          // smoothstep
+        const float restoreOffset = _hRestoreDeficitMm * (1.0f - ease) * strideScale;
+        t.h_sagittal_mm -= restoreOffset;   // phase 0: -deficit (==frozen); phase>=frac: 0
+    }
 
     // Stage 3: smoothstep stride applied to BOTH legs.
     //   Swing  leg: x = (s - 0.5) × L + captureReal  → starts at -L/2, lands at +L/2
@@ -1117,6 +1205,19 @@ void GaitController::_advanceHalf() {
     // the active side, and the release belongs to the leg that just landed.
     _startHeelStrikeRelease();
 
+    // H-restore arming: if this swing latched a touchdown with a frozen h
+    // below stanceHeightMm, arm a restore on the leg that just planted (the
+    // current _swingSide, BEFORE the flip below) so its h re-extends smoothly
+    // across the upcoming stance phase instead of snapping at the role swap.
+    // Must run before _swingSide flips and before _clearTouchdownLatch() clears
+    // _touchdownLocked. If no touchdown was detected this swing, _touchdownLocked
+    // is false → no restore armed; the leg ran its full trajectory and is
+    // already at stanceHeight.
+    if (_cfg.hRestoreEnabled && _touchdownLocked && _hRestoreDeficitMm > 0.0f) {
+        _hRestoreActive = true;
+        _hRestoreSide   = _swingSide;   // the leg that just planted
+    }
+
     _swingSide        = otherSide(_swingSide);
     _halfPhase        = 0.0f;
     _state.cycleXDispl_mm = 0.0f;
@@ -1182,6 +1283,12 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // the estop early-return so the decay is purely time-based and continues
     // through any FSM path; _buildFootTarget reads _complianceOffsetMm.
     _updateCompliance();
+
+    // H-restore — phase-clean cleanup + telemetry refresh once per tick. Placed
+    // beside _updateCompliance and before the estop early-return so the restore
+    // bookkeeping stays consistent on every path; _buildFootTarget applies the
+    // offset to the restoring leg from _hRestoreDeficitMm / _hRestoreSide.
+    _updateHRestore();
 
     // Heel-strike — refresh telemetry mirror and run release-complete cleanup
     // once per tick. Mirrors the placement of _updateCompliance: before the
@@ -1458,6 +1565,11 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _state.touchdownSwingVelX_mm_s = dxdt_mm_s;
             _touchdownLockedH_mm  = _cfg.stanceHeightMm
                                   - _swingFrac(_halfPhase) * _cfg.stepHeightMm;
+            // H-restore: record the deficit between the frozen touchdown h and
+            // full stance height. _advanceHalf arms the restore from this (when
+            // > 0) so the just-planted leg re-extends across the next stance
+            // phase instead of snapping at the role swap. Not armed here.
+            _hRestoreDeficitMm = _cfg.stanceHeightMm - _touchdownLockedH_mm;  // >= 0
             // Lateral-capture freeze: capture the live ramped+clamped value
             // BEFORE flipping _touchdownLocked, because _latCaptureOffsetMm()
             // short-circuits to _touchdownLockedY_mm once the latch is set.
@@ -1573,24 +1685,22 @@ void GaitController::update(float dt_s, const IMUState& imuState,
                                (fabsf(_ws->getState().progress) < 0.01f
                                 && !_ws->getState().ramping);
         if (elapsed >= GAIT_STOP_RAMP_MS && wsSettled) {
+            // Single canonical IDLE entry. Defer to start(GaitMode::IDLE) so the
+            // FULL deterministic reset runs — touchdown latch, W4 compliance,
+            // h-restore, heel-strike, trim suppression, every _state telemetry
+            // field, and WeightShift centering — exactly as the recovery-
+            // completion path already does (see _runRecoveryStep COMPLETE).
+            //
+            // This replaces a hand-rolled partial reset that cleared only a
+            // subset of _state and left gait-transient latch/offset state
+            // (_touchdownLocked, _hRestoreActive, _hRestoreDeficitMm, ...) set
+            // on entry to IDLE — the root cause of the idle-pose leakage. With
+            // one reset path, STOP from ANY phase or side converges to the same
+            // idle pose. The swing leg has already been ramped to stanceHeight
+            // by the strideScale-faded freeze/restore above, so this is a clean
+            // hand-off with no h discontinuity.
             Serial.println("[GaitCtrl] STOP complete — entering IDLE.");
-            _state.mode      = GaitMode::IDLE;
-            _state.running   = false;
-            _subState        = StepSubState::WAIT_SHIFT;
-            _state.subState  = _subState;
-            _swingSide       = Side::LEFT;
-            _halfPhase       = 0.0f;
-            _stopSwingFrac   = 0.0f;
-            _stopStartMs     = 0;
-            _stopSwingSide   = Side::LEFT;
-            _state.phase     = 0.0f;
-            _state.wsProgress = wsSettled ? 0.0f : _state.wsProgress;
-            _state.poseHold  = 0;
-            _state.captureOffsetMm = 0.0f;
-            _state.latCaptureMm    = 0.0f;
-            _state.comLatTrimMm    = 0.0f;
-            _state.cycleXDispl_mm  = 0.0f;
-            _state.fwdComProgressionMm = 0.0f;
+            start(GaitMode::IDLE);
         }
         return;
     }
@@ -1961,6 +2071,9 @@ void GaitController::triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad) 
     // trajectory anyway. Reset it on entry purely so the telemetry panel does
     // not show a stale decay carried over from the interrupted gait swing.
     _resetCompliance();
+    // Recovery sets h_sagittal_mm directly and must not inherit a stale h-
+    // restore armed by the interrupted gait swing — clear it on entry.
+    _resetHRestore();
     // Recovery uses a separate trajectory (open-loop directional catch step),
     // not the engage/release model. Wipe heel-strike state so a release in
     // progress when the disturbance hit does not leak into the recovery ankle.

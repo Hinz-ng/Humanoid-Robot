@@ -350,6 +350,24 @@ struct GaitConfig {
     uint32_t complianceDecayMs = GAIT_TD_COMPLIANCE_DECAY_MS_DEFAULT; // WS: "decayMs"
 
     // -----------------------------------------------------------------------
+    // H-restore — deferred swing-leg stance-height restoration.
+    //
+    // After an early touchdown the swing leg's h is frozen at the touchdown
+    // snapshot (see the lift-freeze block in _buildFootTarget). Re-extending
+    // it back to stanceHeightMm in-swing would push a planted foot that is
+    // already ahead of the CoM down/forward, producing a backward braking
+    // impulse. Instead the frozen deficit is restored across the NEXT stance
+    // phase, gated on the new stance leg's _halfPhase, surviving the role swap
+    // with no h discontinuity.
+    //
+    //   hRestoreEnabled      — master enable. Default ON. Toggle OFF for A/B
+    //                          baseline runs.
+    //   hRestoreCompleteFrac — new-half phase at which the restore completes
+    //                          (foot ~under the hip). Clamped (0.05, 1.0].
+    bool  hRestoreEnabled      = GAIT_H_RESTORE_ENABLED_DEFAULT;       // WS: "hRestore"
+    float hRestoreCompleteFrac = GAIT_H_RESTORE_COMPLETE_FRAC_DEFAULT; // WS: "hRestoreFrac"
+
+    // -----------------------------------------------------------------------
     // Touchdown trim suppression — phase-gate of the W2/W5 lateral CoM trim.
     //
     // The foot-strike at touchdown injects a short torso-roll transient into
@@ -620,6 +638,19 @@ struct GaitState {
     // ------------------------------------------------------------------
     bool    complianceActive   = false;
     float   complianceOffsetMm = 0.0f;
+
+    // ------------------------------------------------------------------
+    // H-restore telemetry. Telemetry-only — the control stack applies the
+    // offset directly in _buildFootTarget from the private members below.
+    //
+    //   hRestoreActive    true while a restore is in progress (restoring leg
+    //                     still below stanceHeightMm by a decaying deficit).
+    //   hRestoreOffsetMm  signed stance-height offset that WILL be applied to
+    //                     the restoring leg this tick (<= 0; subtracted from
+    //                     h_sagittal_mm). 0 when no restore is active.
+    // ------------------------------------------------------------------
+    bool    hRestoreActive   = false;
+    float   hRestoreOffsetMm = 0.0f;
 
     // ------------------------------------------------------------------
     // Touchdown trim-suppression telemetry. Telemetry-only — the control
@@ -901,6 +932,36 @@ private:
     // (start), init, and recovery entry — NOT at half-cycle boundaries, where
     // the offset must be allowed to keep decaying.
     void _resetCompliance();
+
+    // -----------------------------------------------------------------------
+    // H-restore — deferred swing-leg stance-height restoration state.
+    //
+    // Armed in _advanceHalf() when the just-ended swing latched a touchdown
+    // with a frozen h below stanceHeightMm. The restore then runs across the
+    // NEXT stance phase on the just-planted leg, gated on _halfPhase, and is
+    // deliberately NOT cleared at the half-cycle boundary (mirrors W4
+    // compliance): it must survive the role swap that arms it.
+    //
+    //   _hRestoreActive     true while a restore is in progress.
+    //   _hRestoreSide       the leg being restored (the leg that just planted).
+    //   _hRestoreDeficitMm  stanceHeightMm - frozen h at touchdown (>= 0). The
+    //                       offset applied each tick decays from this to 0.
+    // -----------------------------------------------------------------------
+    bool  _hRestoreActive    = false;
+    Side  _hRestoreSide      = Side::LEFT;
+    float _hRestoreDeficitMm = 0.0f;
+
+    // Per-tick: clear the restore once the gated phase reaches
+    // hRestoreCompleteFrac, and refresh the telemetry mirror (the offset that
+    // WILL be applied to the restoring leg this tick; 0 when inactive). Call
+    // once per update() beside _updateCompliance(). NOT cleared at half-cycle
+    // boundaries — the restore must survive _advanceHalf, like W4 compliance.
+    void _updateHRestore();
+
+    // Zero the h-restore state + telemetry mirror. Call on mode entry (start),
+    // init, and recovery entry — recovery sets h directly and must not inherit
+    // a stale restore.
+    void _resetHRestore();
 
     // -----------------------------------------------------------------------
     // Heel-strike rollover — decoupled-timer release state.

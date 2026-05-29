@@ -628,7 +628,12 @@ void WebComm::broadcastGaitState() {
         "stepMs=%lu,waitMs=%lu,swingMs=%lu,stabMsMeas=%lu,postCtMs=%lu,"
         "lastSide=%d,cadHz=%.2f,cadSpm=%.1f,"
         "meanStepMs=%.0f,meanCadHz=%.2f,meanStepL=%.0f,meanStepR=%.0f,"
-        "meanSwingL=%.0f,meanSwingR=%.0f",
+        "meanSwingL=%.0f,meanSwingR=%.0f,"
+        // H-restore — deferred swing-leg stance-height restoration. Config
+        // echoes (enable / completion fraction) + live telemetry (hRestoreOff
+        // = signed offset applied to the restoring leg this tick (<=0),
+        // hRestoreAct = restore in progress).
+        "hRestore=%d,hRestoreFrac=%.2f,hRestoreOff=%.2f,hRestoreAct=%d",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -772,7 +777,12 @@ void WebComm::broadcastGaitState() {
         s.meanStepPeriodL,
         s.meanStepPeriodR,
         s.meanSwingMsL,
-        s.meanSwingMsR
+        s.meanSwingMsR,
+        // H-restore — config echoes + live telemetry.
+        static_cast<int>(_gaitCtrl->getConfig().hRestoreEnabled),
+        _gaitCtrl->getConfig().hRestoreCompleteFrac,
+        s.hRestoreOffsetMm,
+        static_cast<int>(s.hRestoreActive)
     );
     _sendFiltered(buf);
 }
@@ -2058,6 +2068,16 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             // boundary; arm next direction immediately.
                             cfg.skipStabilizeNone = (val > 0.5f);
                         }
+                        else if (key == "hRestore") cfg.hRestoreEnabled = (val > 0.5f);
+                        else if (key == "hRestoreFrac") {
+                            // Deferred swing-leg h-restore completion fraction.
+                            // (0.05, 1.0] matches the clamp inside
+                            // _updateHRestore()/_buildFootTarget. The restore
+                            // completes (just-planted leg back at full stance
+                            // height) by this new-half phase; default 0.5 puts
+                            // it ~under the hip. Lower = quicker re-extension.
+                            cfg.hRestoreCompleteFrac = constrain(val, 0.05f, 1.0f);
+                        }
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
@@ -2066,7 +2086,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                               "stepH=%.1f mm  stanceH=%.1f mm  stepLen=%.1f mm  capEn=%d capGain=%.2f capMax=%.1f  "
                               "dwell=%lu waitMax=%lu comLat=%.1f trP=%.4f trR=%.4f  "
                               "swingApex=%.3f comLatTrim=%d comLatGain=%.2f comLatMax=%.1f "
-                              "comLatKd=%.3f comLatRateLpf=%.2f\n",
+                              "comLatKd=%.3f comLatRateLpf=%.2f  hRestore=%d hRestoreFrac=%.2f\n",
                               cfg.phaseRateHz, cfg.liftGateThreshold, cfg.wsThresholdRad,
                               cfg.stepHeightMm, cfg.stanceHeightMm, cfg.stepLengthMm,
                               (int)cfg.captureEnabled, cfg.captureGain, cfg.captureOffsetMaxMm,
@@ -2074,7 +2094,8 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                               cfg.comLateralGateMm, cfg.torsoPitchNeutralRad, cfg.torsoRollNeutralRad,
                               cfg.swingApexFrac, (int)cfg.comLatTrimEnabled,
                               cfg.comLatTrimGain, cfg.comLatTrimMaxMm,
-                              cfg.comLatTrimKd, cfg.comLatTrimRateLpfAlpha);
+                              cfg.comLatTrimKd, cfg.comLatTrimRateLpfAlpha,
+                              (int)cfg.hRestoreEnabled, cfg.hRestoreCompleteFrac);
             }
         }
 

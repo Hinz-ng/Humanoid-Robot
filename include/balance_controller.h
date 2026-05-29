@@ -253,11 +253,10 @@ private:
     static float _computeEffectiveKp(float absError, float baseKp,
                                      float threshold, float boostFactor);
 
-    // Submits the WeightShift / swing-leveler ankle-roll bias — the only
-    // joint-space leg output BalanceController still owns. Leg pitch/roll
-    // balance is task-space (computeCorrection → dx_mm/dy_mm); torso pitch/roll
-    // are submitted directly by update().
-    void _submitAnkleRollBias();
+    // Ankle-roll ownership moved to GaitController (consolidation refactor):
+    // it composes flat-foot + CoM-shift bias + swing-prep + leveler in one
+    // SOURCE_GAIT submission. BalanceController no longer submits ankle roll;
+    // its leg authority is task-space only (computeCorrection → dx_mm/dy_mm).
 
     // Task-space filter state.
     BalanceCorrection _lastCorrection;

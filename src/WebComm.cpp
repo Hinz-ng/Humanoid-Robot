@@ -547,7 +547,7 @@ void WebComm::broadcastGaitState() {
                                       ? _swingLeveler->getState()
                                       : SwingFootLevelerState{};
 
-    char buf[2048];
+    char buf[2304];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,stanceInset=%.1f,"
@@ -623,6 +623,11 @@ void WebComm::broadcastGaitState() {
         // release ms) + live applied bias and release-active flag. Sign is
         // intrinsic to the helper (always dorsiflex/negative), not transported.
         "heelStrike=%d,heelDeg=%.1f,heelGate=%.2f,heelRelMs=%lu,heelBias=%.2f,heelRelAct=%d,heelSide=%d,"
+        // Swing-foot ankle-roll preparation (consolidation refactor) — config
+        // echoes (enable / gain / front-load frac) + live applied swing-prep
+        // bias, the migrated CoM-shift bias on the grounded leg, and the swing
+        // side index (0=LEFT,1=RIGHT).
+        "swingPrep=%d,swingPrepGain=%.2f,swingPrepFrac=%.2f,swingPrepBias=%.2f,comShiftRoll=%.2f,swingPrepSide=%d,"
         "stabilizeMs=%lu,skipNone=%d,"
         // Per-step timing (updated once per footfall, zero until first complete step).
         "stepMs=%lu,waitMs=%lu,swingMs=%lu,stabMsMeas=%lu,postCtMs=%lu,"
@@ -761,6 +766,13 @@ void WebComm::broadcastGaitState() {
         s.heelStrikeBiasDeg,
         static_cast<int>(s.heelStrikeReleaseActive),
         static_cast<int>(s.heelStrikeActiveSide),
+        // Swing-foot ankle-roll preparation — config echoes + live telemetry.
+        static_cast<int>(_gaitCtrl->getConfig().swingPrepEnabled),
+        _gaitCtrl->getConfig().swingPrepGain,
+        _gaitCtrl->getConfig().swingPrepCompleteFrac,
+        s.swingPrepRollBiasDeg,
+        s.comShiftRollBiasDeg,
+        static_cast<int>(s.swingPrepSide),
         (unsigned long)_gaitCtrl->getConfig().stabilizeMs,
         (int)_gaitCtrl->getConfig().skipStabilizeNone,
         // Per-step timing fields.
@@ -2056,6 +2068,18 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         // into _heelStrikeBiasDeg() as intrinsically dorsiflex
                         // (negative). Removed to prevent confusion — confirmed
                         // on hardware, not configurable.
+                        else if (key == "swingPrep") cfg.swingPrepEnabled = (val > 0.5f);
+                        else if (key == "swingPrepGain") {
+                            // Swing-foot ankle-roll preparation gain: fraction of
+                            // ankle_shift_deg used as the future-stance target.
+                            // 0 = no-op. Clamp [0, 1.5].
+                            cfg.swingPrepGain = constrain(val, 0.0f, 1.5f);
+                        }
+                        else if (key == "swingPrepFrac") {
+                            // Front-load completion fraction (0.05, 1.0]. 1.0 =
+                            // prep completes at touchdown; lower finishes earlier.
+                            cfg.swingPrepCompleteFrac = constrain(val, 0.05f, 1.0f);
+                        }
                         else if (key == "stabilizeMs") {
                             // 0..1000 ms inter-step hold. 0 = STABILIZING
                             // collapses to ~1 tick (maximally continuous).

@@ -60,9 +60,9 @@ constexpr float GAIT_PHASE_RATE_HZ          = 0.7f;  // cycles/sec
 // TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
 // before the stance leg is loaded, so less clearance is needed to avoid drag.
 // If drag returns at 15 mm, the root cause is the gate, not step height.
-constexpr float GAIT_STEP_HEIGHT_MM         = 10.0f;  // swing foot clearance
+constexpr float GAIT_STEP_HEIGHT_MM         = 12.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
-constexpr float GAIT_STEP_LENGTH_MM         = 30.0f;  // Phase 3+; forward stride
+constexpr float GAIT_STEP_LENGTH_MM         = 35.0f;  // Phase 3+; forward stride
 
 // Session neutral-trim safety gate (deg). JointModel::captureSessionNeutral()
 // rejects the whole capture if any joint is further than this from its factory
@@ -85,7 +85,7 @@ constexpr float NEUTRAL_TRIM_MAX_DEG = 8.0f;
 // TUNING NOTE 2026-05-20: hardware testing found a strongly front-loaded
 // apex (0.1) noticeably better than the symmetric 0.5 — the long, slow
 // descent visibly reduces touchdown disturbance. Default lowered 0.5 → 0.15.
-constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.1f;
+constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.2f;
 
 // Horizontal stride completion fraction (W-stride-frontload). _buildFootTarget()
 // time-warps localPhase into [0, strideCompleteFrac] for the SWING leg's
@@ -104,7 +104,7 @@ constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.1f;
 // Recommended experimental range 0.5–0.7. At 0.6 the swing foot reaches +L/2
 // at localPhase=0.6 and holds horizontally stationary until touchdown at ~0.7+.
 // Clamped to (0.05, 1.0] in GAIT_TUNE.
-constexpr float GAIT_STRIDE_COMPLETE_FRAC_DEFAULT = 0.1f;
+constexpr float GAIT_STRIDE_COMPLETE_FRAC_DEFAULT = 0.2f;
 
 // WeightShift swing-bias preload completion fraction. The swing-side ankle-roll
 // bias is masked by (1 - liftFrac); that mask only reaches full magnitude (the
@@ -122,6 +122,27 @@ constexpr float GAIT_STRIDE_COMPLETE_FRAC_DEFAULT = 0.1f;
 // reach full swing bias halfway through the descent. Clamped to (0.05, 1.0] in
 // WEIGHT_SHIFT_TUNE.
 constexpr float GAIT_WS_SWING_PRELOAD_COMPLETE_FRAC_DEFAULT = 1.0f;
+
+// Swing-foot ankle-roll PREPARATION (support-transition prep). Supersedes the
+// WeightShift swing-bias front-load above: instead of masking the CoM-shift
+// bias on the airborne foot, GaitController drives the swing foot's ankle roll
+// toward the orientation it will need as the NEXT stance foot, reaching it
+// before touchdown. Composed in the single ankle-roll summation in
+// _submitFootTargetIK; see GaitController::_swingPrepRollBias.
+//
+//   target = swingPrepGain * ankle_shift_deg * futureStanceSign
+//   d      = clamp((1 - liftFrac) / swingPrepCompleteFrac, 0, 1)
+//   bias   = target * (d*d*(3 - 2*d))            // smoothstep, zero-slope ends
+//
+// ENABLED default true but GAIN default 0.0 → the term is identically 0, so the
+// shipped config is a bit-identical no-op. Raise gain toward ~0.5–1.0 at runtime
+// after confirming sign on hardware. The swing-prep envelope is 0 through
+// lift-off and the rise, then ramps monotonically across the DESCENT (apex →
+// touchdown). COMPLETE_FRAC 1.0 = completes at touchdown; lower toward 0.5 to
+// complete the outward rotation earlier in the descent. Clamped (0.05, 1.0].
+constexpr bool  GAIT_SWING_PREP_ENABLED_DEFAULT       = true;
+constexpr float GAIT_SWING_PREP_GAIN_DEFAULT          = 0.3f;
+constexpr float GAIT_SWING_PREP_COMPLETE_FRAC_DEFAULT = 0.5f;
 
 // TUNING NOTE: Reduced from 0.15 (~8.5°) → 0.10 (~5.7°). The previous value
 // was chosen conservatively for Phase 2 diagnostics. At 0.10 rad the gate opens
@@ -151,7 +172,7 @@ constexpr float GAIT_STANCE_HEIGHT_MM           = 185.0f;
 // in ~2 mm steps at runtime via CMD:GAIT_TUNE:stanceInset_mm=...
 // Sign is UNVERIFIED until confirmed on hardware in IDLE: a positive
 // inset must move both feet toward the midline.
-constexpr float GAIT_STANCE_INSET_MM            = 0.0f;
+constexpr float GAIT_STANCE_INSET_MM            = 5.0f;
 
 // Static fore-aft offset applied to every FootTarget.x_mm built by GaitController.
 // Compensates for CoM ≠ hip-pitch axis: with x_mm=0 the foot lands directly under
@@ -213,7 +234,7 @@ constexpr uint32_t GAIT_WAIT_SHIFT_MAX_MS_DEFAULT = 1500;
 // before lift, with margin for IIR settling and sensor noise. Setting
 // too close to lateral_shift_mm makes the gate brittle to drift; setting
 // too low defeats the point of observation.
-constexpr float GAIT_COM_LATERAL_GATE_MM_DEFAULT = 8.0f;
+constexpr float GAIT_COM_LATERAL_GATE_MM_DEFAULT = 5.0f;
 
 // ============================================================
 // LATERAL CoM TRIM  (W2 — continuous foot-placement correction)
@@ -228,7 +249,7 @@ constexpr float GAIT_COM_LATERAL_GATE_MM_DEFAULT = 8.0f;
 // 0.30 corrects ~1/3 of a steady observed displacement. Start conservative;
 // raise toward 0.6 only after confirming the IK clamp rate does not rise.
 // The cap bounds a noisy-IMU spike from over-driving the feet in one tick.
-constexpr float GAIT_COM_LAT_TRIM_GAIN_DEFAULT   = 0.20f;
+constexpr float GAIT_COM_LAT_TRIM_GAIN_DEFAULT   = 0.0f;
 constexpr float GAIT_COM_LAT_TRIM_MAX_MM_DEFAULT = 20.0f;
  
 // ------------------------------------------------------------
@@ -312,7 +333,7 @@ constexpr float GAIT_CAPTURE_OFFSET_MAX_MM = 15.0f;
 // combination. Matches the sagittal cap so both axes scale together.
 // Re-tune after first hardware run; do not raise blindly.
 constexpr bool  GAIT_LAT_CAPTURE_ENABLED_DEFAULT = true;
-constexpr float GAIT_LAT_CAPTURE_GAIN_DEFAULT    = 0.5f;
+constexpr float GAIT_LAT_CAPTURE_GAIN_DEFAULT    = 1.0f;
 constexpr float GAIT_LAT_CAPTURE_OFFSET_MAX_MM   = 30.0f;
 
 // ============================================================
@@ -456,7 +477,7 @@ constexpr uint32_t FOOT_IMPACT_REFRACTORY_MS_DEFAULT = 75;
 // smears the impulse across tens of ms instead of one tick; too short and
 // the recovery itself becomes a second transient, too long and it bleeds
 // into the next half-cycle's load transfer.
-constexpr bool     GAIT_TD_COMPLIANCE_ENABLED_DEFAULT  = true;
+constexpr bool     GAIT_TD_COMPLIANCE_ENABLED_DEFAULT  = false;
 constexpr float    GAIT_TD_COMPLIANCE_DEPTH_MM_DEFAULT = 2.0f;   // mm of yield
 constexpr uint32_t GAIT_TD_COMPLIANCE_DECAY_MS_DEFAULT = 200;    // recovery time
 

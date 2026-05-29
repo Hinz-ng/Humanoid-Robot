@@ -2268,6 +2268,67 @@
                 </div>
             </div>
 
+            <!-- ═══════════════════════════════════════════════════════ -->
+            <!-- SWING-FOOT ANKLE-ROLL PREP (support-transition prep)    -->
+            <!-- ═══════════════════════════════════════════════════════ -->
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Swing-foot roll prep</span>
+                    <span class="tune-val" id="tvGaitSwingPrep">ON</span>
+                </div>
+                <label class="form-label-inline">
+                    <input type="checkbox" id="cbGaitSwingPrep"
+                           onchange="sendGaitKey('swingPrep', this.checked ? 1 : 0); document.getElementById('tvGaitSwingPrep').textContent = this.checked ? 'ON' : 'OFF'">
+                    Enable swing-foot ankle-roll preparation
+                </label>
+                <div class="small-note">
+                    While airborne, rotates the swing foot toward the ankle-roll
+                    orientation it will need as the NEXT stance foot, so it lands
+                    prepared for support transfer. Master enable; the gain below is
+                    the real no-op switch (gain 0 = no motion).
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Swing-prep gain</span>
+                    <span class="tune-val" id="tvGaitSwingPrepGain">0.00</span>
+                </div>
+                <input type="range" id="slGaitSwingPrepGain" min="0.0" max="1.5" step="0.05" value="0.0"
+                       oninput="updateGaitLabel('swingPrepGain', this.value); sendGaitKey('swingPrepGain', parseFloat(this.value).toFixed(2))">
+                <div class="small-note">
+                    Fraction of ankle_shift (Weight-Shift panel) used as the target
+                    future-stance attitude. 0 = no-op. Confirm sign on hardware before
+                    raising; start ~0.3 and increase toward 1.0.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Swing-prep complete frac</span>
+                    <span class="tune-val" id="tvGaitSwingPrepFrac">1.00</span>
+                </div>
+                <input type="range" id="slGaitSwingPrepFrac" min="0.05" max="1.0" step="0.05" value="1.0"
+                       oninput="updateGaitLabel('swingPrepFrac', this.value); sendGaitKey('swingPrepFrac', parseFloat(this.value).toFixed(2))">
+                <div class="small-note">
+                    Front-load: 1.0 = full prep reached only at touchdown; lower toward
+                    0.5 to reach the future-stance attitude earlier in the descent
+                    (more time for slow ankle servos before contact).
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Swing-prep bias applied (deg)</span>
+                    <span class="tune-val" id="tvGaitSwingPrepBias">0.00</span>
+                </div>
+                <div class="small-note">
+                    Live ankle-roll prep on the swing leg this tick (signed toward the
+                    future-stance orientation). Migrated CoM-shift bias on the grounded
+                    leg: <span class="tune-val" id="tvGaitComShiftRoll">0.00</span>°.
+                </div>
+            </div>
+
             <div class="gait-tune-row">
                 <div class="tune-header">
                     <span>Stabilize hold (ms)</span>
@@ -4005,6 +4066,8 @@ const _gaitTuneMap = {
     heelDeg:      { el: "tvGaitHeelDeg",    decimals: 1 },
     heelGate:     { el: "tvGaitHeelGate",   decimals: 2 },
     heelRelMs:    { el: "tvGaitHeelRelMs",  decimals: 0 },
+    swingPrepGain:{ el: "tvGaitSwingPrepGain", decimals: 2 },
+    swingPrepFrac:{ el: "tvGaitSwingPrepFrac", decimals: 2 },
     stabilizeMs:  { el: "tvGaitStab",       decimals: 0 },
     comLatGain:  { el: "tvGaitComLatGain", decimals: 2 },
     comLatMax:   { el: "tvGaitComLatMax",  decimals: 0 },
@@ -4505,6 +4568,22 @@ function parseGaitState(payload) {
                                                "IDLE";
             set("tvGaitHeelPhase", phase);
         }
+        // Swing-foot ankle-roll prep — config echoes sync sliders/toggle; live
+        // swing-prep + migrated CoM-shift biases are readouts.
+        if (v["swingPrep"] !== undefined) {
+            const en = (v["swingPrep"] === "1");
+            const cb = document.getElementById("cbGaitSwingPrep");
+            if (cb) cb.checked = en;
+            set("tvGaitSwingPrep", en ? "ON" : "OFF");
+        }
+        if (v["swingPrepGain"] !== undefined)
+            _syncSlider("slGaitSwingPrepGain", "tvGaitSwingPrepGain", parseFloat(v["swingPrepGain"]), 2);
+        if (v["swingPrepFrac"] !== undefined)
+            _syncSlider("slGaitSwingPrepFrac", "tvGaitSwingPrepFrac", parseFloat(v["swingPrepFrac"]), 2);
+        if (v["swingPrepBias"] !== undefined)
+            set("tvGaitSwingPrepBias", parseFloat(v["swingPrepBias"]).toFixed(2));
+        if (v["comShiftRoll"] !== undefined)
+            set("tvGaitComShiftRoll", parseFloat(v["comShiftRoll"]).toFixed(2));
         if (v["stabilizeMs"] !== undefined)
             _syncSlider("slGaitStab", "tvGaitStab", parseFloat(v["stabilizeMs"]), 0);
         if (v["skipNone"] !== undefined) {

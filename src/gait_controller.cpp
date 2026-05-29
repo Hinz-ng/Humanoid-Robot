@@ -1021,6 +1021,104 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
 }
 
 // ---------------------------------------------------------------------------
+//  Ankle-roll composition (consolidation refactor + regression fix). One owner,
+//  one inspectable summation in _ankleRollDeg, called from _submitFootTargetIK.
+//
+//  Grounded legs crossfade flat-foot (sole flat) ↔ CoM-shift tilt by the shift
+//  authority. The airborne swing leg holds the inward CoM-shift tilt at lift-off
+//  and transitions outward toward its future-stance orientation over the
+//  descent (swing-prep). See header + GAIT_SWING_PREP_* in project_wide_defs.h.
+// ---------------------------------------------------------------------------
+
+// True only for the active normal-gait swing leg (recovery excluded — recovery
+// legs use the grounded crossfade path).
+bool GaitController::_isNormalSwing(Side side) const {
+    return _state.mode != GaitMode::RECOVERY_STEP
+        && _subState == StepSubState::SWINGING
+        && side == _swingSide;
+}
+
+// CoM-shift ankle-roll tilt for `side`, joint-command frame. Pure function of
+// WeightShift progress: reproduces the pre-refactor bias exactly
+// (right: -rightProgress·amp, left: +leftProgress·amp). This is the deliberate
+// inward tilt that acts as the lateral CoM-shift actuator.
+float GaitController::_comShiftTilt(Side side) const {
+    if (_ws == nullptr) return 0.0f;
+    const float amp = _ws->getConfig().ankle_shift_deg;
+    if (fabsf(amp) <= 0.01f) return 0.0f;
+    const WeightShiftState& s = _ws->getState();
+    const float prog    = (side == Side::RIGHT) ? s.right_progress : s.left_progress;
+    const float legSign = (side == Side::RIGHT) ? -1.0f : +1.0f;
+    return legSign * prog * amp;
+}
+
+// Shift authority a∈[0,1] for the grounded crossfade: 0 when the shift is
+// centered (sole flat, flat-foot wins), 1 at full shift (sole = comShift tilt).
+float GaitController::_shiftAuthority(Side side) const {
+    if (_ws == nullptr) return 0.0f;
+    const WeightShiftState& s = _ws->getState();
+    const float prog = (side == Side::RIGHT) ? s.right_progress : s.left_progress;
+    return constrain(fabsf(prog), 0.0f, 1.0f);
+}
+
+// The CoM-shift tilt `side` will carry as the NEXT stance foot. The next
+// half-cycle swaps the swing leg and selects the opposite ShiftDirection (see
+// _triggerShiftForSwing), so the next-stance progress target is the opposite of
+// the current swing-half value — i.e. opposite sign to _comShiftTilt's progress.
+float GaitController::_futureStanceTilt(Side side) const {
+    if (_ws == nullptr) return 0.0f;
+    const float amp = _ws->getConfig().ankle_shift_deg;
+    if (fabsf(amp) <= 0.01f) return 0.0f;
+    const float legSign          = (side == Side::RIGHT) ? -1.0f : +1.0f;
+    const float futureProgTarget = (_swingSide == Side::LEFT) ? -1.0f : +1.0f;
+    return legSign * futureProgTarget * amp;
+}
+
+// Swing-prep envelope: 0 through lift-off and the rise, then monotonic 0→1
+// across the descent (apex→touchdown). swingPrepCompleteFrac<1 completes the
+// outward rotation earlier in the descent.
+float GaitController::_swingPrepEnv() const {
+    const float apex    = constrain(_cfg.swingApexFrac, 0.05f, 0.95f);
+    const float descent = constrain((_halfPhase - apex) / (1.0f - apex), 0.0f, 1.0f);
+    const float frac    = constrain(_cfg.swingPrepCompleteFrac, 0.05f, 1.0f);
+    const float d       = constrain(descent / frac, 0.0f, 1.0f);
+    return d * d * (3.0f - 2.0f * d);   // smoothstep, zero-slope ends
+}
+
+// Applied outward swing-prep delta on the swing leg this tick (telemetry +
+// composition). 0 unless enabled, gain>0, and this is the active normal swing
+// leg. Positive g·env interpolates the swing ankle from the inward CoM-shift
+// tilt toward the future-stance orientation.
+float GaitController::_swingPrepDeltaDeg(Side side) const {
+    if (!_cfg.swingPrepEnabled || _cfg.swingPrepGain == 0.0f) return 0.0f;
+    if (!_isNormalSwing(side)) return 0.0f;
+    const float w = constrain(_cfg.swingPrepGain * _swingPrepEnv(), 0.0f, 1.0f);
+    return w * (_futureStanceTilt(side) - _comShiftTilt(side));
+}
+
+// Single ankle-roll composition site. flatFootDeg = the IK flat-foot solution
+// (-hip_roll) for this leg. Returns the joint-command ankle roll, clamped to
+// the joint soft limit.
+float GaitController::_ankleRollDeg(Side side, float flatFootDeg) const {
+    const float comShift = _comShiftTilt(side);
+    const float leveler  = _swingLeveler ? _swingLeveler->ankleRollBiasFor(side) : 0.0f;
+
+    float ankle;
+    if (_isNormalSwing(side)) {
+        // Airborne swing leg: base = inward CoM-shift tilt (continuous with the
+        // grounded value at lift-off, where a≈1), plus the outward swing-prep
+        // delta that ramps it toward future stance over the descent.
+        ankle = comShift + _swingPrepDeltaDeg(side);
+    } else {
+        // Grounded (incl. stance / WAIT_SHIFT / STABILIZING / recovery):
+        // crossfade flat-foot ↔ CoM-shift tilt by shift authority.
+        const float a = _shiftAuthority(side);
+        ankle = flatFootDeg * (1.0f - a) + comShift * a;
+    }
+    return constrain(ankle + leveler, -25.0f, 25.0f);
+}
+
+// ---------------------------------------------------------------------------
 //  _submitFootTargetIK — Resolve FootTarget through LegIK and submit angles.
 //
 //  Joint indices come from joint_config.h. Submission goes through SOURCE_GAIT
@@ -1097,11 +1195,14 @@ LegIKResult GaitController::_submitFootTargetIK(Side side,
     // submission is opt-in (only when pitch_enabled), so this submission
     // typically wins during leveler testing.
     //
-    // Roll leveler bias is NOT added here — it's plumbed through
-    // BalanceController via setSwingLevelerRollBias(), composed additively in
-    // _submitAnkleRollBias at SOURCE_BALANCE. Adding it here too would result
-    // in zero contribution (overwritten by SOURCE_BALANCE), or in the rare
-    // case the SOURCE_BALANCE path is silent, would double-count.
+    // Ankle ROLL — single owner, single inspectable summation (consolidation
+    // refactor). BalanceController no longer submits ankle roll, so SOURCE_GAIT
+    // is never overwritten on this joint. The composed value is:
+    //   flat-foot base (-hip_roll)            r.ankle_roll_deg
+    // + CoM-shift bias (stance/grounded leg)  _comShiftRollBias(side)
+    // + swing-prep toward future stance       _swingPrepRollBias(side)
+    // + closed-loop foot leveler              ankleRollBiasFor(side)
+    // then clamped to the ankle-roll joint soft limit (±25°, joint_config.cpp).
     // Joint-frame submissions. Servo-neutral drift is corrected globally by
     // JointModel's runtime session trim on the joint↔servo conversion — gait
     // submits raw IK angles and inherits the correction downstream.
@@ -1122,7 +1223,18 @@ LegIKResult GaitController::_submitFootTargetIK(Side side,
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::KNEE_PITCH),  r.knee_pitch_deg);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_PITCH), r.ankle_pitch_deg + pitch_bias + heel_bias);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_ROLL),    r.hip_roll_deg);
-    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_ROLL),  r.ankle_roll_deg);
+
+    const float ankle_roll = _ankleRollDeg(side, r.ankle_roll_deg);
+    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_ROLL),  ankle_roll);
+
+    // Telemetry: the swing leg reports its outward prep delta; the grounded leg
+    // reports its CoM-shift tilt. Together they make the composition observable.
+    if (side == _swingSide) {
+        _state.swingPrepRollBiasDeg = _swingPrepDeltaDeg(side);
+        _state.swingPrepSide        = static_cast<uint8_t>(side);
+    } else {
+        _state.comShiftRollBiasDeg  = _comShiftTilt(side);
+    }
 
     return r;
 }
@@ -1333,28 +1445,13 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // Swing-foot leveler: update once per non-recovery tick.
     // liftFrac=0 outside SWINGING causes the envelope to return 0, so the
     // IIR decays smoothly without any bias reaching the ankle joints.
+    // The leveler's roll bias is read directly into the SOURCE_GAIT ankle-roll
+    // sum in _submitFootTargetIK (consolidation refactor) — it is no longer
+    // plumbed through BalanceController, which no longer owns ankle roll.
     if (_swingLeveler) {
         const float lf = (_subState == StepSubState::SWINGING)
                          ? _swingFrac(_halfPhase) : 0.0f;
         _swingLeveler->update(_swingSide, lf);
-
-        // Plumb the leveler's roll bias into BalanceController so it composes
-        // post-shaping with the WeightShift ankle_roll_bias. Without this, the
-        // leveler's roll submission at SOURCE_GAIT (priority 1) is overwritten
-        // every tick by BalanceController's SOURCE_BALANCE submission (priority
-        // 2), which always fires during walking because WeightShift keeps the
-        // stance-side bias non-zero. One side always returns 0 (non-swing).
-        //
-        // PITCH bias is NOT plumbed this way and does not need to be: leg pitch
-        // balance is task-space (dx_mm merged into the FootTarget), so
-        // BalanceController never submits ankle-pitch joints — the leveler's
-        // SOURCE_GAIT pitch bias is never overwritten by SOURCE_BALANCE.
-        if (_bal) {
-            _bal->setSwingLevelerRollBias(
-                Side::LEFT,  _swingLeveler->ankleRollBiasFor(Side::LEFT));
-            _bal->setSwingLevelerRollBias(
-                Side::RIGHT, _swingLeveler->ankleRollBiasFor(Side::RIGHT));
-        }
     }
 
     const WeightShiftState wsState = _ws ? _ws->getState() : WeightShiftState{};

@@ -323,7 +323,7 @@ struct GaitConfig {
     //                       early due to floor variation.
     // -----------------------------------------------------------------------
     bool  touchdownEnabled   = true;
-    float touchdownGatePhase = 0.7f;  // [0..1)
+    float touchdownGatePhase = 0.5f;  // [0..1)
 
     // -----------------------------------------------------------------------
     // W4 — Touchdown compliance.
@@ -445,6 +445,21 @@ struct GaitConfig {
     float    heelStrikeGatePhase    = GAIT_HEELSTRIKE_GATE_PHASE_DEFAULT;
     uint32_t heelStrikeReleaseMs    = GAIT_HEELSTRIKE_RELEASE_MS_DEFAULT;
     float    heelStrikeMaxBiasDeg   = GAIT_HEELSTRIKE_MAX_BIAS_DEG;
+
+    // Swing-foot ankle-roll PREPARATION (support-transition prep). While the
+    // swing leg is airborne, its ankle roll is driven toward the orientation it
+    // will need as the NEXT stance foot, so it lands prepared for support
+    // transfer. Owned by GaitController in the single ankle-roll summation site
+    // (_submitFootTargetIK); see _swingPrepRollBias.
+    //   swingPrepEnabled      — master enable. WS: "swingPrep"
+    //   swingPrepGain         — fraction of ankle_shift_deg used as the target
+    //                           future-stance attitude. 0 = default no-op.
+    //   swingPrepCompleteFrac — front-load: full prep reached when the lift
+    //                           fraction has fallen to (1 - this) on descent.
+    //                           1.0 = no front-load. Clamped (0.05, 1.0].
+    bool  swingPrepEnabled      = GAIT_SWING_PREP_ENABLED_DEFAULT;
+    float swingPrepGain         = GAIT_SWING_PREP_GAIN_DEFAULT;
+    float swingPrepCompleteFrac = GAIT_SWING_PREP_COMPLETE_FRAC_DEFAULT;
 };
 
 // ---------------------------------------------------------------------------
@@ -625,6 +640,18 @@ struct GaitState {
     //   touchdownTorsoRollRad      torso IMUState.roll - torsoRollNeutralRad.
     float   touchdownSwingFootRollRad = 0.0f;
     float   touchdownTorsoRollRad     = 0.0f;
+
+    // Swing-foot ankle-roll preparation telemetry (consolidation refactor).
+    //   swingPrepRollBiasDeg  the prep term applied to the swing leg's ankle
+    //                         roll this tick (deg, signed toward future stance;
+    //                         0 on stance leg / disabled / not SWINGING).
+    //   comShiftRollBiasDeg   the CoM-shift bias on the swing leg's MIRROR
+    //                         (stance) side this tick — surfaced so the migrated
+    //                         term is observable. Signed, command-frame deg.
+    //   swingPrepSide         0=LEFT swing, 1=RIGHT swing (matches Side enum).
+    float   swingPrepRollBiasDeg = 0.0f;
+    float   comShiftRollBiasDeg  = 0.0f;
+    uint8_t swingPrepSide        = 0;
 
     // ------------------------------------------------------------------
     // W4 — Touchdown-compliance telemetry. Telemetry-only — the control
@@ -1189,6 +1216,32 @@ private:
     //      to 0 while tuning fwdComMaxMm up from 0.
     // -----------------------------------------------------------------------
     float _fwdComProgressionMm(float localPhase) const;
+
+    // -----------------------------------------------------------------------
+    //  Ankle-roll composition (consolidation refactor + regression fix). One
+    //  owner, one inspectable summation in _ankleRollDeg, called per leg from
+    //  _submitFootTargetIK. Grounded legs crossfade flat-foot ↔ CoM-shift tilt
+    //  by shift authority; the airborne swing leg holds the inward tilt at
+    //  lift-off and transitions outward toward future stance over the descent.
+    //  See the .cpp for the formulas and GAIT_SWING_PREP_* in project_wide_defs.
+    //
+    //  _isNormalSwing      active normal-gait swing leg (recovery excluded).
+    //  _comShiftTilt       CoM-shift inward tilt for a leg (command-frame deg),
+    //                      pure fn of WeightShift progress (= old bias).
+    //  _shiftAuthority     a∈[0,1] = |progress| — flat-foot↔tilt crossfade weight.
+    //  _futureStanceTilt   the CoM-shift tilt this leg will carry as NEXT stance.
+    //  _swingPrepEnv       descent-monotonic envelope (0 pre-apex → 1 touchdown).
+    //  _swingPrepDeltaDeg  applied outward prep delta on the swing leg (0 unless
+    //                      enabled & gain>0 & normal swing leg).
+    //  _ankleRollDeg       full composed ankle roll for a leg (clamped).
+    // -----------------------------------------------------------------------
+    bool  _isNormalSwing(Side side) const;
+    float _comShiftTilt(Side side) const;
+    float _shiftAuthority(Side side) const;
+    float _futureStanceTilt(Side side) const;
+    float _swingPrepEnv() const;
+    float _swingPrepDeltaDeg(Side side) const;
+    float _ankleRollDeg(Side side, float flatFootDeg) const;
 
     // -----------------------------------------------------------------------
     //  _heelStrikeBiasDeg — heel-strike rollover ankle-pitch bias for `side`.

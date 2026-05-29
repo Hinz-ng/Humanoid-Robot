@@ -144,44 +144,14 @@ void WeightShift::update(float dt_s) {
         _settledAtMs = millis();
     }
 
-    // ── Inject ankle bias + roll setpoint into BalanceConfig ─────────────────
-    //
-    // TASK-2 CORE: WeightShift no longer submits ankle roll via SOURCE_GAIT.
-    //
-    // Bias sign convention (must match _submitAnkleRollBias):
-    //   bias_r = −rightProgress × amp  →  for LEFT(right=+1): bias_r = −5°
-    //   bias_l = +leftProgress  × amp  →  for LEFT(left=+1):  bias_l = +5°
-    //   Both produce the same physical tilt (body tilts left for left shift).
-    //   RIGHT shift: rightProgress=−1 → bias_r=+5°, leftProgress=−1 → bias_l=−5°
-    //   Both tilt body right ✓
-    //
-    // The balance controller reads these from _cfg each tick and adds them
-    // to the shaped correction AFTER the IIR, so correction is additive.
-    // Per-leg ankle roll bias. Sign convention preserved from the original
-    // task-2 design (see _submitAnkleRollBias):
-    //   bias_r = -rightProgress x amp
-    //   bias_l = +leftProgress  x amp
-    // SWING-LEG MASK: scale the swing side by (1 - liftFrac). At peak swing
-    // (liftFrac=1) the swing foot's bias is zero; the IK-computed flat ankle
-    // wins on SOURCE_BALANCE -> SOURCE_GAIT arbitration only because the
-    // additive bias term is now zero on that leg.
-    const float scaleL = (_swingMask == SwingLeg::LEFT)  ? _swingBiasScale() : 1.0f;
-    const float scaleR = (_swingMask == SwingLeg::RIGHT) ? _swingBiasScale() : 1.0f;
-
-    // Sign convention preserved char-for-char from pre-Phase-2 (see
-    // _submitAnkleRollBias): bias_r = -rightProgress × amp, bias_l = +leftProgress × amp.
-    // Both produce the same physical body tilt direction — this is the mirror
-    // operation, NOT duplication.
-    const float biasRightDeg = (fabsf(_cfg.ankle_shift_deg) > 0.01f)
-                               ? (-_ankleProgress[sideIdx(Side::RIGHT)] * _cfg.ankle_shift_deg * scaleR)
-                               : 0.0f;
-    const float biasLeftDeg  = (fabsf(_cfg.ankle_shift_deg) > 0.01f)
-                               ? (+_ankleProgress[sideIdx(Side::LEFT)]  * _cfg.ankle_shift_deg * scaleL)
-                               : 0.0f;
-    // Phase 3: use the Side-keyed setter overload — equivalent to the dual-param
-    // form. Two writes per tick, same per-tick work as before.
-    _bal->setAnkleRollBias(Side::LEFT,  biasLeftDeg);
-    _bal->setAnkleRollBias(Side::RIGHT, biasRightDeg);
+    // ── Ankle-roll bias ownership (consolidation refactor) ───────────────────
+    // WeightShift no longer pushes an ankle-roll bias into BalanceController.
+    // GaitController reads this module's progress (getState()) + ankle_shift_deg
+    // and composes the CoM-shift ankle-roll bias onto the IK flat-foot base in
+    // its single SOURCE_GAIT ankle-roll summation (see
+    // GaitController::_comShiftRollBias / _swingPrepRollBias). The swing-leg mask
+    // machinery here (_swingBiasScale / _swingMask) is now unused and will be
+    // removed once the consolidated path is hardware-validated.
 
     // Roll setpoint is intentionally NOT injected into BalanceConfig: lateral
     // CoM control flows through FootTarget.y_mm (task-space dy). Injecting a

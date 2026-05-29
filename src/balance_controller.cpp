@@ -208,16 +208,9 @@ BalanceState BalanceController::update(const IMUState& state) {
 
     // ── Gate 1: enabled ───────────────────────────────────────────────────────
     if (!_cfg.pitch_enabled && !_cfg.roll_enabled) {
-        // C-02 ext: still apply ankle roll bias when both controllers are off.
-        // Without this, WeightShift bias has no effect during gait testing with
-        // balance fully disabled — the most common test configuration.
-        if (!oe_is_estopped() &&
-            (fabsf(_cfg.ankle_roll_bias_l_deg) > 0.01f ||
-             fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f ||
-             fabsf(_cfg.swing_leveler_roll_bias_l_deg) > 0.01f ||
-             fabsf(_cfg.swing_leveler_roll_bias_r_deg) > 0.01f)) {
-            _submitAnkleRollBias();
-        }
+        // Ankle roll is no longer owned here (consolidation refactor) — the
+        // GaitController composes it at SOURCE_GAIT, so disabling balance no
+        // longer suppresses the CoM-shift/leveler ankle-roll terms.
         _lastState = out; return out;
     }
     // ── Gate 2: valid IMU ─────────────────────────────────────────────────────
@@ -244,15 +237,8 @@ BalanceState BalanceController::update(const IMUState& state) {
     out.u_clamped      = _ts_pitch_u_clamped;
     out.u_roll_clamped = _ts_roll_u_clamped;
 
-    // Apply WeightShift ankle-roll bias. The bias is feedforward shaping, not
-    // foot placement — it stays in SOURCE_BALANCE via MotionManager, not in the
-    // IK chain.
-    if (fabsf(_cfg.ankle_roll_bias_l_deg) > 0.01f ||
-        fabsf(_cfg.ankle_roll_bias_r_deg) > 0.01f ||
-        fabsf(_cfg.swing_leveler_roll_bias_l_deg) > 0.01f ||
-        fabsf(_cfg.swing_leveler_roll_bias_r_deg) > 0.01f) {
-        _submitAnkleRollBias();
-    }
+    // Ankle-roll bias is composed and submitted by GaitController at SOURCE_GAIT
+    // (consolidation refactor) — BalanceController no longer submits ankle roll.
 
     _updateRecoveryDetection(out, state);
     _lastState = out;
@@ -433,57 +419,7 @@ void BalanceController::_updateRecoveryDetection(BalanceState& out,
     out.recovery_debounce = _recoveryDebounce;
 }
 
-// ---------------------------------------------------------------------------
-//  _submitAnkleRollBias — submits the ankle-roll bias to MotionManager.
-//
-//  This is the only joint-space leg output BalanceController still owns. Leg
-//  pitch/roll balance is task-space (computeCorrection → dx_mm/dy_mm).
-//
-//  Two independent bias sources, summed:
-//    ankle_roll_bias_*_deg          — WeightShift CoM-translation bias
-//    swing_leveler_roll_bias_*_deg  — closed-loop foot leveler bias
-//
-//  _shapeOutput is still run on the ankle-roll joints with a zero correction
-//  input so the IIR state decays cleanly (BUG-01 zero-bypass); the bias is
-//  added AFTER shaping so it does not drift the IIR state. Both biases ride the
-//  SOURCE_BALANCE priority slot so the leveler (otherwise SOURCE_GAIT) is not
-//  discarded by arbitration.
-//
-//  Bias sign convention (matches the negation applied to the right ankle):
-//    For leftward tilt: bias_l > 0, bias_r < 0.
-// ---------------------------------------------------------------------------
-void BalanceController::_submitAnkleRollBias() {
-    // Shape a zero correction so the ankle-roll IIR decays toward zero.
-    // (rawCmd=0 hits the BUG-01 zero-bypass — sign of the zero is irrelevant.)
-    float shaped_r = _shapeOutput(BJI_R_ANKLE_ROLL, 0.0f, 0.0f);
-    float shaped_l = _shapeOutput(BJI_L_ANKLE_ROLL, 0.0f, 0.0f);
-
-    float final_r = shaped_r
-                  + _cfg.ankle_roll_bias_r_deg
-                  + _cfg.swing_leveler_roll_bias_r_deg;
-    float final_l = shaped_l
-                  + _cfg.ankle_roll_bias_l_deg
-                  + _cfg.swing_leveler_roll_bias_l_deg;
-
-    // Final clamp: combined bias must not exceed joint limits. Headroom must
-    // accommodate the LARGER of the two sides (asymmetric shift).
-    const float biasL = fabsf(_cfg.ankle_roll_bias_l_deg)
-                      + fabsf(_cfg.swing_leveler_roll_bias_l_deg);
-    const float biasR = fabsf(_cfg.ankle_roll_bias_r_deg)
-                      + fabsf(_cfg.swing_leveler_roll_bias_r_deg);
-    const float maxBias  = fmaxf(biasL, biasR);
-    float maxAnkle = _cfg.max_roll_correction_deg + maxBias;
-    maxAnkle = constrain(maxAnkle, 1.0f, 40.0f);
-    final_r  = constrain(final_r, -maxAnkle, maxAnkle);
-    final_l  = constrain(final_l, -maxAnkle, maxAnkle);
-
-    if (_motionManager) {
-        _motionManager->submit(SOURCE_BALANCE, IDX_R_ANKLE_ROLL, final_r);
-        _motionManager->submit(SOURCE_BALANCE, IDX_L_ANKLE_ROLL, final_l);
-        return;
-    }
-    if (_servo) {
-        _servo->setJointAngleDirect(IDX_R_ANKLE_ROLL, final_r);
-        _servo->setJointAngleDirect(IDX_L_ANKLE_ROLL, final_l);
-    }
-}
+// Ankle-roll submission removed in the consolidation refactor — GaitController
+// now owns the ankle-roll joint (flat-foot + CoM-shift + swing-prep + leveler,
+// summed at SOURCE_GAIT in _submitFootTargetIK). BalanceController's leg
+// authority is task-space only (computeCorrection → dx_mm/dy_mm).

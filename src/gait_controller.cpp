@@ -173,6 +173,8 @@ void GaitController::_updateHRestore() {
     // Restore completes once the new stance leg's phase reaches frac — the
     // foot is ~under the hip, so the deficit is fully recovered.
     if (_halfPhase >= frac) {
+        Serial.printf("[GaitCtrl] H-restore DONE side=%s phase=%.3f (frac=%.2f)\n",
+                      sideName(_hRestoreSide), _halfPhase, frac);
         _hRestoreActive         = false;
         _hRestoreDeficitMm      = 0.0f;
         _state.hRestoreActive   = false;
@@ -1322,12 +1324,29 @@ void GaitController::_advanceHalf() {
     // current _swingSide, BEFORE the flip below) so its h re-extends smoothly
     // across the upcoming stance phase instead of snapping at the role swap.
     // Must run before _swingSide flips and before _clearTouchdownLatch() clears
-    // _touchdownLocked. If no touchdown was detected this swing, _touchdownLocked
-    // is false → no restore armed; the leg ran its full trajectory and is
-    // already at stanceHeight.
-    if (_cfg.hRestoreEnabled && _touchdownLocked && _hRestoreDeficitMm > 0.0f) {
-        _hRestoreActive = true;
-        _hRestoreSide   = _swingSide;   // the leg that just planted
+    // _touchdownLocked / _touchdownLockedH_mm. If no touchdown was detected this
+    // swing, _touchdownLocked is false → no restore armed; the leg ran its full
+    // trajectory and is already at stanceHeight.
+    //
+    // The deficit is computed (and _hRestoreDeficitMm assigned) HERE, not at the
+    // touchdown latch. _hRestoreDeficitMm is owned by the active restore and is
+    // read every tick by the CONTRALATERAL restoring leg in _buildFootTarget;
+    // assigning it only at the role swap — when the previous restore has already
+    // completed (_halfPhase >= frac was reached, clearing it in _updateHRestore)
+    // — guarantees a touchdown latch can never overwrite a deficit a still-active
+    // restore is consuming. This is the fix for the frac-dependent, leg-mirrored
+    // abrupt-extension asymmetry (root cause: shared deficit + early latch).
+    if (_cfg.hRestoreEnabled && _touchdownLocked) {
+        const float deficit = _cfg.stanceHeightMm - _touchdownLockedH_mm;  // >= 0
+        if (deficit > 0.0f) {
+            _hRestoreActive    = true;
+            _hRestoreSide      = _swingSide;   // the leg that just planted
+            _hRestoreDeficitMm = deficit;      // owned by THIS restore until complete
+            Serial.printf("[GaitCtrl] H-restore ARM swing=%s deficit=%.2fmm "
+                          "(tdH=%.2f stanceH=%.2f frac=%.2f)\n",
+                          sideName(_swingSide), deficit, _touchdownLockedH_mm,
+                          _cfg.stanceHeightMm, _cfg.hRestoreCompleteFrac);
+        }
     }
 
     _swingSide        = otherSide(_swingSide);
@@ -1662,11 +1681,15 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _state.touchdownSwingVelX_mm_s = dxdt_mm_s;
             _touchdownLockedH_mm  = _cfg.stanceHeightMm
                                   - _swingFrac(_halfPhase) * _cfg.stepHeightMm;
-            // H-restore: record the deficit between the frozen touchdown h and
-            // full stance height. _advanceHalf arms the restore from this (when
-            // > 0) so the just-planted leg re-extends across the next stance
-            // phase instead of snapping at the role swap. Not armed here.
-            _hRestoreDeficitMm = _cfg.stanceHeightMm - _touchdownLockedH_mm;  // >= 0
+            // H-restore: the deficit (stanceHeightMm - frozen touchdown h) is
+            // NOT recorded here. _advanceHalf computes and arms it from the
+            // still-valid _touchdownLockedH_mm at the role swap. Writing it here
+            // corrupted an in-progress restore on the CONTRALATERAL leg: that
+            // restore reads the shared _hRestoreDeficitMm every tick in
+            // _buildFootTarget, and whenever this swing leg latched before that
+            // restore completed (only possible when hRestoreCompleteFrac >
+            // touchdownGatePhase) the write clobbered the deficit mid-decay —
+            // the leg-mirrored "abrupt extension" bug above frac 0.5.
             // Lateral-capture freeze: capture the live ramped+clamped value
             // BEFORE flipping _touchdownLocked, because _latCaptureOffsetMm()
             // short-circuits to _touchdownLockedY_mm once the latch is set.

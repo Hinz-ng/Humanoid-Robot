@@ -540,12 +540,52 @@ void WebComm::broadcastGaitState() {
     if ((now - _lastGaitBroadcast_us) < INTERVAL_US) return;
     _lastGaitBroadcast_us = now;
 
-    const GaitState& s = _gaitCtrl->getState();
+    // -----------------------------------------------------------------------
+    // Telemetry freeze after gait stop. When gait leaves any active mode and
+    // returns to IDLE, GaitController::start(IDLE) resets its GaitState
+    // diagnostics to zero — wiping the diagnostics panel the instant the
+    // operator stops. To keep the last runtime values visible until gait runs
+    // again, snapshot the live state on every active tick and replay that
+    // snapshot while IDLE.
+    //
+    //   - Config echoes further down are NOT frozen: they read getConfig()
+    //     directly, so sliders still sync when the operator tunes at rest.
+    //   - mode / running are taken LIVE so the mode badge still reads IDLE
+    //     while the (frozen) diagnostic values are held.
+    //   - The swing-foot leveler snapshot is frozen alongside it so the same
+    //     panel freezes consistently across every mode that stops updates.
+    //
+    // This is a single cached snapshot (the "last published values"), not a
+    // parallel telemetry system. Static is safe: WebComm is a singleton.
+    static GaitState             s_gaitFreeze;
+    static SwingFootLevelerState s_lvlFreeze;
+    static bool                  s_gaitFreezeValid = false;
 
+    const GaitState&            live    = _gaitCtrl->getState();
     // Pull leveler state (all zeros when leveler not wired or disabled).
-    const SwingFootLevelerState lvl = _swingLeveler
-                                      ? _swingLeveler->getState()
-                                      : SwingFootLevelerState{};
+    const SwingFootLevelerState liveLvl = _swingLeveler
+                                          ? _swingLeveler->getState()
+                                          : SwingFootLevelerState{};
+
+    const bool gaitActive = (live.mode != GaitMode::IDLE);
+    if (gaitActive) {
+        s_gaitFreeze      = live;     // refresh the snapshot every active tick
+        s_lvlFreeze       = liveLvl;
+        s_gaitFreezeValid = true;
+    }
+
+    GaitState heldState;
+    const GaitState*            statePtr = &live;
+    const SwingFootLevelerState* lvlPtr  = &liveLvl;
+    if (!gaitActive && s_gaitFreezeValid) {
+        heldState         = s_gaitFreeze;
+        heldState.mode    = live.mode;      // identity stays live → badge reads IDLE
+        heldState.running = live.running;
+        statePtr          = &heldState;
+        lvlPtr            = &s_lvlFreeze;
+    }
+    const GaitState&            s   = *statePtr;
+    const SwingFootLevelerState  lvl = *lvlPtr;
 
     char buf[2304];
     snprintf(buf, sizeof(buf),

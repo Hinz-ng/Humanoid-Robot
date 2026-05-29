@@ -143,7 +143,7 @@ struct GaitConfig {
     // foot is allowed to lift. Gate opens when |wsProgress| >= this value.
     // 0.70 = 70% shift complete. Lower to 0.50 if gate never opens.
     // Raise toward 0.90 if robot falls when foot leaves ground.
-    float liftGateThreshold = 0.45f;  // [0, 1). WS: "liftGate"
+    float liftGateThreshold = 0.55f;  // [0, 1). WS: "liftGate"
 
     // Phase 2 IMU roll threshold (rad) — logged for diagnostics but not yet
     // used as a gate. Will gate foot lift in Phase 2 after single-leg stance

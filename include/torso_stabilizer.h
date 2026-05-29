@@ -58,7 +58,13 @@ struct TorsoConfig {
     float Kd_roll                  = 0.0f;   // deg/(rad/s).  WS: "Kd_r"
     float roll_deadband_rad        = 0.035f; // rad.          WS: "db_r"
     float roll_derivative_lpf_alpha = 0.85f; // [0,1).        WS: "dlpf_r"
-    float roll_correction_sign     = -1.0f;  // ±1.           WS: "sign_r" (verify HW)
+    // Inverted from -1.0f → +1.0f: the previous default drove the torso roll
+    // correction in the destabilising direction on hardware. +1.0f moves the
+    // correction the physically stabilising way (torso rolls to oppose the
+    // measured tilt). Isolated to torso roll only — pitch uses correction_sign;
+    // ankle-roll / weight-shift / gait roll bias / foot lateral offsets are in
+    // other modules and are unaffected. WS: "sign_r".
+    float roll_correction_sign     = +1.0f;  // ±1.           WS: "sign_r" (verify HW)
     float max_roll_correction_deg  = 15.0f;  // deg.          WS: "max_r"
 
     // --- Output shaping (shared pipeline, both axes) ---

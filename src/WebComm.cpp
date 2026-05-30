@@ -1025,9 +1025,32 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             }
         }
     }
+    // Smooth the move: the SOURCE_UI pose submitted above is applied on the next
+    // MotionManager::flush(), which slews the flagged joints at the dedicated
+    // pose-transition speed (and disarms the latch after that batch).
+    if (_servoCtrl) _servoCtrl->armTransition();
     broadcastState();
     Serial.println("[WebComm] RESETP — gait stopped, balance off, neutral submitted.");
  }
+        // ---------------------------------------------------------------------
+        //  STANCE — enter the idle/standing-ready stance pose without starting
+        //  gait. Stops gait only (balance is left as-is, per design). When gait
+        //  is already IDLE, submits the stance pose as a one-shot and smooths it
+        //  via the pose-transition speed. When gait is RUNNING, stop() ramps down
+        //  and already converges to this same idle stance, so no one-shot needed.
+        // ---------------------------------------------------------------------
+        else if (cmd == "STANCE") {
+            if (_gaitCtrl) {
+                const bool wasRunning = _gaitCtrl->getState().running;
+                _gaitCtrl->stop();   // IDLE: no-op (returns early); RUNNING: ramp → idle stance
+                if (!wasRunning) {
+                    _gaitCtrl->submitStancePose();             // one-shot idle stance
+                    if (_servoCtrl) _servoCtrl->armTransition();  // smooth the move
+                }
+            }
+            broadcastState();
+            Serial.println("[WebComm] STANCE — idle stance submitted (balance untouched).");
+        }
         // ---------------------------------------------------------------------
         else if (cmd.startsWith("LOAD:")) {
             _servoCtrl->loadPose(cmd.substring(5));
@@ -1650,6 +1673,20 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             }
         }
         // ---------------------------------------------------------------------
+        //  Pose-transition speed — dedicated slew (deg/s) for the Neutral/Stance
+        //  buttons, independent of the per-joint gait/IK cap above.
+        //  Protocol: CMD:TRANS_SPEED:<deg_per_sec>
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("TRANS_SPEED:")) {
+            if (_servoCtrl) {
+                float speed = cmd.substring(12).toFloat();
+                _servoCtrl->setTransitionSpeed(speed);
+                Serial.printf("[WebComm] TRANS_SPEED: pose transitions → %.1f deg/s\n",
+                              _servoCtrl->getTransitionSpeed());
+                broadcastSpeeds();
+            }
+        }
+        // ---------------------------------------------------------------------
         //  Per-joint transmission gain — runtime override of the anatomical-
         //  to-servo mechanical ratio. Defaults live in joint_config.cpp; this
         //  command lets the operator sweep without reflashing.
@@ -1905,56 +1942,14 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             // (abduction past nominal) blocked to keep the
                             // semantic unambiguous — widen stance via
                             // hardware geometry, not a negative inset.
+                            //
+                            // The inset is a TASK-SPACE FootTarget y_mm baseline,
+                            // applied directly in GaitController::_buildFootTarget
+                            // (t.y_mm = -stanceInsetMm on both legs). Storing the
+                            // config value is the whole job here — the gait loop
+                            // reads it every tick, so the boot default and every
+                            // stance entry honour it with no separate "apply" step.
                             cfg.stanceInsetMm = constrain(val, 0.0f, 30.0f);
-                            // Route through JointModel session neutral trim.
-                            // The inset is expressed as the session-neutral
-                            // shift on the four frontal joints (both hip_rolls
-                            // and ankle_rolls) so all command sources — gait,
-                            // balance, recovery, UI — inherit it from the
-                            // joint-coordinate origin, not from a task-space
-                            // y_mm offset that only applies inside
-                            // _buildFootTarget.
-                            //
-                            // Mechanism: solveFrontal(-inset, h_frontal) gives
-                            // hip_roll_deg and ankle_roll_deg (flat-foot pair)
-                            // for the inset position. session_trim = direction *
-                            // joint_angle_at_inset converts to servo-degree
-                            // space (see JointModel::jointAngleToPulse).
-                            // Directions from joint_config.cpp:
-                            //   R_hip_roll dir=+1, L_hip_roll dir=-1
-                            //   R_ankle_roll dir=+1, L_ankle_roll dir=-1
-                            //
-                            // Limitation: trim was computed for the current
-                            // stanceHeightMm. If stanceH changes later the
-                            // inset_mm is preserved but the trim is slightly
-                            // stale (second-order error for small insets);
-                            // re-send stanceInset_mm after changing stanceH
-                            // to recompute exactly. No motion occurs on
-                            // setSessionTrimDeg — only the coordinate origin
-                            // shifts; the next tick's IK call lands the
-                            // servos at the inset position.
-                            if (_servoCtrl) {
-                                const float h_frontal =
-                                    cfg.stanceHeightMm - CHAIN_HEIGHT_DELTA_MM;
-                                // Inline the frontal IK (solveFrontal is private).
-                                // hip_roll = atan2(-inset, h_frontal) — negative
-                                //   because inset is adduction (inward, y<0).
-                                // ankle_roll = -hip_roll (LegIK flat-foot invariant).
-                                // session_trim = direction * joint_angle_at_inset
-                                //   (jointAngleToPulse: servo = effectiveNeutral
-                                //    + direction*jointAngle).
-                                //   R_hip dir=+1: trim = +hipRollDeg
-                                //   L_hip dir=-1: trim = -hipRollDeg
-                                //   R_ankle dir=+1: trim = -hipRollDeg (ankle=-hip)
-                                //   L_ankle dir=-1: trim = +hipRollDeg
-                                const float hipRollDeg = (h_frontal >= 20.0f)
-                                    ? atan2f(-cfg.stanceInsetMm, h_frontal) * RAD_TO_DEG
-                                    : 0.0f;
-                                _servoCtrl->setSessionTrimDeg(IDX_R_HIP_ROLL,    hipRollDeg);
-                                _servoCtrl->setSessionTrimDeg(IDX_L_HIP_ROLL,   -hipRollDeg);
-                                _servoCtrl->setSessionTrimDeg(IDX_R_ANKLE_ROLL, -hipRollDeg);
-                                _servoCtrl->setSessionTrimDeg(IDX_L_ANKLE_ROLL,  hipRollDeg);
-                            }
                         }
                         else if (key == "stepLength_mm") {
                             // Hard cap at 20% of stance height to protect IK

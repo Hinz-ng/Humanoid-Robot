@@ -128,7 +128,15 @@ public:
     void  setJointSpeed(uint8_t channel, float speedDegPerSec);
     void  setAllJointsSpeed(float speedDegPerSec);
     float getJointSpeed(uint8_t channel) const;
-    
+
+    // Pose-transition slew (Neutral/Stance). armTransition() latches the next
+    // smooth pose submission to move at the dedicated transition speed; the
+    // control loop disarms it after the batch is flushed. See JointModel.
+    void  armTransition();
+    void  disarmTransition();
+    void  setTransitionSpeed(float speedDegPerSec);
+    float getTransitionSpeed() const;
+
     // Named semantic movement: "flex" or "extend" by magnitude degrees.
     // Internally calls JointModel::setJointAngle — magnitude maps 1:1 to degrees.
     void applyNamedMovement(uint8_t channel, const char* movementName,

@@ -7,12 +7,15 @@
 
 JointModel::JointModel()
     : _driver(nullptr),
+      _transitionSpeedDegPerSec(JOINT_TRANSITION_SPEED_DEFAULT_DEG_S),
+      _transitionArmed(false),
       _lastUpdateMs(0)
 {
     for (int i = 0; i < NUM_JOINTS; i++) {
         _currentPulse[i]   = (float)SD_USMIN;
         _targetPulse[i]    = (uint16_t)SD_USMIN;
         _speedDegPerSec[i] = JOINT_SPEED_DEFAULT_DEG_S;
+        _useTransitionSpeed[i] = false;
         deadband[i]        = 4.0f;  // µs — 0.54° for 270° servo, 0.36° for 180°
         _sessionTrimDeg[i] = 0.0f;  // no runtime neutral correction until captured
         // Seed transmission gain from the compile-time config. A bad value
@@ -61,6 +64,14 @@ void JointModel::setJointAngle(uint8_t jointId, float angleDeg, bool immediate) 
 
     // 3. Store as the new target.
     _targetPulse[jointId] = (uint16_t)pulse;
+
+    // 3b. Consume the pose-transition latch: a smooth write while armed marks
+    // this joint to slew at the transition speed until it reaches target. The
+    // flag self-clears in update() on arrival. Immediate writes (balance) are
+    // never stepped, so they neither set nor clear the flag.
+    if (!immediate && _transitionArmed) {
+        _useTransitionSpeed[jointId] = true;
+    }
 
     // 4. Immediate write bypasses the smooth stepping loop.
     if (immediate && _driver != nullptr) {
@@ -172,16 +183,22 @@ void JointModel::update() {
         float diff = (float)_targetPulse[i] - _currentPulse[i];
 
         // Deadband: skip write if already close enough. Reduces I2C bus
-        // traffic and prevents audible servo buzz at rest.
-       if (fabsf(diff) <= deadband[i]) continue;
+        // traffic and prevents audible servo buzz at rest. Arrival also ends any
+        // active pose transition on this joint — it slews at normal speed next move.
+       if (fabsf(diff) <= deadband[i]) { _useTransitionSpeed[i] = false; continue; }
 
-        // Convert this joint's deg/s speed to a µs step for this tick.
+        // Convert this joint's deg/s speed to a µs step for this tick. A joint
+        // engaged in a pose transition slews at the dedicated transition speed
+        // instead of its gait/IK cap.
+        const float speedDegPerSec = _useTransitionSpeed[i]
+                                     ? _transitionSpeedDegPerSec
+                                     : _speedDegPerSec[i];
         // MUST use JOINT_CONFIG[i].rangeDeg, not SD_ANGLE_RANGE:
         //   180° joints (hip yaw, ankle pitch) map the same 2000 µs pulse range
         //   to fewer degrees, so each µs represents more degrees on those joints.
         //   Using SD_ANGLE_RANGE (270°) on a 180° joint underestimates the step
         //   size by 33%, making those joints appear slower than commanded.
-        float stepUs = (_speedDegPerSec[i] / JOINT_CONFIG[i].rangeDeg) * fullRangeUs * dt_s;
+        float stepUs = (speedDegPerSec / JOINT_CONFIG[i].rangeDeg) * fullRangeUs * dt_s;
 
         // CRITICAL: clamp step to the remaining distance.
         // Without this, stepUs > |diff| causes the servo to overshoot and
@@ -414,6 +431,22 @@ float JointModel::getJointSpeed(uint8_t jointId) const {
     if (jointId >= NUM_JOINTS) return JOINT_SPEED_DEFAULT_DEG_S;
     return _speedDegPerSec[jointId];
 }
+
+// -----------------------------------------------------------------------------
+//  Pose-transition speed (Neutral/Stance moves).
+// -----------------------------------------------------------------------------
+void JointModel::armTransition()    { _transitionArmed = true; }
+void JointModel::disarmTransition() { _transitionArmed = false; }
+
+void JointModel::setTransitionSpeed(float speedDegPerSec) {
+    // Same floor as the per-joint cap; ceiling at the global default so a pose
+    // transition can never be commanded faster than a normal boot-speed move.
+    if (speedDegPerSec < JOINT_SPEED_MIN_DEG_S)     speedDegPerSec = JOINT_SPEED_MIN_DEG_S;
+    if (speedDegPerSec > JOINT_SPEED_DEFAULT_DEG_S) speedDegPerSec = JOINT_SPEED_DEFAULT_DEG_S;
+    _transitionSpeedDegPerSec = speedDegPerSec;
+}
+
+float JointModel::getTransitionSpeed() const { return _transitionSpeedDegPerSec; }
 
 void JointModel::setDeadband(uint8_t jointId, float deadbandUs) {
     if (jointId >= NUM_JOINTS) return;

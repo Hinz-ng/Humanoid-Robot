@@ -93,7 +93,7 @@ struct WeightShiftConfig {
     // at -50 / ceiling at +50 enforced by WebComm parser.
     // TUNING NOTE: Increased magnitude from -10 → -15 mm. More CoM transfer
     // means more weight on the stance leg at gate-open time, reducing drag risk.
-    float lateral_shift_mm = -15.0f;
+    float lateral_shift_mm = -12.5f;
 
     // Stage 2: Body forward shift (mm) at |progress| = 1. Replaces ankle_pitch_tilt_deg.
     // Both feet receive an x_mm offset of -|progress| × forward_lean_mm so the foot

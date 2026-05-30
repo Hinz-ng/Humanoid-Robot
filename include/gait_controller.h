@@ -143,7 +143,7 @@ struct GaitConfig {
     // foot is allowed to lift. Gate opens when |wsProgress| >= this value.
     // 0.70 = 70% shift complete. Lower to 0.50 if gate never opens.
     // Raise toward 0.90 if robot falls when foot leaves ground.
-    float liftGateThreshold = 0.55f;  // [0, 1). WS: "liftGate"
+    float liftGateThreshold = 0.4f;  // [0, 1). WS: "liftGate"
 
     // Phase 2 IMU roll threshold (rad) — logged for diagnostics but not yet
     // used as a gate. Will gate foot lift in Phase 2 after single-leg stance
@@ -772,6 +772,13 @@ public:
     void start(GaitMode mode);  // start a mode; start(IDLE) is equivalent to stop()
     void stop();                 // return to IDLE; centers WeightShift
     void singleStep();           // start SINGLE_STEP mode (one full cycle, then IDLE)
+
+    // One-shot submit of the idle/standing-ready stance pose (legs at
+    // stanceHeightMm, feet at the configured stanceInset), independent of gait
+    // start/stop. Reuses _submitStanceBothLegs so the pose matches what gait
+    // holds when standing ready. Intended for the UI "Stance" button while gait
+    // is IDLE; submits leg joints at SOURCE_GAIT (smooth-stepped).
+    void submitStancePose(const BalanceCorrection* bc = nullptr);
     // Advance to the next pause point in POSE_STEP mode.
     // Ignored if mode != POSE_STEP or not currently paused.
     void nextPose();

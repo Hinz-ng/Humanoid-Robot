@@ -84,6 +84,7 @@ void MotionManager::flush() {
         for (uint8_t ch = 0; ch < NUM_JOINTS; ch++) {
             _slots[ch] = {};
         }
+        _servo->disarmTransition();   // discard any pending pose-transition latch
         return;
     }
 
@@ -92,6 +93,12 @@ void MotionManager::flush() {
         _applyCommand(ch, _slots[ch]);
         _slots[ch] = {};
     }
+
+    // A pose-transition latch (armed by the Neutral/Stance handlers) scopes to
+    // exactly one applied batch: the writes above flagged their joints to slew at
+    // the transition speed, so drop the latch now to avoid bleeding it into the
+    // next, unrelated batch (e.g. gait or balance writes).
+    _servo->disarmTransition();
 }
 
 // ---------------------------------------------------------------------------

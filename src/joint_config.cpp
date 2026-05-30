@@ -74,7 +74,7 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
 //   Torso servos: 270°, 0.06 s/60° → 1000 °/s
 //   Direction unverified. Confirm before enabling active balance on IDX_TORSO_PITCH.
 
-    {  8,  "torso_roll",          135.0f,  +1,  -25.0f,  +25.0f,  270.0f, 1000.0f,  1.00f  },  // TUNE
+    {  8,  "torso_roll",          130.0f,  +1,  -25.0f,  +25.0f,  270.0f, 1000.0f,  1.00f  },  // TUNE
     {  9,  "torso_pitch",         140.0f,  +1,  -20.0f,  +30.0f,  270.0f, 1000.0f,  1.00f  },  // TUNE
     { 10,  "unused_10",           135.0f,  +1,    0.0f,    0.0f,  270.0f, 1000.0f,  1.00f  },  // not assigned
     { 11,  "torso_rotation",      140.0f,  +1,  -65.0f,  +65.0f,  270.0f, 1000.0f,  1.00f  },  // TUNE
@@ -82,7 +82,7 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
 // ▼  LEFT LEG (continued)  ───────────────────────────────────────────────────────────
 
     { 12,  "left_hip_roll",       128.0f,  -1,  -20.0f,  +80.0f,  270.0f,  500.0f,  1.00f  },  // TUNE  (txGain unverified)
-    { 13,  "left_knee_pitch",     137.0f,  +1,    0.0f,  +100.0f,  270.0f,  500.0f,  1.00f  },  // TUNE  (txGain unverified)
+    { 13,  "left_knee_pitch",     136.0f,  +1,    0.0f,  +100.0f,  270.0f,  500.0f,  1.00f  },  // TUNE  (txGain unverified)
     //  Left ankle pitch — same 4-bar linkage as right; mirrors txGain.
     { 14,  "left_ankle_pitch",    120.0f,  -1,  -60.0f,  +60.0f,  180.0f,  706.0f,  0.72f  },  // TUNE
     { 15,  "left_ankle_roll",     134.0f,  -1,  -25.0f,  +25.0f,  270.0f,  333.0f,  1.00f  },  // TUNE

@@ -30,6 +30,13 @@
 #define JOINT_SPEED_MIN_DEG_S        1.0f   // Floor — prevents silent frozen-joint bugs
 // No global MAX: upper clamp is now per-joint (JointConfig::noLoadSpeedDegS).
 
+// Dedicated speed (deg/s) for deliberate pose transitions (Neutral / Stance
+// buttons), separate from the global per-joint cap above so gait/IK responsiveness
+// and pose-move smoothness are tuned independently. Armed one-shot per move via
+// JointModel::armTransition(); runtime-tunable via setTransitionSpeed(). Lower =
+// gentler. Reboot restores this default.
+#define JOINT_TRANSITION_SPEED_DEFAULT_DEG_S   20.0f
+
 // --- Single source of truth for joint metadata is joint_config.h ---
 
 // No global MAX: upper clamp is now per-joint (JointConfig::noLoadSpeedDegS).
@@ -62,7 +69,7 @@ constexpr float GAIT_PHASE_RATE_HZ          = 0.7f;  // cycles/sec
 // If drag returns at 15 mm, the root cause is the gate, not step height.
 constexpr float GAIT_STEP_HEIGHT_MM         = 12.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
-constexpr float GAIT_STEP_LENGTH_MM         = 35.0f;  // Phase 3+; forward stride
+constexpr float GAIT_STEP_LENGTH_MM         = 37.0f;  // Phase 3+; forward stride
 
 // Session neutral-trim safety gate (deg). JointModel::captureSessionNeutral()
 // rejects the whole capture if any joint is further than this from its factory
@@ -172,7 +179,7 @@ constexpr float GAIT_STANCE_HEIGHT_MM           = 185.0f;
 // in ~2 mm steps at runtime via CMD:GAIT_TUNE:stanceInset_mm=...
 // Sign is UNVERIFIED until confirmed on hardware in IDLE: a positive
 // inset must move both feet toward the midline.
-constexpr float GAIT_STANCE_INSET_MM            = 5.0f;
+constexpr float GAIT_STANCE_INSET_MM            = 7.0f;
 
 // Static fore-aft offset applied to every FootTarget.x_mm built by GaitController.
 // Compensates for CoM ≠ hip-pitch axis: with x_mm=0 the foot lands directly under

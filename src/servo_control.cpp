@@ -228,3 +228,8 @@ void ServoControl::setAllJointsSpeed(float speedDegPerSec) {
 float ServoControl::getJointSpeed(uint8_t channel) const {
     return _model.getJointSpeed(channel);
 }
+
+void  ServoControl::armTransition()                      { _model.armTransition(); }
+void  ServoControl::disarmTransition()                   { _model.disarmTransition(); }
+void  ServoControl::setTransitionSpeed(float speedDegPerSec) { _model.setTransitionSpeed(speedDegPerSec); }
+float ServoControl::getTransitionSpeed() const           { return _model.getTransitionSpeed(); }

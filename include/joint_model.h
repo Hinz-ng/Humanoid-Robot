@@ -225,6 +225,21 @@ public:
     // Query current configured speed for one joint.
     float getJointSpeed(uint8_t jointId) const;
 
+    // =========================================================================
+    //  POSE-TRANSITION SPEED  —  dedicated cap for Neutral/Stance moves
+    // =========================================================================
+    // A second speed used only for deliberate pose transitions, kept separate
+    // from the per-joint gait/IK cap above. armTransition() latches a one-shot:
+    // the NEXT smooth-stepped write per joint (any source) is flagged to slew at
+    // the transition speed until it reaches target, then the flag self-clears.
+    // disarmTransition() drops the latch (the per-joint flags persist to arrival).
+    // Routed through ServoControl; MotionManager::flush() disarms after applying
+    // each batch so the latch scopes to exactly one pose submission.
+    void  armTransition();
+    void  disarmTransition();
+    void  setTransitionSpeed(float speedDegPerSec);  // clamped [MIN, DEFAULT]
+    float getTransitionSpeed() const;
+
     // Per-channel deadband (µs). Write only occurs when |target - current| > deadband[ch].
     // Default 4 µs for all channels. Increase for channels with known oscillation
     // (e.g., torso pitch when running under balance control).
@@ -245,6 +260,14 @@ private:
     // Converted to µs/tick inside update() using actual dt.
     // Defaults to JOINT_SPEED_DEFAULT_DEG_S (project_wide_defs.h) at construction.
     float _speedDegPerSec[NUM_JOINTS];
+
+    // Pose-transition slew (deg/s) and per-joint engagement. _transitionArmed is
+    // a one-shot latch consumed by setJointAngle() on smooth writes; a flagged
+    // joint slews at _transitionSpeedDegPerSec in update() until it reaches target,
+    // then its flag self-clears. See armTransition() above.
+    float _transitionSpeedDegPerSec;
+    bool  _useTransitionSpeed[NUM_JOINTS];
+    bool  _transitionArmed;
 
     unsigned long _lastUpdateMs;  // For rate limiting in update()
 

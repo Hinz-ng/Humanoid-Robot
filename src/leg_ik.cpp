@@ -182,9 +182,20 @@ LegIK::FrontalSol LegIK::solveFrontal(float y_mm, float h_frontal_mm) {
     // y=0 → hip_roll=0. y>0 (outward) → positive abduction. ✓
     sol.hip_roll_deg   = atan2f(ey, h_frontal_mm) * RAD_TO_DEG;
 
-    // Flat-foot: ankle inverts to cancel hip abduction. Sole stays horizontal.
-    // Matches UVC: A1W[s] = −k1 where k1 = CHG_SVA·atan(y/h). ✓
-    sol.ankle_roll_deg = -sol.hip_roll_deg;
+    // Flat-foot: the ankle must counter-rotate the hip roll so the sole stays
+    // horizontal. Geometrically that is ankle_roll = −hip_roll.
+    //
+    // HARDWARE SIGN CORRECTION (verified 2026-05-30): with the ankle-roll
+    // direction fields in joint_config.cpp (R=+1, L=−1), the geometric
+    // −hip_roll drives the ankle the WRONG way — the sole tilts INWARD
+    // (feet face each other) under a pure frontal command, exactly the failure
+    // the DIRECTION VERIFICATION note above predicted. This was latent until the
+    // task-space stance inset became the first sustained non-zero-y, centered
+    // (shift-authority≈0) frontal pose to reach the ankle unmodified by the
+    // CoM-shift crossfade. Positive hip_roll keeps the sole flat on this
+    // hardware. If the ankle-roll servo is re-calibrated / its direction flipped
+    // in joint_config, restore the geometric −hip_roll here.
+    sol.ankle_roll_deg = +sol.hip_roll_deg;
 
     bool clamped = false;
     sol.hip_roll_deg   = clampJoint(sol.hip_roll_deg,

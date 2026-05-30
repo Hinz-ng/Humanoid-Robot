@@ -349,6 +349,9 @@ void GaitController::start(GaitMode mode) {
         _state.meanSwingMsR     = 0.0f;
         _clearTouchdownLatch();
         _resetCompliance();
+        _resetHRestore();   // symmetric with init() and the RUNNING branch — without
+                            // this, _hRestoreActive/_hRestoreDeficitMm and their
+                            // telemetry survive a gait stop (non-zero H-Restore panel).
         _resetHeelStrike();
         _resetTrimSuppression();
         if (_ws) _ws->trigger(ShiftDirection::NONE);
@@ -398,8 +401,24 @@ void GaitController::stop() {
     _state.subState = _subState;
     _poseHoldPt     = 0;
     _state.poseHold = 0;
+    // Clear deferred swing-leg height restoration at STOPPING entry, not just at
+    // IDLE entry. The applied offset is already faded by strideScale through the
+    // ramp, but _hRestoreActive/_hRestoreDeficitMm (and the un-faded telemetry
+    // mirror in _updateHRestore) otherwise survive the full GAIT_STOP_RAMP_MS
+    // window — and indefinitely if WeightShift never settles to reach IDLE. This
+    // makes the H-Restore panel read zero the instant Stop is pressed.
+    _resetHRestore();
     Serial.printf("[GaitCtrl] STOP requested — ramping swing %.2f→0 over %ums\n",
                   _stopSwingFrac, (unsigned)GAIT_STOP_RAMP_MS);
+}
+
+void GaitController::submitStancePose(const BalanceCorrection* bc) {
+    // One-shot idle-stance submit. _submitStanceBothLegs uses strideScale=0, so
+    // the pose is the standing-ready stance (stride/capture/trim suppressed) with
+    // the task-space stanceInset baseline applied — identical to what gait holds
+    // when standing ready. Caller (WebComm STANCE) ensures gait is IDLE so this
+    // is not immediately overwritten by an active gait submission.
+    _submitStanceBothLegs(bc);
 }
 
 void GaitController::singleStep() { start(GaitMode::SINGLE_STEP); }
@@ -839,7 +858,14 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
     FootTarget t;
     t.isRightLeg   = isRight;
     t.x_mm         = GAIT_STANCE_X_OFFSET_MM;
-    t.y_mm         = 0.0f;
+    // Stance-width inset baseline. FootTarget.y_mm is per-leg own-frame with
+    // inward(adduction) negative (same convention as the W2 comLatTrim block
+    // below), so an inset of +N becomes -N on BOTH legs → symmetric adduction.
+    // UNSCALED (not gated by strideScale) — like the x baseline above — so it
+    // holds in IDLE/standing-stance submits (strideScale=0) and composes
+    // additively with WS / comLatTrim / latCapture / balance during gait. The
+    // LegIK frontal solve enforces flat-foot (ankle_roll=-hip_roll) for any y.
+    t.y_mm         = -_cfg.stanceInsetMm;
     t.h_frontal_mm = 0.0f;
 
     // Touchdown-awareness lift freeze (Stage 1).

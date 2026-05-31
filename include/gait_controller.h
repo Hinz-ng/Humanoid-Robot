@@ -323,7 +323,7 @@ struct GaitConfig {
     //                       early due to floor variation.
     // -----------------------------------------------------------------------
     bool  touchdownEnabled   = true;
-    float touchdownGatePhase = 0.5f;  // [0..1)
+    float touchdownGatePhase = 0.45f; // [0..1)
 
     // -----------------------------------------------------------------------
     // W4 — Touchdown compliance.

@@ -115,7 +115,7 @@ struct WeightShiftConfig {
     // more time to execute the commanded bias under load. The IMU gate blocks
     // foot lift regardless of ramp completion, so a longer ramp here only costs
     // per-step time, not stability.
-    float ramp_ms = 300.0f;
+    float ramp_ms = 270.0f;
 
     // Minimum dwell at progress = ±1 before an opposite-direction trigger is
     // honoured. 0 disables the gate (legacy behaviour).

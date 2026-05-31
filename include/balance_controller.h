@@ -31,7 +31,7 @@ struct BalanceConfig {
     //   large errors use Kp=20 (same recovery as before). Net effect: stability
     //   near equilibrium is improved while large-disturbance response is unchanged.
     // After flashing: re-tune from WebSocket using CMD:BALANCE_TUNE:Kp=X
-    float pitch_setpoint_rad = 0.0f;   // rad. WS: "setpoint"
+    float pitch_setpoint_rad = 10.0f;  // rad. WS: "setpoint"
     float Kp = 8.0f;                  // deg/rad. WS: "Kp"
     float Kd = 0.1f;                   // deg/(rad/s). WS: "Kd"
 

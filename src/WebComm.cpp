@@ -12,6 +12,7 @@
 #include "lsm6dsv_driver.h"    // LSM6DSVDriver for foot IMU diagnostic
 #include "foot_contact.h"
 #include "foot_impact.h"
+#include "walking_instrumentation.h"  // per-step walking diagnostics (telemetry only)
 
 // Constructor ---------------------------------------------------------------
 WebComm::WebComm(ServoControl* servo)
@@ -57,6 +58,10 @@ void WebComm::setSwingFootLeveler(SwingFootLeveler* l) {
 
 void WebComm::setFootImpactDetector(FootImpactDetector* d) {
     _footImpact = d;
+}
+
+void WebComm::setWalkingInstrumentation(WalkingInstrumentation* w) {
+    _walkInstr = w;
 }
 
 void WebComm::setFootNeutralPitch(float leftRad, float rightRad) {
@@ -333,6 +338,63 @@ void WebComm::broadcastFootImpact() {
         R.magnitude_g, R.delta_g, (unsigned long)R.detect_count,
         (unsigned long)R.ms_since_last, R.last_magnitude_g, R.last_delta_g
     );
+    _sendFiltered(buf);
+}
+
+// =============================================================================
+//  WALKING INSTRUMENTATION BROADCAST
+//
+//  Per-step walking diagnostics. Emits one "WALKING:" packet whenever a step
+//  completes, plus a ≤1 Hz heartbeat so a freshly-opened panel populates.
+//  Packet layout (text, comma-separated key=value, history is ';'-joined):
+//    WALKING:en=..,step=..,n=..,onsets=..,<k>=cur,<k>A=avg,<k>H=h1;h2;..,..
+//  History is newest-first (h1 = Step -1). No-op if not wired / no clients.
+// =============================================================================
+void WebComm::broadcastWalkingInstr() {
+    if (_walkInstr == nullptr || ws.count() == 0) return;
+
+    const WalkingInstrState& s = _walkInstr->getState();
+
+    // Send on step change; otherwise heartbeat at ≤1 Hz (metrics only change
+    // once per completed step, so a fixed high rate would be pure waste).
+    const uint32_t now = micros();
+    const bool stepChanged = (s.completedSteps != _lastWalkInstrStep);
+    if (!stepChanged && (now - _lastWalkInstrBroadcast_us) < 1000000UL) return;
+    _lastWalkInstrBroadcast_us = now;
+    _lastWalkInstrStep         = s.completedSteps;
+
+    // Short wire keys, in WiMetric enum order.
+    static const char* const WI_KEYS[WI_METRIC_COUNT] = {
+        "tdAcc", "tdImp", "tdSwSpd", "dblTd", "dblInt",
+        "swSpd", "swHor", "swVer", "swEng",
+        "comBob", "comVz", "comLat", "comSag", "trRate", "trTd",
+        "reach", "ffGuard"
+    };
+
+    char buf[3072];
+    const int cap = (int)sizeof(buf);
+    int n = snprintf(buf, cap, "WALKING:en=%d,step=%lu,n=%u,onsets=%u",
+                     s.enabled ? 1 : 0,
+                     (unsigned long)s.completedSteps,
+                     (unsigned)s.histCount,
+                     (unsigned)s.lastOnsetCount);
+    if (n < 0) return;
+    if (n > cap) n = cap;
+
+    for (uint8_t k = 0; k < WI_METRIC_COUNT; ++k) {
+        if (n >= cap) break;
+        int w = snprintf(buf + n, cap - n, ",%s=%.3f,%sA=%.3f,%sH=",
+                         WI_KEYS[k], s.current.v[k], WI_KEYS[k], s.avg[k], WI_KEYS[k]);
+        if (w < 0) break;
+        n += w; if (n >= cap) { n = cap; break; }
+        for (uint8_t i = 0; i < s.histCount; ++i) {
+            if (n >= cap) break;
+            int wh = snprintf(buf + n, cap - n, "%s%.3f",
+                              (i == 0) ? "" : ";", s.hist[i].v[k]);
+            if (wh < 0) break;
+            n += wh; if (n >= cap) { n = cap; break; }
+        }
+    }
     _sendFiltered(buf);
 }
 
@@ -1327,6 +1389,35 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                               _footImpact->getConfig().lpf_alpha,
                               (unsigned long)_footImpact->getConfig().refractory_ms);
             }
+        }
+        // ─────────────────────────────────────────────────────────────────
+        //  WALKING INSTRUMENTATION (per-step diagnostics, telemetry only)
+        //  Protocol: CMD:WALKING_INSTR:reset=1  |  CMD:WALKING_INSTR:enable=0|1
+        // ─────────────────────────────────────────────────────────────────
+        else if (cmd.startsWith("WALKING_INSTR:")) {
+            if (_walkInstr) {
+                String params = cmd.substring(14);  // after "WALKING_INSTR:"
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    if (comma == -1) comma = params.length();
+                    String pair = params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq > 0) {
+                        String key = pair.substring(0, eq);
+                        float val = pair.substring(eq + 1).toFloat();
+                        if      (key == "reset" && val != 0.0f) _walkInstr->reset();
+                        else if (key == "enable")               _walkInstr->setEnabled(val != 0.0f);
+                    }
+                    start = comma + 1;
+                }
+                _lastWalkInstrStep = 0xFFFFFFFFUL;  // force an immediate refresh
+                broadcastWalkingInstr();
+                Serial.printf("[WebComm] WALKING_INSTR: enabled=%d steps=%lu\n",
+                              (int)_walkInstr->getState().enabled,
+                              (unsigned long)_walkInstr->getState().completedSteps);
+            }
+            return;
         }
         
         // ---------------------------------------------------------------------

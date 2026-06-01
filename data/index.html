@@ -331,6 +331,35 @@
 /* Gait telemetry cells (reuse bal-out-cell style) */
 .gait-telem-grid  { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-bottom: 14px; }
 
+/* ── Walking Instrumentation Panel ───────────────────────────────────── */
+.wi-controls { display: flex; align-items: center; gap: 14px; margin-bottom: 10px;
+               font-size: 12px; color: #aaa; }
+.wi-controls label  { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.wi-controls button { background: #4527a0; color: #fff; border: 1px solid #9575cd;
+                      padding: 5px 12px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+.wi-meta { font-size: 10px; color: #777; margin: 0 0 10px; font-family: monospace; }
+.wi-metric { background: #111; border: 1px solid #2a2a2a; border-radius: 4px;
+             margin-bottom: 4px; overflow: hidden; }
+.wi-metric-head { display: grid; grid-template-columns: 1.7fr 1fr 1fr; align-items: center;
+                  gap: 8px; padding: 7px 10px; cursor: pointer;
+                  -webkit-user-select: none; -ms-user-select: none; user-select: none; }
+.wi-metric-head:hover { background: #161616; }
+.wi-metric-name { font-size: 11px; color: #ccc; }
+.wi-tag { font-size: 8px; text-transform: uppercase; letter-spacing: 0.5px;
+          padding: 1px 4px; border-radius: 3px; margin-left: 6px; vertical-align: middle; }
+.wi-tag-measured { background: #14331b; color: #66bb6a; }
+.wi-tag-cmd      { background: #33260a; color: #ffb74d; }
+.wi-metric-sub { font-size: 9px; color: #777; text-transform: uppercase; letter-spacing: 0.5px;
+                 text-align: right; }
+.wi-metric-cur { font-size: 13px; font-family: 'Courier New', monospace; color: #fff;  text-align: right; }
+.wi-metric-avg { font-size: 13px; font-family: 'Courier New', monospace; color: #b39ddb; text-align: right; }
+.wi-metric-detail { display: none; padding: 6px 10px 9px; background: #0c0c0c; border-top: 1px solid #222; }
+.wi-metric-detail.open { display: block; }
+.wi-hist-row { display: flex; justify-content: space-between; padding: 1px 0;
+               font-size: 11px; font-family: 'Courier New', monospace; color: #aaa; }
+.wi-hist-row span:first-child { color: #777; }
+.wi-hist-empty { font-size: 10px; color: #555; font-style: italic; }
+
 /* ── IK Test Panel ───────────────────────────────────────────────────── */
 .ik-panel { background: #1a2a2a; border: 1px solid #1a4a4a;
             border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
@@ -1583,6 +1612,36 @@
 
     </div><!-- /#gaitDiagBody -->
 </div><!-- /.gait-panel (diagnostics) -->
+
+<!-- ── Walking Instrumentation Panel ──────────────────────────────────── -->
+<!-- Per-step walking diagnostics (telemetry only). Aggregates ONE value per
+     completed step into a fixed 10-step ring buffer in the firmware. Mirrors
+     the Gait Diagnostics styling. Metric rows are built by
+     renderWalkingInstrRows() from WI_METRICS; values are filled by
+     parseWalkingInstr() from the firmware "WALKING:" packet. Each metric shows
+     Current + Average; click a metric to expand its last-10-steps history. -->
+<div class="gait-panel">
+    <div class="gait-header" onclick="toggleWalkingInstrPanel()">
+        <h3>🔬 Walking Instrumentation</h3>
+        <span class="gait-chevron" id="wiChevron">▼</span>
+    </div>
+    <div class="gait-body hidden" id="wiBody">
+        <div class="wi-controls">
+            <label><input type="checkbox" id="wiEnable" checked
+                   onclick="setWalkingInstrEnabled(this.checked)"> Enabled</label>
+            <button id="wiResetBtn" onclick="resetWalkingInstr()">Reset history</button>
+        </div>
+        <div class="wi-meta" id="wiMeta">No steps yet.</div>
+        <div class="section-label">Touchdown</div>
+        <div id="wiSecTouchdown"></div>
+        <div class="section-label">Swing Energy</div>
+        <div id="wiSecSwing"></div>
+        <div class="section-label">CoM / Body Response</div>
+        <div id="wiSecCoM"></div>
+        <div class="section-label">Reach</div>
+        <div id="wiSecReach"></div>
+    </div>
+</div><!-- /.gait-panel (walking instrumentation) -->
 
 <!-- ── Gait Controller Panel (Phase 1: Stepping In Place) ──────────────── -->
 <div class="gait-panel">
@@ -3260,6 +3319,9 @@ function initWebSocket() {
         else if (msg.startsWith("GAIT:")) {
             parseGaitState(msg.substring(5));
         }
+        else if (msg.startsWith("WALKING:")) {
+            parseWalkingInstr(msg.substring(8));
+        }
         else if (msg.startsWith("BALANCE:")) {
             // Parse compact key=value pairs from firmware broadcastBalanceState().
             // Key names are intentionally short to minimise packet size.
@@ -4072,6 +4134,145 @@ function toggleGaitDiagPanel() {
     const open    = body.style.display !== "none";
     body.style.display = open ? "none" : "block";
     chevron.classList.toggle("open", !open);
+}
+
+// ── Walking Instrumentation panel ───────────────────────────────────────
+// Per-step walking diagnostics. Rows are generated from WI_METRICS (single
+// source of truth, matching the firmware wire keys) and filled from the
+// "WALKING:" packet. Telemetry only — no control coupling.
+function toggleWalkingInstrPanel() {
+    const body    = document.getElementById("wiBody");
+    const chevron = document.getElementById("wiChevron");
+    const open    = !body.classList.contains("hidden");  // currently visible?
+    body.classList.toggle("hidden", open);               // open → hide, else show
+    chevron.classList.toggle("open", !open);
+    if (!open) renderWalkingInstrRows();                 // build rows on first reveal
+}
+
+// key matches the firmware WALKING: wire key. kind: measured | cmd (commanded
+// kinematic proxy). bool: true for the 0/1 double-touchdown flag.
+const WI_METRICS = [
+    { key:"tdAcc",   sec:"Touchdown", label:"Peak Touchdown Accel",        unit:"g",      dec:2, kind:"measured" },
+    { key:"tdImp",   sec:"Touchdown", label:"Touchdown Impulse Proxy",     unit:"g·s",    dec:3, kind:"measured" },
+    { key:"tdSwSpd", sec:"Touchdown", label:"Touchdown Swing Speed",       unit:"mm/s",   dec:0, kind:"cmd" },
+    { key:"dblTd",   sec:"Touchdown", label:"Double-Touchdown Detected",   unit:"",       dec:0, kind:"measured", bool:true },
+    { key:"dblInt",  sec:"Touchdown", label:"Double-Touchdown Interval",   unit:"ms",     dec:0, kind:"measured" },
+    { key:"swSpd",   sec:"Swing",     label:"Peak Swing Speed",            unit:"mm/s",   dec:0, kind:"cmd" },
+    { key:"swHor",   sec:"Swing",     label:"Peak Swing Horizontal Speed", unit:"mm/s",   dec:0, kind:"cmd" },
+    { key:"swVer",   sec:"Swing",     label:"Peak Swing Vertical Speed",   unit:"mm/s",   dec:0, kind:"cmd" },
+    { key:"swEng",   sec:"Swing",     label:"Swing Energy Proxy",          unit:"mm²/s²", dec:0, kind:"cmd" },
+    { key:"comBob",  sec:"CoM",       label:"Peak-to-Peak CoM Bob",        unit:"mm",     dec:2, kind:"cmd" },
+    { key:"comVz",   sec:"CoM",       label:"Vert CoM Vel @ Touchdown",    unit:"mm/s",   dec:1, kind:"cmd" },
+    { key:"comLat",  sec:"CoM",       label:"Peak Lateral CoM Speed",      unit:"mm/s",   dec:1, kind:"measured" },
+    { key:"comSag",  sec:"CoM",       label:"Peak Sagittal CoM Speed",     unit:"mm/s",   dec:1, kind:"measured" },
+    { key:"trRate",  sec:"CoM",       label:"Peak Torso Roll Rate",        unit:"°/s",    dec:1, kind:"measured" },
+    { key:"trTd",    sec:"CoM",       label:"Torso Roll @ Touchdown",      unit:"°",      dec:2, kind:"measured" },
+    { key:"reach",   sec:"Reach",     label:"Peak Reach Percentage",       unit:"%",      dec:1, kind:"measured" },
+    { key:"ffGuard", sec:"Reach",     label:"Flat-Foot Guard Activations", unit:"",       dec:0, kind:"measured" },
+];
+const WI_SECMAP = { Touchdown:"wiSecTouchdown", Swing:"wiSecSwing", CoM:"wiSecCoM", Reach:"wiSecReach" };
+let _wiRowsBuilt = false;
+
+function _wiFmt(metric, val) {
+    if (val === undefined || val === null || isNaN(val)) return "—";
+    if (metric.bool) return val >= 0.5 ? "YES" : "NO";
+    const s = Number(val).toFixed(metric.dec);
+    return metric.unit ? (s + " " + metric.unit) : s;
+}
+
+function renderWalkingInstrRows() {
+    if (_wiRowsBuilt) return;
+    WI_METRICS.forEach(m => {
+        const host = document.getElementById(WI_SECMAP[m.sec]);
+        if (!host) return;
+        const tag = (m.kind === "measured")
+            ? '<span class="wi-tag wi-tag-measured">meas</span>'
+            : '<span class="wi-tag wi-tag-cmd">cmd</span>';
+        const row = document.createElement("div");
+        row.className = "wi-metric";
+        row.innerHTML =
+            '<div class="wi-metric-head" onclick="toggleWiMetric(\'' + m.key + '\')">' +
+              '<div class="wi-metric-name">' + m.label + tag + '</div>' +
+              '<div><div class="wi-metric-sub">Current</div>' +
+                   '<div class="wi-metric-cur" id="wiCur_' + m.key + '">—</div></div>' +
+              '<div><div class="wi-metric-sub">Average</div>' +
+                   '<div class="wi-metric-avg" id="wiAvg_' + m.key + '">—</div></div>' +
+            '</div>' +
+            '<div class="wi-metric-detail" id="wiDet_' + m.key + '">' +
+              '<div class="wi-hist-empty" id="wiHist_' + m.key + '">No completed steps yet.</div>' +
+            '</div>';
+        host.appendChild(row);
+    });
+    _wiRowsBuilt = true;
+}
+
+function toggleWiMetric(key) {
+    const det = document.getElementById("wiDet_" + key);
+    if (det) det.classList.toggle("open");
+}
+
+function parseWalkingInstr(payload) {
+    renderWalkingInstrRows();
+    const v = {};
+    payload.split(",").forEach(pair => {
+        const eq = pair.indexOf("=");
+        if (eq !== -1) v[pair.substring(0, eq)] = pair.substring(eq + 1);
+    });
+
+    // Enabled toggle + meta/audit line.
+    const enEl = document.getElementById("wiEnable");
+    if (enEl && v["en"] !== undefined) enEl.checked = (v["en"] === "1");
+    const meta = document.getElementById("wiMeta");
+    if (meta) {
+        const steps  = (v["step"]   !== undefined) ? v["step"]   : "0";
+        const onsets = (v["onsets"] !== undefined) ? v["onsets"] : "0";
+        meta.textContent = "Completed steps: " + steps +
+                           "   ·   last-step landing onsets: " + onsets +
+                           ((v["en"] === "0") ? "   ·   (disabled)" : "");
+    }
+
+    const nSteps = parseInt(v["n"] || "0", 10);
+    WI_METRICS.forEach(m => {
+        const cur = parseFloat(v[m.key]);
+        const avg = parseFloat(v[m.key + "A"]);
+        const curEl = document.getElementById("wiCur_" + m.key);
+        const avgEl = document.getElementById("wiAvg_" + m.key);
+        if (curEl) curEl.textContent = _wiFmt(m, cur);
+        if (avgEl) {
+            if (m.bool) {
+                // average of a 0/1 metric = fraction of recent steps that bounced
+                const cnt = isNaN(avg) ? 0 : Math.round(avg * nSteps);
+                avgEl.textContent = isNaN(avg) ? "—" : (cnt + "/" + nSteps + " steps");
+            } else {
+                avgEl.textContent = _wiFmt(m, avg);
+            }
+        }
+        // history list (newest first → Step -1)
+        const hist = document.getElementById("wiHist_" + m.key);
+        if (hist) {
+            const raw  = v[m.key + "H"];
+            const vals = (raw && raw.length) ? raw.split(";") : [];
+            if (!vals.length) {
+                hist.className = "wi-hist-empty";
+                hist.textContent = "No completed steps yet.";
+            } else {
+                hist.className = "";
+                hist.innerHTML = vals.map((val, i) =>
+                    '<div class="wi-hist-row"><span>Step -' + (i + 1) + '</span>' +
+                    '<span>' + _wiFmt(m, parseFloat(val)) + '</span></div>'
+                ).join("");
+            }
+        }
+    });
+}
+
+function resetWalkingInstr() {
+    if (typeof ws !== "undefined" && ws && ws.readyState === 1)
+        ws.send("CMD:WALKING_INSTR:reset=1");
+}
+function setWalkingInstrEnabled(on) {
+    if (typeof ws !== "undefined" && ws && ws.readyState === 1)
+        ws.send("CMD:WALKING_INSTR:enable=" + (on ? 1 : 0));
 }
 
 // Maps slider id → { label element id, display decimals }

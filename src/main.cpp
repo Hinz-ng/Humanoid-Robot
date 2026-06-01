@@ -23,6 +23,7 @@ void runFootImpactTests();
 #include "foot_impact.h"
 #include "lsm6dsv_driver.h"
 #include "swing_foot_leveler.h"
+#include "walking_instrumentation.h"   // per-step walking diagnostics (telemetry only)
 
 // Build a FilterConfig tuned for the foot LSM6DSV. Mirrors torso defaults
 // where defensible; deviates where the chip differs from BMI160 or where
@@ -118,6 +119,7 @@ StateEstimator rightFootEstimator(_makeFootFilterConfig());
 FootContactConfig footContactCfg;
 SwingFootLeveler  swingFootLeveler;
 FootImpactDetector footImpactDetector;
+WalkingInstrumentation walkingInstr;   // per-step walking diagnostics (telemetry only)
 
 #endif
 GaitController    gaitController;   // open-loop walking gait
@@ -190,6 +192,7 @@ void oe_clear() {
 #if FOOT_IMU_ENABLED
     swingFootLeveler.reset();
     footImpactDetector.reset();
+    walkingInstr.reset();
 #endif
     _oe_estopped = false;
     _oe_released = true;
@@ -284,6 +287,9 @@ void setup() {
     gaitController.setFootImpactDetector(&footImpactDetector);
     // Read-only foot estimators for touchdown roll telemetry (no control use).
     gaitController.setFootEstimators(&leftFootEstimator, &rightFootEstimator);
+    // Walking instrumentation: per-step diagnostics aggregator (telemetry only).
+    walkingInstr.init();
+    webComm.setWalkingInstrumentation(&walkingInstr);
 #endif
 
     Serial.println("System Ready.");
@@ -408,6 +414,13 @@ void loop() {
             // flush() dispatches the highest-priority command per joint, then clears slots.
             motionManager.flush();
 
+#if FOOT_IMU_ENABLED
+            // Walking instrumentation: per-step diagnostics aggregator. Pure
+            // read-only consumer of this tick's state — submits no joints.
+            walkingInstr.update(dt, state, lf_state, rf_state,
+                                footImpactDetector, gaitController.getState());
+#endif
+
             webComm.broadcastIMU(raw);
             webComm.broadcastEstimate(state);
 #if FOOT_IMU_ENABLED
@@ -415,6 +428,7 @@ void loop() {
             webComm.broadcastFootEstimate(lf_state, rf_state);
             webComm.broadcastFootContact(footSnapPtr);
             webComm.broadcastFootImpact();
+            webComm.broadcastWalkingInstr();
 #endif
             webComm.broadcastBalanceState(balState);
             webComm.broadcastTorsoState();

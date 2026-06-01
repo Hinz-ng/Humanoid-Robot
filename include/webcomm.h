@@ -18,6 +18,7 @@ class TorsoStabilizer;   // forward declare — joint-space torso balance
 class LSM6DSVDriver;     // forward declare — foot IMU diagnostic
 class SwingFootLeveler;  // forward declare — swing-foot leveler (L0+)
 class FootImpactDetector;
+class WalkingInstrumentation;  // forward declare — per-step walking diagnostics
 
 class WebComm {
 public:    // ctor can be invoked at global scope; it simply stores the servo pointer.
@@ -40,6 +41,9 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // FOOT_IMU is compiled out).
     void broadcastFootContact(const FootContactSnapshot* snap);
     void broadcastFootImpact();
+    // Per-step walking diagnostics ("WALKING:" packet). Sends on step change plus
+    // a ≤1 Hz heartbeat. No-op if no WalkingInstrumentation is wired.
+    void broadcastWalkingInstr();
     void broadcastCalibStatus(CalibState state, float progress); // --- ADD
     void broadcastBalanceState(const BalanceState& state);
     // Independent torso stabiliser telemetry (TORSO: packet). Rate-limited to
@@ -71,6 +75,9 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // Wire swing-foot leveler for CMD:SWING_LEVELER_TUNE and GAIT: telemetry.
     void setSwingFootLeveler(SwingFootLeveler* l);
     void setFootImpactDetector(FootImpactDetector* d);
+    // Wire per-step walking instrumentation for the "WALKING:" packet and the
+    // CMD:WALKING_INSTR:reset/enable commands.
+    void setWalkingInstrumentation(WalkingInstrumentation* w);
     // Phase 3: dual-parameter form preserved for callers that set both
     // neutrals atomically (setup() in main.cpp). Prefer the Side-keyed overload
     // for new code — positional parameter order is the silent-swap hazard this
@@ -104,7 +111,10 @@ private:
     float              _rightFootNeutralPitchRad = 0.0f;
     SwingFootLeveler*  _swingLeveler        = nullptr;
     FootImpactDetector* _footImpact         = nullptr;
-    
+    WalkingInstrumentation* _walkInstr      = nullptr;  // per-step walking diagnostics
+    uint32_t           _lastWalkInstrBroadcast_us = 0;
+    uint32_t           _lastWalkInstrStep   = 0;        // last broadcast step counter
+
     void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
     void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
 

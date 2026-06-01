@@ -7,6 +7,7 @@
 // No MotionManager, no OE/e-stop, no control feedback.
 // =============================================================================
 #include "walking_instrumentation.h"
+#include "project_wide_defs.h"   // FOOT_IMU_ACCEL_SCALE_LSB_PER_G
 #include <math.h>
 
 static constexpr float WI_RAD2DEG = 57.295779513f;
@@ -82,8 +83,21 @@ void WalkingInstrumentation::_finalizeStep() {
     m.v[WI_TORSO_ROLL_TD]  = _acc.torsoRollTdDeg;
     m.v[WI_REACH_PCT]      = _acc.peakReachPct;
     m.v[WI_FLATFOOT_ACT]   = (float)_acc.flatActCount;
+    m.v[WI_TD_VERT_PEAK]   = _acc.tdVertPeakG;
+    m.v[WI_TD_HORIZ_PEAK]  = _acc.tdHorizPeakG;
+    m.v[WI_TD_IMPULSE_DUR] = _acc.impulseDurMs;
+    m.v[WI_TD_WIN_ROLL]    = _acc.tdWinRollDps;
+    // Signed offset (peak-roll sample time − primary touchdown). Negative = the
+    // dominant body kick precedes contact. Only meaningful once primary latched.
+    m.v[WI_PEAK_ROLL_TIME] = _acc.primarySet
+        ? (float)((int32_t)_acc.peakRollTimeAbsMs - (int32_t)_acc.firstOnsetMs)
+        : 0.0f;
 
-    // Push newest-first into the ring (shift down by one). 10×17 floats once per
+    // Onset timeline travels with the step (copied into the same ring entry).
+    m.onsetN = _acc.onsetN;
+    for (uint8_t i = 0; i < WI_ONSET_MAX; ++i) m.onsetMs[i] = _acc.onsetMs[i];
+
+    // Push newest-first into the ring (shift down by one). 10 structs once per
     // ~1-2 s — negligible vs the 400 Hz hot path.
     for (int i = WI_HISTORY_LEN - 1; i > 0; --i) _state.hist[i] = _state.hist[i - 1];
     _state.hist[0] = m;
@@ -106,6 +120,8 @@ void WalkingInstrumentation::update(float dt_s,
                                     const IMUState&           torso,
                                     const IMUState&           leftFoot,
                                     const IMUState&           rightFoot,
+                                    const RawIMUData&         leftFootRaw,
+                                    const RawIMUData&         rightFootRaw,
                                     const FootImpactDetector& impact,
                                     const GaitState&          gait) {
     _state.enabled = _cfg.enabled;
@@ -197,7 +213,18 @@ void WalkingInstrumentation::update(float dt_s,
         const float adps = fabsf(torso.rollRate) * WI_RAD2DEG;
         if (avy  > _acc.peakVyCoM)   _acc.peakVyCoM   = avy;
         if (avx  > _acc.peakVxCoM)   _acc.peakVxCoM   = avx;
-        if (adps > _acc.peakRollDps) _acc.peakRollDps = adps;
+        // Track the peak roll rate AND the time it occurred (for the offset-to-TD
+        // metric). _finalizeStep() differences this against firstOnsetMs.
+        if (adps > _acc.peakRollDps) { _acc.peakRollDps = adps; _acc.peakRollTimeAbsMs = now; }
+        // Touchdown-response window: max roll rate inside [start,end] ms after the
+        // primary touchdown only — isolates the touchdown-specific roll kick.
+        if (_acc.primarySet) {
+            const uint32_t sinceTd = now - _acc.firstOnsetMs;
+            if (sinceTd >= _cfg.tdRollWinStartMs && sinceTd <= _cfg.tdRollWinEndMs &&
+                adps > _acc.tdWinRollDps) {
+                _acc.tdWinRollDps = adps;
+            }
+        }
     }
 
     // ---- peak reach % (max of both legs) ----
@@ -215,6 +242,33 @@ void WalkingInstrumentation::update(float dt_s,
         if (aR && !_prevFlatActive[sideIdx(Side::RIGHT)]) _acc.flatActCount++;
         _prevFlatActive[sideIdx(Side::LEFT)]  = aL;
         _prevFlatActive[sideIdx(Side::RIGHT)] = aR;
+    }
+
+    // ---- per-foot accel decomposition (sole-normal vs in-sole-plane) ----
+    // The remap applied in main.cpp is a constant chip→foot-frame transform, so
+    // remapped Z is the foot's local vertical (sole-normal) and X/Y span the
+    // sole plane. Same one-pole LPF (alpha) the impact detector runs, applied
+    // per-axis — a decomposition of the same conditioned signal, no new filter.
+    const RawIMUData* rawFoot[SIDE_COUNT] = { &leftFootRaw, &rightFootRaw };
+    const float accAlpha = impact.getConfig().lpf_alpha;
+    float aVert[SIDE_COUNT]  = {0.0f, 0.0f};   // |a_z|            [g]
+    float aHoriz[SIDE_COUNT] = {0.0f, 0.0f};   // hypot(a_x,a_y)   [g]
+    for (uint8_t i = 0; i < SIDE_COUNT; ++i) {
+        FootDetect& fd = _foot[i];
+        if (rawFoot[i]->valid) {
+            const float ax = (float)rawFoot[i]->accel_x / FOOT_IMU_ACCEL_SCALE_LSB_PER_G;
+            const float ay = (float)rawFoot[i]->accel_y / FOOT_IMU_ACCEL_SCALE_LSB_PER_G;
+            const float az = (float)rawFoot[i]->accel_z / FOOT_IMU_ACCEL_SCALE_LSB_PER_G;
+            if (!fd.accSeeded) { fd.axF = ax; fd.ayF = ay; fd.azF = az; fd.accSeeded = true; }
+            else {
+                fd.axF = accAlpha * ax + (1.0f - accAlpha) * fd.axF;
+                fd.ayF = accAlpha * ay + (1.0f - accAlpha) * fd.ayF;
+                fd.azF = accAlpha * az + (1.0f - accAlpha) * fd.azF;
+            }
+        }
+        // Hold last value when a read is invalid (footstrike valid-flicker).
+        aVert[i]  = fabsf(fd.azF);
+        aHoriz[i] = sqrtf(fd.axF * fd.axF + fd.ayF * fd.ayF);
     }
 
     // ---- touchdown onset detection (both feet) ----
@@ -255,6 +309,8 @@ void WalkingInstrumentation::update(float dt_s,
             _acc.comVzTd         = _bodyHvelPrev;                          // descent just before contact
             _acc.torsoRollTdDeg  = torso.valid ? (torso.roll * WI_RAD2DEG) : 0.0f;
             _acc.onsetCount      = 1;                                       // the strike itself
+            _acc.onsetN          = 0;
+            _acc.onsetMs[_acc.onsetN++] = 0;                                // primary onset at t=0
             _acc.impulseOpen     = true;
             _acc.impulseStartMs  = now;
             _acc.liftConfirmed   = false;
@@ -262,10 +318,21 @@ void WalkingInstrumentation::update(float dt_s,
         }
     } else {
         // Impulse integration on the landing foot, time-boxed after primary.
+        // Same window also bounds the duration timer and the vert/horiz peaks so
+        // every touchdown-decomposition metric shares one definition of "impact".
         if (_acc.impulseOpen) {
             if ((now - _acc.impulseStartMs) <= _cfg.impulseWindowMs) {
-                const float excess = mag[_acc.landingFoot] - _cfg.contactBaselineG;
+                const uint8_t lf = _acc.landingFoot;
+                const float   lm = mag[lf];
+                const float excess = lm - _cfg.contactBaselineG;
                 if (excess > 0.0f && dtOk) _acc.impulseGs += excess * dt_s;
+                // Duration the landing foot stays at/above the onset threshold
+                // (sharp spike → short; soft impact → long).
+                const float onsetHi = _cfg.contactBaselineG + _cfg.contactThreshG;
+                if (lm >= onsetHi && dtOk) _acc.impulseDurMs += dt_s * 1000.0f;
+                // Vertical (sole-normal) vs horizontal (in-sole) impact peaks.
+                if (aVert[lf]  > _acc.tdVertPeakG)  _acc.tdVertPeakG  = aVert[lf];
+                if (aHoriz[lf] > _acc.tdHorizPeakG) _acc.tdHorizPeakG = aHoriz[lf];
             } else {
                 _acc.impulseOpen = false;
             }
@@ -285,6 +352,11 @@ void WalkingInstrumentation::update(float dt_s,
 
         if (onset[_acc.landingFoot]) {
             _acc.onsetCount++;
+            // Record the onset offset for the audit timeline (capped length).
+            if (_acc.onsetN < WI_ONSET_MAX) {
+                const uint32_t off = now - _acc.firstOnsetMs;
+                _acc.onsetMs[_acc.onsetN++] = (off > 65535u) ? 65535u : (uint16_t)off;
+            }
             if (_acc.liftConfirmed && !_acc.doubleTd) {
                 _acc.doubleTd      = true;
                 _acc.doubleTdIntMs = (float)(now - _acc.firstOnsetMs);

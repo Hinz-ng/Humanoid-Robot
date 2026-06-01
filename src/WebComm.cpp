@@ -368,10 +368,11 @@ void WebComm::broadcastWalkingInstr() {
         "tdAcc", "tdImp", "tdSwSpd", "dblTd", "dblInt",
         "swSpd", "swHor", "swVer", "swEng",
         "comBob", "comVz", "comLat", "comSag", "trRate", "trTd",
-        "reach", "ffGuard"
+        "reach", "ffGuard",
+        "tdVert", "tdHoriz", "tdDur", "tdWinRoll", "rollT"
     };
 
-    char buf[3072];
+    char buf[4096];
     const int cap = (int)sizeof(buf);
     int n = snprintf(buf, cap, "WALKING:en=%d,step=%lu,n=%u,onsets=%u",
                      s.enabled ? 1 : 0,
@@ -393,6 +394,26 @@ void WebComm::broadcastWalkingInstr() {
                               (i == 0) ? "" : ";", s.hist[i].v[k]);
             if (wh < 0) break;
             n += wh; if (n >= cap) { n = cap; break; }
+        }
+    }
+
+    // Onset timeline (audit): per-step onset offsets in ms (primary = 0),
+    // newest-first. Steps joined by '|', offsets within a step by ';'.
+    //   onTL=0;41;88|0;52|0
+    if (n < cap) {
+        int w = snprintf(buf + n, cap - n, ",onTL=");
+        if (w > 0) { n += w; if (n > cap) n = cap; }
+    }
+    for (uint8_t i = 0; i < s.histCount && n < cap; ++i) {
+        if (i > 0) {
+            int w = snprintf(buf + n, cap - n, "|");
+            if (w < 0) break; n += w; if (n >= cap) { n = cap; break; }
+        }
+        const WalkingStepMetrics& st = s.hist[i];
+        for (uint8_t j = 0; j < st.onsetN && n < cap; ++j) {
+            int w = snprintf(buf + n, cap - n, "%s%u",
+                             (j == 0) ? "" : ";", (unsigned)st.onsetMs[j]);
+            if (w < 0) break; n += w; if (n >= cap) { n = cap; break; }
         }
     }
     _sendFiltered(buf);

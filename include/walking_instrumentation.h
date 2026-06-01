@@ -3,10 +3,11 @@
 // MODULE:  diagnostics
 // LAYER:   3.5 — Telemetry aggregator (peer of foot_impact, foot_contact)
 //
-// PURPOSE: Per-step walking diagnostics. Aggregates 17 metrics once per
-//          completed step (one swing half-cycle) into a fixed 10-step ring
-//          buffer so competing walking-bottleneck hypotheses (swing-leg
-//          momentum, touchdown impulse, support-transfer, double-touchdown,
+// PURPOSE: Per-step walking diagnostics. Aggregates 22 scalar metrics plus an
+//          onset timeline once per completed step (one swing half-cycle) into a
+//          fixed 10-step ring buffer so competing walking-bottleneck hypotheses
+//          (swing-leg momentum, touchdown impulse + its vertical/horizontal
+//          decomposition and timing, support-transfer, double-touchdown,
 //          vertical CoM bob, reach saturation) can be compared from data
 //          instead of by eye.
 //
@@ -19,6 +20,13 @@
 // INPUTS  (passed by const-ref each tick, see update()):
 //   - IMUState torso          : measured body response (vx/vy CoM, rollRate, roll)
 //   - IMUState left/right foot : foot gyro rates for the double-touchdown lift FSM
+//   - RawIMUData left/right foot: REMAPPED (robot/foot-frame) raw foot accel — the
+//                                same lf_raw/rf_raw the impact detector consumes.
+//                                Used ONLY to decompose the touchdown impulse into
+//                                its sole-normal (vertical) and in-sole (horizontal)
+//                                axes. The remap is a constant chip→foot mounting
+//                                transform, so remapped Z is the foot's local
+//                                vertical (sole-normal) and X/Y span the sole plane.
 //   - FootImpactDetector       : already-filtered per-foot accel magnitude (g)
 //   - GaitState                : step boundary (subState), commanded foot targets,
 //                                reach %, flat-foot error, touchdown anchor
@@ -51,15 +59,41 @@
 //   surfaced separately (lastOnsetCount) so the boolean stays auditable against
 //   logged traces. Treat the boolean as provisional until validated on hardware.
 //
-// DEPENDENCIES: state_estimator.h (IMUState), foot_impact.h (FootImpactDetector),
+// TOUCHDOWN DECOMPOSITION (added 2026-06-01) — answers "where/how does the
+// disturbance enter": all anchored to the SAME primary-touchdown latch already
+// used for the impulse proxy, so they are directly comparable.
+//   - Peak Roll-Rate Time [ms]: signed offset (peak-roll sample time − primary
+//     touchdown time). Negative = the body's biggest kick precedes contact;
+//     positive = it follows. Localizes the dominant disturbance in the step.
+//   - Touchdown-Window Peak Roll Rate [deg/s]: max |rollRate| inside a fixed
+//     [start,end] ms window after primary touchdown (touchdown-specific, not
+//     whole-step). Window bounds are config (tdRollWin{Start,End}Ms).
+//   - Vertical / Horizontal Impact Peak [g]: peak of the foot-local accel axes
+//     over the impulse window on the LANDING foot — remapped Z (sole-normal) vs
+//     hypot(remapped X,Y) (in-sole). Same one-pole LPF (alpha) the impact
+//     detector uses, applied per-axis: a decomposition of the same conditioned
+//     signal, not new filtering. Both include the ~1 g rest term (so at flat
+//     rest vert≈1, horiz≈0, and vert²+horiz²≈|a|²), matching WI_TD_ACCEL.
+//   - Touchdown Impulse Duration [ms]: total time within the impulse window the
+//     landing-foot magnitude stays at/above the onset threshold
+//     (contactBaselineG+contactThreshG). Sharp spike → short; soft impact → long.
+//   - Onset Timeline [ms list]: offsets (from primary, primary itself = 0) of
+//     every onset the FSM fires on the landing foot this step. Pure audit of the
+//     double-touchdown detector — exposes the exact sequence, adds no detection.
+//
+// DEPENDENCIES: state_estimator.h (IMUState), imu.h (RawIMUData),
+//               foot_impact.h (FootImpactDetector),
 //               gait_controller.h (GaitState, StepSubState), side.h
-// LAST CHANGED: 2026-05-31 | Walking instrumentation panel — initial version.
+// LAST CHANGED: 2026-06-01 | Touchdown decomposition metrics (#18-#22 + onset
+//               timeline) — localize/decompose the touchdown disturbance.
+//               2026-05-31 | Walking instrumentation panel — initial version.
 // =============================================================================
 #ifndef WALKING_INSTRUMENTATION_H
 #define WALKING_INSTRUMENTATION_H
 
 #include <Arduino.h>
 #include "side.h"
+#include "imu.h"                // RawIMUData (remapped foot accel, vert/horiz split)
 #include "state_estimator.h"   // IMUState
 #include "foot_impact.h"       // FootImpactDetector / FootImpactSideState
 #include "gait_controller.h"   // GaitState, StepSubState
@@ -86,14 +120,23 @@ enum WiMetric : uint8_t {
     WI_TORSO_ROLL_TD,   // Torso Roll @ Touchdown (measured)    [deg]
     WI_REACH_PCT,       // Peak Reach Percentage                [%]
     WI_FLATFOOT_ACT,    // Flat-Foot Guard Activations          [count]
+    // ---- touchdown decomposition (added 2026-06-01) ----
+    WI_TD_VERT_PEAK,    // Touchdown Vertical Impact Peak (sole-Z)   [g]
+    WI_TD_HORIZ_PEAK,   // Touchdown Horizontal Impact Peak (in-sole)[g]
+    WI_TD_IMPULSE_DUR,  // Touchdown Impulse Duration (|a|≥onset)    [ms]
+    WI_TD_WIN_ROLL,     // Touchdown-Window Peak Roll Rate           [deg/s]
+    WI_PEAK_ROLL_TIME,  // Peak Roll-Rate Time (offset from primary) [ms]
     WI_METRIC_COUNT
 };
 
 static constexpr uint8_t WI_HISTORY_LEN = 10;  // last N completed steps
+static constexpr uint8_t WI_ONSET_MAX   = 8;   // max onsets recorded per step (timeline)
 
-// One completed step's metrics (flat array, uniform handling).
+// One completed step's metrics (flat array + onset timeline, uniform handling).
 struct WalkingStepMetrics {
-    float v[WI_METRIC_COUNT] = {0.0f};
+    float    v[WI_METRIC_COUNT]   = {0.0f};
+    uint8_t  onsetN               = 0;          // onsets recorded on landing foot this step
+    uint16_t onsetMs[WI_ONSET_MAX] = {0};       // offsets from primary TD, ms (onsetMs[0]=0)
 };
 
 // -----------------------------------------------------------------------------
@@ -108,6 +151,12 @@ struct WalkingInstrConfig {
     float    contactBaselineG    = 1.0f;   // resting |a| ≈ 1 g
     uint32_t onsetRefractoryMs   = 50;     // min spacing between counted onsets (per foot)
     uint32_t impulseWindowMs     = 100;    // integrate impulse for this long after primary
+
+    // Touchdown-response roll window — max torso roll rate is measured only
+    // inside [start,end] ms after primary touchdown (touchdown-specific kick,
+    // isolated from the whole-step peak). Default per spec; reflash to change.
+    uint32_t tdRollWinStartMs    = 50;     // window opens this long after primary
+    uint32_t tdRollWinEndMs      = 100;    // window closes this long after primary
 
     // Double-touchdown lift-off confirmation (rejects single-impact ringing).
     float    bounceGyroThreshDps = 60.0f;  // foot must rotate this fast to count as "lifted"
@@ -150,6 +199,8 @@ public:
                 const IMUState&           torso,
                 const IMUState&           leftFoot,
                 const IMUState&           rightFoot,
+                const RawIMUData&         leftFootRaw,
+                const RawIMUData&         rightFootRaw,
                 const FootImpactDetector& impact,
                 const GaitState&          gait);
 
@@ -163,6 +214,12 @@ private:
     struct FootDetect {
         bool     above        = false;  // hysteresis: magnitude currently above onset band
         uint32_t lastOnsetMs  = 0;      // refractory anchor
+        // Per-axis accel LPF (g), seeded on first valid sample. Same one-pole
+        // alpha as the impact detector — decomposes the same conditioned signal.
+        bool     accSeeded    = false;
+        float    axF          = 0.0f;   // robot/foot-frame X (in-sole, forward)
+        float    ayF          = 0.0f;   // robot/foot-frame Y (in-sole, left)
+        float    azF          = 0.0f;   // robot/foot-frame Z (sole-normal, vertical)
     };
 
     // Live per-step accumulators. Reset by _resetStepAccum().
@@ -179,6 +236,8 @@ private:
         float peakVyCoM   = 0.0f;
         float peakVxCoM   = 0.0f;
         float peakRollDps = 0.0f;
+        uint32_t peakRollTimeAbsMs = 0;    // millis() of the step's peak roll-rate sample
+        float    tdWinRollDps      = 0.0f; // max |rollRate| inside the touchdown-response window
         // reach / flat-foot
         float    peakReachPct = 0.0f;
         uint16_t flatActCount = 0;
@@ -193,8 +252,14 @@ private:
         float    tdSwingSpeed    = 0.0f;
         float    comVzTd         = 0.0f;
         float    torsoRollTdDeg  = 0.0f;
-        // double-touchdown
-        uint8_t  onsetCount      = 0;      // onsets on landing foot from primary onward
+        // touchdown decomposition (landing foot, within the impulse window)
+        float    tdVertPeakG     = 0.0f;   // peak sole-normal accel  |a_z|        [g]
+        float    tdHorizPeakG    = 0.0f;   // peak in-sole accel  hypot(a_x,a_y)   [g]
+        float    impulseDurMs    = 0.0f;   // time landing-foot |a| stayed ≥ onset [ms]
+        // double-touchdown + onset timeline
+        uint8_t  onsetCount      = 0;      // onsets on landing foot from primary onward (uncapped)
+        uint8_t  onsetN          = 0;      // onsets recorded in the timeline (capped at WI_ONSET_MAX)
+        uint16_t onsetMs[WI_ONSET_MAX] = {0};  // offsets from primary, ms (onsetMs[0]=0)
         bool     doubleTd        = false;
         float    doubleTdIntMs   = 0.0f;
         bool     liftTimerActive = false;  // landing foot currently above gyro thresh

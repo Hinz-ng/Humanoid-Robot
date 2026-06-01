@@ -349,6 +349,7 @@
           padding: 1px 4px; border-radius: 3px; margin-left: 6px; vertical-align: middle; }
 .wi-tag-measured { background: #14331b; color: #66bb6a; }
 .wi-tag-cmd      { background: #33260a; color: #ffb74d; }
+.wi-tag-audit    { background: #2a2333; color: #b39ddb; }
 .wi-metric-sub { font-size: 9px; color: #777; text-transform: uppercase; letter-spacing: 0.5px;
                  text-align: right; }
 .wi-metric-cur { font-size: 13px; font-family: 'Courier New', monospace; color: #fff;  text-align: right; }
@@ -4167,6 +4168,12 @@ const WI_METRICS = [
     { key:"comSag",  sec:"CoM",       label:"Peak Sagittal CoM Speed",     unit:"mm/s",   dec:1, kind:"measured" },
     { key:"trRate",  sec:"CoM",       label:"Peak Torso Roll Rate",        unit:"°/s",    dec:1, kind:"measured" },
     { key:"trTd",    sec:"CoM",       label:"Torso Roll @ Touchdown",      unit:"°",      dec:2, kind:"measured" },
+    // Touchdown decomposition — where/how the disturbance enters (added 2026-06-01).
+    { key:"tdVert",   sec:"Touchdown", label:"Touchdown Vertical Impact Peak",   unit:"g",   dec:2, kind:"measured" },
+    { key:"tdHoriz",  sec:"Touchdown", label:"Touchdown Horizontal Impact Peak", unit:"g",   dec:2, kind:"measured" },
+    { key:"tdDur",    sec:"Touchdown", label:"Touchdown Impulse Duration",       unit:"ms",  dec:1, kind:"measured" },
+    { key:"tdWinRoll",sec:"CoM",       label:"Touchdown-Window Peak Roll Rate",  unit:"°/s", dec:1, kind:"measured" },
+    { key:"rollT",    sec:"CoM",       label:"Peak Roll-Rate Time (from TD)",    unit:"ms",  dec:0, kind:"measured", signed:true },
     { key:"reach",   sec:"Reach",     label:"Peak Reach Percentage",       unit:"%",      dec:1, kind:"measured" },
     { key:"ffGuard", sec:"Reach",     label:"Flat-Foot Guard Activations", unit:"",       dec:0, kind:"measured" },
 ];
@@ -4176,7 +4183,9 @@ let _wiRowsBuilt = false;
 function _wiFmt(metric, val) {
     if (val === undefined || val === null || isNaN(val)) return "—";
     if (metric.bool) return val >= 0.5 ? "YES" : "NO";
-    const s = Number(val).toFixed(metric.dec);
+    // Signed metrics (e.g. peak-roll time vs touchdown) lead with +/- so the
+    // before/after-touchdown distinction reads at a glance.
+    const s = (metric.signed && val > 0 ? "+" : "") + Number(val).toFixed(metric.dec);
     return metric.unit ? (s + " " + metric.unit) : s;
 }
 
@@ -4203,6 +4212,27 @@ function renderWalkingInstrRows() {
             '</div>';
         host.appendChild(row);
     });
+
+    // Onset timeline — audit row (not a float metric). Collapsed: last-step
+    // onset count + average count. Expanded: the per-step onset offset timeline.
+    const tdHost = document.getElementById(WI_SECMAP["Touchdown"]);
+    if (tdHost) {
+        const row = document.createElement("div");
+        row.className = "wi-metric";
+        row.innerHTML =
+            '<div class="wi-metric-head" onclick="toggleWiMetric(\'onTL\')">' +
+              '<div class="wi-metric-name">Touchdown Onset Timeline' +
+                 '<span class="wi-tag wi-tag-audit">audit</span></div>' +
+              '<div><div class="wi-metric-sub">Onsets</div>' +
+                   '<div class="wi-metric-cur" id="wiCur_onTL">—</div></div>' +
+              '<div><div class="wi-metric-sub">Avg onsets</div>' +
+                   '<div class="wi-metric-avg" id="wiAvg_onTL">—</div></div>' +
+            '</div>' +
+            '<div class="wi-metric-detail" id="wiDet_onTL">' +
+              '<div class="wi-hist-empty" id="wiHist_onTL">No completed steps yet.</div>' +
+            '</div>';
+        tdHost.appendChild(row);
+    }
     _wiRowsBuilt = true;
 }
 
@@ -4264,6 +4294,39 @@ function parseWalkingInstr(payload) {
             }
         }
     });
+
+    // Onset timeline (audit). onTL = step0|step1|... newest-first; each step's
+    // onset offsets (ms from primary) are ';'-joined. Current onset count comes
+    // from the meta `onsets` field (uncapped landing-foot count, last step).
+    const onCur  = document.getElementById("wiCur_onTL");
+    const onAvg  = document.getElementById("wiAvg_onTL");
+    const onHist = document.getElementById("wiHist_onTL");
+    const rawTL  = v["onTL"];
+    const tlSteps = (rawTL && rawTL.length) ? rawTL.split("|") : [];
+    if (onCur) onCur.textContent = (v["onsets"] !== undefined) ? v["onsets"] : "—";
+    if (onAvg) {
+        if (tlSteps.length) {
+            const counts = tlSteps.map(s => (s && s.length) ? s.split(";").length : 0);
+            const mean = counts.reduce((a, b) => a + b, 0) / counts.length;
+            onAvg.textContent = mean.toFixed(1);
+        } else onAvg.textContent = "—";
+    }
+    if (onHist) {
+        if (!tlSteps.length) {
+            onHist.className = "wi-hist-empty";
+            onHist.textContent = "No completed steps yet.";
+        } else {
+            onHist.className = "";
+            onHist.innerHTML = tlSteps.map((s, i) => {
+                const entries = (s && s.length) ? s.split(";") : [];
+                const label = entries.length
+                    ? entries.map(x => x + " ms").join(", ")
+                    : "(none)";
+                return '<div class="wi-hist-row"><span>Step -' + (i + 1) + '</span>' +
+                       '<span>' + label + '</span></div>';
+            }).join("");
+        }
+    }
 }
 
 function resetWalkingInstr() {

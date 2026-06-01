@@ -418,6 +418,7 @@ void loop() {
             // Walking instrumentation: per-step diagnostics aggregator. Pure
             // read-only consumer of this tick's state — submits no joints.
             walkingInstr.update(dt, state, lf_state, rf_state,
+                                lf_raw, rf_raw,
                                 footImpactDetector, gaitController.getState());
 #endif
 

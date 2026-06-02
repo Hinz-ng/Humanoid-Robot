@@ -378,6 +378,7 @@ void GaitController::start(GaitMode mode) {
     _touchdownMs      = 0;
     _stepRingHead     = 0;
     _stepRingCount    = 0;
+    _state.flatFootGuardCount = 0;   // per-session reach-guard counter
     _clearTouchdownLatch();
     _resetCompliance();
     _resetHRestore();
@@ -626,6 +627,55 @@ float GaitController::_captureOffsetMm() const {
                                     -_cfg.stepLengthMm,
                                     +_cfg.stepLengthMm);
     return byStep;
+}
+
+// ---------------------------------------------------------------------------
+//  _pitchPlacementOffsetMm — pitch-ANGLE swing-foot forward placement.
+//
+//  See header for the full mechanism + sign convention. DISTINCT from the
+//  rate-based _captureOffsetMm() above: driven by the clean torso pitch ANGLE
+//  (pitch - torsoPitchNeutralRad), NOT CoM velocity, and shares no state with
+//  it — only its coding/gating/smoothing style. Pure-math; reads _lastImuState
+//  / _cfg only. No _touchdownLocked freeze branch (the term is folded into
+//  _touchdownLockedX_mm, so the x-freeze in _buildFootTarget covers the latched
+//  case — mirrors _captureOffsetMm).
+//
+//  Default-path no-op gates — gain == 0 (the shipped default) short-circuits to
+//  0 so placeRaw and the latch snapshot become "+ 0.0f", a bit-identical no-op.
+// ---------------------------------------------------------------------------
+float GaitController::_pitchPlacementOffsetMm(float localPhase) const {
+    if (!_cfg.pitchPlacementEnabled)             return 0.0f;
+    if (_cfg.pitchPlacementGainMmPerRad == 0.0f) return 0.0f;
+    if (!_lastImuState.valid)                    return 0.0f;
+    if (oe_is_estopped())                        return 0.0f;
+    if (_state.mode == GaitMode::IDLE)           return 0.0f;
+    if (_cfg.stepLengthMm <= 0.01f)              return 0.0f;  // placement meaningless without nominal stride
+
+    // Clean (neutral-corrected) torso pitch. Positive = leaning forward
+    // (state_estimator.h). torsoPitchNeutralRad is set by tareToTorso().
+    const float pitch = _lastImuState.pitch - _cfg.torsoPitchNeutralRad;
+
+    // Deadband: reject sensor noise and small standing tilt before any placement.
+    const float db = _cfg.pitchPlacementDeadbandRad;
+    const float effPitch = (pitch >  db) ? (pitch - db)
+                         : (pitch < -db) ? (pitch + db)
+                                         : 0.0f;
+
+    // raw = effPitch * gain * sign  → positive forward pitch with sign=+1 yields
+    // positive (forward) foot placement, matching the FootTarget.x_mm convention.
+    const float raw     = effPitch
+                        * _cfg.pitchPlacementGainMmPerRad
+                        * _cfg.pitchPlacementSign;
+    const float clamped = constrain(raw,
+                                    -_cfg.pitchPlacementMaxMm,
+                                    +_cfg.pitchPlacementMaxMm);
+
+    // Smoothstep ramp on localPhase — identical shape to the swing stride and
+    // the sagittal/lateral capture terms (s = lp²(3 - 2lp)). Zero foot-placement
+    // velocity at lift-off and full placement by touchdown.
+    const float lp = constrain(localPhase, 0.0f, 1.0f);
+    const float s  = lp * lp * (3.0f - 2.0f * lp);
+    return clamped * s;
 }
 
 // ---------------------------------------------------------------------------
@@ -961,8 +1011,15 @@ FootTarget GaitController::_buildFootTarget(bool isRight,
             // be revisited if capture is re-enabled while strideCompleteFrac<1.
             const float sRaw       = localPhase * localPhase * (3.0f - 2.0f * localPhase);
             const float captureRaw = isSwing ? _captureOffsetMm() : 0.0f;
+            // Pitch-ANGLE forward placement — SWING leg only, additive on top of
+            // the warped stride + capture, exactly like captureRaw. Default gain
+            // 0 makes _pitchPlacementOffsetMm() return 0, so placeRaw is "+ 0.0f"
+            // here — a bit-identical no-op. The touchdown latch snapshot in
+            // update() uses the SAME helper so commanded x and latched x cannot
+            // diverge (no touchdown x discontinuity).
+            const float placeRaw   = isSwing ? _pitchPlacementOffsetMm(localPhase) : 0.0f;
             const float strideRaw  = isSwing
-                ? (_warpedStrideFrac(localPhase) - 0.5f) * _cfg.stepLengthMm + captureRaw
+                ? (_warpedStrideFrac(localPhase) - 0.5f) * _cfg.stepLengthMm + captureRaw + placeRaw
                 : (0.5f - sRaw) * _cfg.stepLengthMm;
             t.x_mm += strideRaw * strideScale;
         }
@@ -1199,6 +1256,11 @@ LegIKResult GaitController::_submitFootTargetIK(Side side,
     // Rationale: gait_development_integration.md section 6.5 - abort step on
     // flat_foot_error > ~2 deg.
     if (fabsf(r.flat_foot_error_deg) > 2.0f) {
+        // Activation counter (per-session; reset on start()). Single source of
+        // flat-foot-guard instrumentation — surfaced as ffGuard in the GAIT:
+        // packet. A rising count while a swing-foot-placement feature is enabled
+        // flags placement pushing IK reach into the ankle soft-limit.
+        _state.flatFootGuardCount++;
         static uint32_t _lastFFLogMs = 0;
         const uint32_t now = millis();
         if (now - _lastFFLogMs > 1000) {
@@ -1681,7 +1743,13 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             // top exactly as in _buildFootTarget.
             const float s_w      = _warpedStrideFrac(_halfPhase);
             const float captureX = _captureOffsetMm();
-            _touchdownLockedX_mm  = (s_w - 0.5f) * _cfg.stepLengthMm + captureX;
+            // Pitch-ANGLE placement is snapshotted with the SAME helper and at
+            // the same phase the swing stride uses in _buildFootTarget. Folding
+            // it into the locked x (rather than freezing it separately) is what
+            // makes the commanded-vs-latched x continuous at the latch tick;
+            // after lock it is held frozen with the rest of the stride x.
+            _touchdownLockedX_mm  = (s_w - 0.5f) * _cfg.stepLengthMm + captureX
+                                  + _pitchPlacementOffsetMm(_halfPhase);
 
             // Snapshot the swing foot's HORIZONTAL velocity (mm/s) at this
             // detection. Analytic derivative of the warped stride x:
@@ -1816,6 +1884,8 @@ void GaitController::update(float dt_s, const IMUState& imuState,
         // Telemetry: applied capture + lateral trim also fade — surface the
         // actual (faded) value, not the raw computation.
         _state.captureOffsetMm = _captureOffsetMm()    * strideScale;
+        // Pitch-ANGLE placement fades through STOPPING exactly like capture.
+        _state.pitchPlacementMm = _pitchPlacementOffsetMm(_halfPhase) * strideScale;
         _state.latCaptureMm    = _latCaptureOffsetMm(_halfPhase) * strideScale;
         _state.comLatTrimMm    = _comLateralTrimMm()   * strideScale;
         _state.cycleXDispl_mm  = _halfPhase * _cfg.stepLengthMm * strideScale;
@@ -2013,6 +2083,11 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // Stage 2.2 — broadcast the capture offset that was applied this tick.
     // Reads as 0 when capture disabled or vx_CoM ≈ 0.
     _state.captureOffsetMm = _captureOffsetMm();
+    // Pitch-ANGLE placement — applied sagittal value this tick (mm). Reads 0
+    // when pitchPlacement disabled, gain=0 (default), IMU invalid, or pitch
+    // inside the deadband. strideScale = 1.0 in SWINGING, so the raw helper
+    // output is the applied value (mirrors captureOffsetMm above).
+    _state.pitchPlacementMm = _pitchPlacementOffsetMm(_halfPhase);
     // Lateral capture telemetry — applied world-frame signed value this tick
     // (post-clamp, post-ramp, post-freeze; pre-leg-sign — that flip happens
     // at the foot in _buildFootTarget). Reads 0 when latCapture disabled,

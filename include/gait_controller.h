@@ -265,6 +265,28 @@ struct GaitConfig {
     float latCaptureMaxMm   = GAIT_LAT_CAPTURE_OFFSET_MAX_MM;   // WS: "latCaptureMax"
     float latCaptureSign    = -1.0f;                            // WS: "latCaptureSign"
 
+    // Pitch-ANGLE swing-foot forward placement (UVC-style). A foot-placement
+    // authority driven by clean torso pitch ANGLE, separate from and additive to
+    // the rate-based sagittal capture point. Applied to the SWING leg's stride x
+    // only; stance untouched. See _pitchPlacementOffsetMm() and the PITCH-ANGLE
+    // SWING-FOOT FORWARD PLACEMENT block in project_wide_defs.h.
+    //
+    //   pitchPlacementEnabled       — master enable. Default ON, but the gain
+    //                                 default of 0 makes it a bit-identical no-op
+    //                                 until tuned up at runtime.
+    //   pitchPlacementGainMmPerRad  — mm of forward foot placement per rad of
+    //                                 (deadbanded) forward pitch. 0 = inert.
+    //   pitchPlacementMaxMm         — hard cap on the offset magnitude (mm).
+    //   pitchPlacementDeadbandRad   — pitch magnitude below which no placement is
+    //                                 applied (rejects sensor noise / standing tilt).
+    //   pitchPlacementSign          — ±1 runtime sign flip. Intended sign +1:
+    //                                 forward pitch → swing foot placed forward.
+    bool  pitchPlacementEnabled      = GAIT_PITCH_PLACEMENT_ENABLED;         // WS: "pitchPlaceEnabled"
+    float pitchPlacementGainMmPerRad = GAIT_PITCH_PLACEMENT_GAIN_MM_PER_RAD; // WS: "pitchPlaceGain"
+    float pitchPlacementMaxMm        = GAIT_PITCH_PLACEMENT_MAX_MM;          // WS: "pitchPlaceMax"
+    float pitchPlacementDeadbandRad  = GAIT_PITCH_PLACEMENT_DEADBAND_RAD;    // WS: "pitchPlaceDeadband"
+    float pitchPlacementSign         = GAIT_PITCH_PLACEMENT_SIGN;            // WS: "pitchPlaceSign"
+
     // Stage 2 -- support-transfer dwell + timeout. See project_wide_defs.h
     // for rationale. 0 on either field reverts to pre-Stage-2 behavior
     // on that axis (no dwell / no timeout).
@@ -559,6 +581,13 @@ struct GaitState {
     // Treat |value| > 2° as a tuning red flag — gait should pause/abort.
     float        lastFlatFootErrL_deg = 0.0f;
     float        lastFlatFootErrR_deg = 0.0f;
+    // Flat-foot guard activation counter. Incremented once per leg-submit that
+    // the guard rejects (|flat_foot_error_deg| > 2° → pose held, no submission;
+    // see _submitFootTargetIK). Cumulative per gait session — reset to 0 on
+    // start(). A rising count while a swing-foot-placement feature is enabled is
+    // a tuning red flag (placement pushing reach into the soft-limit). Telemetry
+    // only; there is no other reach/guard counter, so this is the single source.
+    uint32_t     flatFootGuardCount = 0;
     // Stage 3 — Cumulative body-frame x displacement this cycle, in mm.
     // Computed as _halfPhase × stepLengthMm. Reset to 0 on _advanceHalf().
     // Telemetry only — does NOT feed back into FootTarget.
@@ -578,6 +607,15 @@ struct GaitState {
     // active swing leg this tick. Telemetry only — control reads the helper
     // directly inside _buildFootTarget().
     float latCaptureMm = 0.0f;
+
+    // Pitch-ANGLE swing-foot forward placement applied this tick (mm, sagittal
+    // signed, post-deadband, post-clamp, post-smoothstep ramp, post-strideScale).
+    // Positive = swing foot placed further forward than the open-loop nominal.
+    // Zero when pitchPlacementEnabled=false, gain=0 (default), IMU invalid, IDLE,
+    // estopped, stepLength≈0, or no active swing leg this tick. Mirrors
+    // captureOffsetMm handling exactly (including the STOPPING fade). Telemetry
+    // only — control reads the helper directly inside _buildFootTarget().
+    float pitchPlacementMm = 0.0f;
 
     // Recovery telemetry (Stage 1+). Valid only when mode == RECOVERY_STEP.
     RecoverySubState recoverySub       = RecoverySubState::TRIGGERED;
@@ -1162,6 +1200,32 @@ private:
     //  IK status path — this function is intentionally pure-math.
     // -----------------------------------------------------------------------
     float _captureOffsetMm() const;
+
+    // -----------------------------------------------------------------------
+    //  _pitchPlacementOffsetMm — pitch-ANGLE swing-foot forward placement.
+    //
+    //  Conceptually INDEPENDENT of the capture point: driven by the clean torso
+    //  pitch ANGLE (_lastImuState.pitch - torsoPitchNeutralRad), NOT CoM
+    //  velocity. Shares no state, filter, or control logic with
+    //  _captureOffsetMm() — it only mirrors its coding/gating/smoothing style.
+    //
+    //  Returns the sagittal mm offset to add to the SWING leg's stride x.
+    //  Sign convention: forward pitch (>0) with sign=+1 → positive offset →
+    //  foot placed further forward (positive FootTarget.x_mm). Pipeline:
+    //    pitch    = _lastImuState.pitch - torsoPitchNeutralRad
+    //    effPitch = deadband(pitch, pitchPlacementDeadbandRad)
+    //    raw      = effPitch * pitchPlacementGainMmPerRad * pitchPlacementSign
+    //    clamped  = constrain(raw, ±pitchPlacementMaxMm)
+    //    applied  = clamped * smoothstep(localPhase)   (0 at lift-off, full at TD)
+    //
+    //  Returns 0 when disabled, gain==0 (default ship → bit-identical no-op),
+    //  IMU invalid, estopped, IDLE, or stepLength≈0. No _touchdownLocked freeze
+    //  branch: the pitch term is folded into _touchdownLockedX_mm with stride +
+    //  capture, so the existing x-freeze in _buildFootTarget covers the latched
+    //  case (mirrors _captureOffsetMm, which also has no freeze branch).
+    //  Intentionally pure-math.
+    // -----------------------------------------------------------------------
+    float _pitchPlacementOffsetMm(float localPhase) const;
 
     // -----------------------------------------------------------------------
     //  _latCaptureOffsetMm — frontal-plane capture-point swing-foot placement.

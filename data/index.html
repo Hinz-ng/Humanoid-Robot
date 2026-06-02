@@ -1698,6 +1698,9 @@
             <button class="btn-gait-step" id="btnGaitLatCapToggle" onclick="toggleLatCapture()">
                 Lat Cap: ON
             </button>
+            <button class="btn-gait-step" id="btnGaitPitchPlaceToggle" onclick="togglePitchPlace()">
+                Pitch Place: OFF
+            </button>
             <button class="btn-gait-step"  onclick="sendCmd('TORSO_TARE')">🎯 Torso Tare</button>
             <button class="btn-gait-step"  onclick="sendCmd('GAIT_STEP')">↷ Single Step</button>
             <button class="btn-gait-wshift" onclick="sendCmd('GAIT_WSHIFT')">⇆ W-Shift Only</button>
@@ -1791,6 +1794,14 @@
             <div class="bal-out-cell">
                 <div class="bal-out-lbl">Lat vel (mm)</div>
                 <div class="bal-out-val" id="gaitTelemLatVel">0.0</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">Pitch place (mm)</div>
+                <div class="bal-out-val" id="gaitTelemPitchPlace">0.0</div>
+            </div>
+            <div class="bal-out-cell">
+                <div class="bal-out-lbl">FF guard ct</div>
+                <div class="bal-out-val" id="gaitTelemFfGuard">0</div>
             </div>
         </div>
 
@@ -2528,6 +2539,60 @@
                     <button class="btn-sign btn-sign-active" id="btnLatCapSignPos" onclick="setLatCapSign(+1)">+1 (default)</button>
                     <button class="btn-sign" id="btnLatCapSignNeg" onclick="setLatCapSign(-1)">−1 (flip)</button>
                     <span class="small-note-no-margin" style="margin-left:6px">Flip if step placement goes the wrong direction on hardware.</span>
+                </div>
+            </div>
+
+            <!-- Pitch-ANGLE swing-foot forward placement (sagittal, ANGLE-based;
+                 distinct from the rate-based capture point above) -->
+            <div class="gait-tune-row grid-span-2-mt4">
+                <div class="section-label" style="margin-bottom:2px">Pitch-angle placement (sagittal, ANGLE-based)</div>
+            </div>
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Pitch place gain (mm/rad)</span>
+                    <span class="tune-val" id="tvGaitPitchPlaceGain">0.0</span>
+                </div>
+                <input type="range" id="slGaitPitchPlaceGain" min="0" max="300" step="5" value="0"
+                       oninput="updateGaitLabel('pitchPlaceGain', this.value); sendGaitKey('pitchPlaceGain', parseFloat(this.value).toFixed(1))">
+                <div class="small-note">
+                    mm of forward swing-foot placement per rad of (deadbanded) forward
+                    torso pitch. 0 = off (ship default). Toggle with "Pitch Place".
+                    Try 100: ~5.4 mm @5°, ~14 mm @10°, ~23 mm @15° (clamp at ~16.6°).
+                </div>
+            </div>
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Pitch place max (mm)</span>
+                    <span class="tune-val" id="tvGaitPitchPlaceMax">25</span>
+                </div>
+                <input type="range" id="slGaitPitchPlaceMax" min="0" max="40" step="1" value="25"
+                       oninput="updateGaitLabel('pitchPlaceMax', this.value); sendGaitKey('pitchPlaceMax', this.value)">
+                <div class="small-note">
+                    Hard cap on the placement offset (mm). Stacks with stride + capture;
+                    keep inside sagittal IK reach. Watch IK reach% and FF guard ct.
+                </div>
+            </div>
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Pitch place deadband (rad)</span>
+                    <span class="tune-val" id="tvGaitPitchPlaceDb">0.033</span>
+                </div>
+                <input type="range" id="slGaitPitchPlaceDb" min="0" max="0.10" step="0.005" value="0.033"
+                       oninput="updateGaitLabel('pitchPlaceDeadband', this.value); sendGaitKey('pitchPlaceDeadband', parseFloat(this.value).toFixed(3))">
+                <div class="small-note">
+                    Pitch magnitude below which no placement is applied. Default 0.033
+                    rad (~1.9°) rejects sensor noise and small standing tilt.
+                </div>
+            </div>
+            <div class="gait-tune-row grid-span-2-mt4">
+                <div class="tune-header">
+                    <span>Pitch place sign</span>
+                    <span class="tune-val" id="tvGaitPitchPlaceSign">+1</span>
+                </div>
+                <div class="flex-row-gap-sm">
+                    <button class="btn-sign btn-sign-active" id="btnPitchPlaceSignPos" onclick="setPitchPlaceSign(+1)">+1 (default)</button>
+                    <button class="btn-sign" id="btnPitchPlaceSignNeg" onclick="setPitchPlaceSign(-1)">−1 (flip)</button>
+                    <span class="small-note-no-margin" style="margin-left:6px">+1 = forward pitch places foot forward (proven correct). Flip only if hardware disagrees.</span>
                 </div>
             </div>
 
@@ -4367,6 +4432,9 @@ const _gaitTuneMap = {
     comLatGate: { el: "tvGaitComLatGate", decimals: 1 },
     latCaptureGain: { el: "tvGaitLatCapGain", decimals: 2 },
     latCaptureMax:  { el: "tvGaitLatCapMax",  decimals: 0 },
+    pitchPlaceGain:     { el: "tvGaitPitchPlaceGain", decimals: 1 },
+    pitchPlaceMax:      { el: "tvGaitPitchPlaceMax",  decimals: 0 },
+    pitchPlaceDeadband: { el: "tvGaitPitchPlaceDb",   decimals: 3 },
     torsoNeutralRoll:  { el: "tvGaitTorsoNeutralRoll",  decimals: 3 },
     torsoNeutralPitch: { el: "tvGaitTorsoNeutralPitch", decimals: 3 },
     hRestoreFrac:      { el: "tvHRestoreFrac",          decimals: 2 },
@@ -4456,6 +4524,23 @@ function toggleLatCapture() {
 function setLatCapSign(sign) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(`CMD:GAIT_TUNE:latCaptureSign=${sign}`);
+    }
+}
+
+// Pitch-ANGLE swing-foot forward placement master toggle. Syncs via GAIT:
+// broadcast (pPlEn field). Default-enabled in firmware but gain=0 keeps it inert.
+function togglePitchPlace() {
+    const btn = document.getElementById('btnGaitPitchPlaceToggle');
+    const enable = btn && btn.textContent.indexOf('OFF') !== -1;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(`CMD:GAIT_TUNE:pitchPlaceEnabled=${enable ? 1 : 0}`);
+    }
+}
+
+// Set pitch-placement sign (+1 or -1). Active button updates via GAIT: broadcast.
+function setPitchPlaceSign(sign) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(`CMD:GAIT_TUNE:pitchPlaceSign=${sign}`);
     }
 }
 
@@ -4754,6 +4839,34 @@ function parseGaitState(payload) {
         if (snBtn) snBtn.className = "btn-sign" + (!pos ? " btn-sign-active" : "");
     }
 
+    // Pitch-ANGLE swing-foot forward placement — toggle, sign, live applied mm.
+    // Optional-chained so an un-reflashed firmware leaves the last-known values.
+    if (v["pPlMm"] !== undefined) {
+        const pPlMm   = parseFloat(v["pPlMm"]   || "0");
+        const pPlEn   = (v["pPlEn"] === "1");
+        const pPlSign = parseFloat(v["pPlSign"] || "1");
+        // Toggle button
+        const ppBtn = document.getElementById('btnGaitPitchPlaceToggle');
+        if (ppBtn) {
+            ppBtn.textContent = pPlEn
+                ? `Pitch Place: ON (${pPlMm.toFixed(1)}mm)` : "Pitch Place: OFF";
+            ppBtn.style.background = pPlEn ? "#1565c0" : "#e65100";
+        }
+        // Telemetry readout
+        set("gaitTelemPitchPlace", (pPlEn ? "" : "(off) ") + pPlMm.toFixed(1));
+        // Sign selector buttons
+        const ppPos = pPlSign >= 0;
+        const tvPpSign = document.getElementById("tvGaitPitchPlaceSign");
+        if (tvPpSign) tvPpSign.textContent = ppPos ? "+1" : "-1";
+        const ppSp = document.getElementById("btnPitchPlaceSignPos");
+        const ppSn = document.getElementById("btnPitchPlaceSignNeg");
+        if (ppSp) ppSp.className = "btn-sign" + (ppPos ? " btn-sign-active" : "");
+        if (ppSn) ppSn.className = "btn-sign" + (!ppPos ? " btn-sign-active" : "");
+    }
+    // Flat-foot guard activation count (cumulative per gait session).
+    if (v["ffGuard"] !== undefined)
+        set("gaitTelemFfGuard", parseInt(v["ffGuard"], 10).toString());
+
     // W5 — velocity-damping telemetry. Roll rate is the filtered signal that
     // feeds the Kd term; Lat vel is that term's contribution to the trim (mm,
     // pre-clamp). comLatTrimMm above already includes it.
@@ -4902,6 +5015,13 @@ function parseGaitState(payload) {
             _syncSlider("slGaitLatCapGain", "tvGaitLatCapGain", parseFloat(v["latCapGain"]), 2);
         if (v["latCapMax"] !== undefined)
             _syncSlider("slGaitLatCapMax", "tvGaitLatCapMax", parseFloat(v["latCapMax"]), 0);
+        // Pitch-ANGLE placement sliders. Optional-chained like the capture sliders.
+        if (v["pPlGain"] !== undefined)
+            _syncSlider("slGaitPitchPlaceGain", "tvGaitPitchPlaceGain", parseFloat(v["pPlGain"]), 1);
+        if (v["pPlMax"] !== undefined)
+            _syncSlider("slGaitPitchPlaceMax", "tvGaitPitchPlaceMax", parseFloat(v["pPlMax"]), 0);
+        if (v["pPlDb"] !== undefined)
+            _syncSlider("slGaitPitchPlaceDb", "tvGaitPitchPlaceDb", parseFloat(v["pPlDb"]), 3);
     }
 
     // Swing-foot leveler L0 telemetry

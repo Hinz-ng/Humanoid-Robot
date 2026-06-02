@@ -670,7 +670,7 @@ void WebComm::broadcastGaitState() {
     const GaitState&            s   = *statePtr;
     const SwingFootLevelerState  lvl = *lvlPtr;
 
-    char buf[2304];
+    char buf[2432];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,stanceInset=%.1f,"
@@ -761,7 +761,13 @@ void WebComm::broadcastGaitState() {
         // echoes (enable / completion fraction) + live telemetry (hRestoreOff
         // = signed offset applied to the restoring leg this tick (<=0),
         // hRestoreAct = restore in progress).
-        "hRestore=%d,hRestoreFrac=%.2f,hRestoreOff=%.2f,hRestoreAct=%d",
+        "hRestore=%d,hRestoreFrac=%.2f,hRestoreOff=%.2f,hRestoreAct=%d,"
+        // Pitch-ANGLE swing-foot forward placement (sagittal, ANGLE-based) —
+        // config echoes (enable / gain mm-per-rad / cap mm / deadband rad / sign)
+        // plus the live applied value (pPlMm, post-clamp, post-ramp, post-
+        // strideScale; 0 on disabled / gain=0 / IDLE / estopped / deadband).
+        // ffGuard = cumulative flat-foot-guard activations this gait session.
+        "pPlEn=%d,pPlGain=%.1f,pPlMax=%.1f,pPlDb=%.3f,pPlSign=%.0f,pPlMm=%.2f,ffGuard=%lu",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -917,7 +923,16 @@ void WebComm::broadcastGaitState() {
         static_cast<int>(_gaitCtrl->getConfig().hRestoreEnabled),
         _gaitCtrl->getConfig().hRestoreCompleteFrac,
         s.hRestoreOffsetMm,
-        static_cast<int>(s.hRestoreActive)
+        static_cast<int>(s.hRestoreActive),
+        // Pitch-ANGLE swing-foot forward placement — config echoes + live value
+        // + flat-foot-guard activation count.
+        static_cast<int>(_gaitCtrl->getConfig().pitchPlacementEnabled),
+        _gaitCtrl->getConfig().pitchPlacementGainMmPerRad,
+        _gaitCtrl->getConfig().pitchPlacementMaxMm,
+        _gaitCtrl->getConfig().pitchPlacementDeadbandRad,
+        _gaitCtrl->getConfig().pitchPlacementSign,
+        s.pitchPlacementMm,
+        (unsigned long)s.flatFootGuardCount
     );
     _sendFiltered(buf);
 }
@@ -2081,6 +2096,33 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             // Hard ceiling: 30 mm. Anything more risks passing IK reach budget on
                             // most stance heights. Re-evaluate the cap before raising.
                             cfg.captureOffsetMaxMm = constrain(val, 0.0f, 30.0f);
+                        }
+                        // Pitch-ANGLE swing-foot forward placement (distinct from
+                        // the rate-based capture point above; ANGLE-driven).
+                        else if (key == "pitchPlaceEnabled") cfg.pitchPlacementEnabled = (val > 0.5f);
+                        else if (key == "pitchPlaceGain") {
+                            // mm of forward foot placement per rad of (deadbanded)
+                            // forward pitch. 0 = inert (ship default). 300 mm/rad
+                            // ceiling — well above the ~100 mm/rad first-test value;
+                            // the ±max clamp bounds the actual effect regardless.
+                            cfg.pitchPlacementGainMmPerRad = constrain(val, 0.0f, 300.0f);
+                        }
+                        else if (key == "pitchPlaceMax") {
+                            // Hard cap on the placement offset (mm). 40 mm ceiling
+                            // mirrors the comLatMax budget — placement stacks with
+                            // stride + capture, so keep it inside sagittal IK reach.
+                            cfg.pitchPlacementMaxMm = constrain(val, 0.0f, 40.0f);
+                        }
+                        else if (key == "pitchPlaceDeadband") {
+                            // Pitch magnitude (rad) below which no placement applies.
+                            // 0.20 rad (~11°) ceiling; default 0.033 rad (~1.9°).
+                            cfg.pitchPlacementDeadbandRad = constrain(val, 0.0f, 0.20f);
+                        }
+                        else if (key == "pitchPlaceSign") {
+                            // ±1 runtime sign flip. Intended +1 (forward pitch ->
+                            // forward foot); snap anything else to the nearest of
+                            // {-1, +1} — the physical convention is binary.
+                            cfg.pitchPlacementSign = (val >= 0.0f) ? +1.0f : -1.0f;
                         }
                         else if (key == "dwellMs") {
                             // 0 disables dwell. 1000 ms cap is generous;

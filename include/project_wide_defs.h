@@ -190,7 +190,7 @@ constexpr float GAIT_STANCE_INSET_MM            = 7.0f;
 //
 // Tune from 0 in ±1mm increments until ankle-pitch IK output sits near each
 // joint's neutralDeg in standing pose. Typical magnitude: ≤ 10 mm.
-constexpr float GAIT_STANCE_X_OFFSET_MM         = -1.0f;
+constexpr float GAIT_STANCE_X_OFFSET_MM         = 0.0f;
 
 // Hold duration (ms) GaitController inserts between half-cycles. Weight shift
 // is centered (trigger NONE) and held for this duration so mechanical/IIR
@@ -342,6 +342,44 @@ constexpr float GAIT_CAPTURE_OFFSET_MAX_MM = 15.0f;
 constexpr bool  GAIT_LAT_CAPTURE_ENABLED_DEFAULT = true;
 constexpr float GAIT_LAT_CAPTURE_GAIN_DEFAULT    = 1.0f;
 constexpr float GAIT_LAT_CAPTURE_OFFSET_MAX_MM   = 30.0f;
+
+// ============================================================
+// PITCH-ANGLE SWING-FOOT FORWARD PLACEMENT  (UVC-style, ANGLE-based)
+// ============================================================
+// DISTINCT from the rate-based capture point above. This authority is driven by
+// the clean torso pitch ANGLE (pitch - torsoPitchNeutralRad), NOT CoM velocity,
+// and shares no state, filter, or control logic with _captureOffsetMm(). It is
+// applied to the SWING leg's stride x only (stance untouched), additively
+// alongside the sagittal capture offset.
+//
+// HYPOTHESIS: forward torso pitch indicates insufficient forward support
+// placement, so placing the swing foot further forward in proportion to clean
+// forward pitch should reduce scrub, double-touchdowns, and falls.
+//
+// MECHANISM (see GaitController::_pitchPlacementOffsetMm):
+//   pitch    = _lastImuState.pitch - torsoPitchNeutralRad
+//   effPitch = pitch >  db ? pitch - db : pitch < -db ? pitch + db : 0   (deadband)
+//   raw      = effPitch * gain * sign
+//   clamped  = constrain(raw, ±max)
+//   applied  = clamped * smoothstep(localPhase)
+//
+// SIGN: +1 is correct and proven by inspection — positive torso pitch = leaning
+// forward (state_estimator.h), positive FootTarget.x_mm = foot placed forward
+// (GAIT_STANCE_X_OFFSET_MM block + _captureOffsetMm doc), so forward lean ->
+// foot forward. The runtime sign knob is retained only as a hardware safety
+// valve, mirroring latCaptureSign.
+//
+// DEFAULTS: GAIN ships at 0.0f -> the helper short-circuits to 0 and the term is
+// a bit-identical no-op (ENABLED defaults true, but the gain gate makes it inert
+// until tuned up at runtime). At a first test gain of ~100 mm/rad with the
+// defaults below the ±25 mm clamp is first reached near 16.6° of forward pitch
+// (5°->5.4mm, 10°->14.2mm, 15°->22.9mm) — measurable yet non-saturating across
+// the 5–15° band.
+constexpr float GAIT_PITCH_PLACEMENT_GAIN_MM_PER_RAD = 0.0f;   // ship OFF
+constexpr float GAIT_PITCH_PLACEMENT_MAX_MM          = 25.0f;
+constexpr float GAIT_PITCH_PLACEMENT_DEADBAND_RAD    = 0.033f; // ~1.9°
+constexpr float GAIT_PITCH_PLACEMENT_SIGN            = +1.0f;
+constexpr bool  GAIT_PITCH_PLACEMENT_ENABLED         = true;
 
 // ============================================================
 // RECOVERY STEP PARAMETERS — secondary balance system

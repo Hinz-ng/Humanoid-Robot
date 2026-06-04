@@ -349,6 +349,30 @@ void loop() {
             const IMUState   rf_state = rightFootEstimator.update(rf_raw, dt);
             const uint32_t _footDurUs = micros() - _footStartUs;
 
+            // Foot-IMU boot neutral tare. The per-foot estimator captures its
+            // mean pitch/roll over the boot still-window (piggybacking gyro-bias
+            // calibration). Publish each foot's neutral ONCE, on the rising edge
+            // of CALIB_DONE, into WebComm telemetry + the gait controller's
+            // rollover baseline. Telemetry/calibration only — the control-path
+            // foot-contact snapshot below still uses neutral=0, so the lift gate
+            // is bit-identical. A foot that never calibrates never publishes;
+            // its telemetry neutral stays 0 with valid=false (fail loud).
+            static bool _footNeutralDone[SIDE_COUNT] = { false, false };
+            StateEstimator* _footEstPub[SIDE_COUNT] = { &leftFootEstimator,
+                                                        &rightFootEstimator };
+            for (uint8_t i = 0; i < SIDE_COUNT; ++i) {
+                if (_footNeutralDone[i] || !_footEstPub[i]->hasNeutral()) continue;
+                _footNeutralDone[i] = true;
+                const Side  side = (i == sideIdx(Side::LEFT)) ? Side::LEFT : Side::RIGHT;
+                const float nP = _footEstPub[i]->getNeutralPitch();
+                const float nR = _footEstPub[i]->getNeutralRoll();
+                webComm.setFootNeutral(side, nP, nR, /*valid=*/true);
+                Serial.printf("[FootIMU/Tare] %s neutral  pitch=%.4f rad (%.2f deg)  "
+                              "roll=%.4f rad (%.2f deg)\n",
+                              sideName(side),
+                              nP, nP * 57.29578f, nR, nR * 57.29578f);
+            }
+
             // Loop budget — accumulates inside the 400 Hz gate so timing is
             // sample-aligned with the actual reads.
             static uint32_t _budgetMaxUs    = 0;
@@ -427,7 +451,7 @@ void loop() {
 #if FOOT_IMU_ENABLED
             webComm.broadcastFootIMU(lf_raw, rf_raw);
             webComm.broadcastFootEstimate(lf_state, rf_state);
-            webComm.broadcastFootContact(footSnapPtr);
+            webComm.broadcastFootContact(footSnapPtr, lf_state, rf_state);
             webComm.broadcastFootImpact();
             webComm.broadcastWalkingInstr();
 #endif

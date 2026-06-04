@@ -75,6 +75,23 @@ void WebComm::setFootNeutralPitch(Side side, float rad) {
     else                     _rightFootNeutralPitchRad = rad;
 }
 
+// Boot-tare neutral capture (pitch + roll + validity). On an unclean tare
+// (valid=false) the stored neutral is forced to 0 so a stale or garbage
+// attitude can never leak into the telemetry preview.
+void WebComm::setFootNeutral(Side side, float pitchRad, float rollRad, bool valid) {
+    const float p = valid ? pitchRad : 0.0f;
+    const float r = valid ? rollRad  : 0.0f;
+    if (side == Side::LEFT) {
+        _leftFootNeutralPitchRad = p;
+        _leftFootNeutralRollRad  = r;
+        _leftFootNeutralValid    = valid;
+    } else {
+        _rightFootNeutralPitchRad = p;
+        _rightFootNeutralRollRad  = r;
+        _rightFootNeutralValid    = valid;
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 void listFiles() {
@@ -280,30 +297,54 @@ void WebComm::broadcastFootEstimate(const IMUState& left, const IMUState& right)
 //  Rate-limited to 10 Hz. Pitch deviation fields are signed radians after the
 //  loaded-sign transform, so the UI can show margin-to-threshold directly.
 // =============================================================================
-void WebComm::broadcastFootContact(const FootContactSnapshot* snap) {
+void WebComm::broadcastFootContact(const FootContactSnapshot* snap,
+                                   const IMUState& lf, const IMUState& rf) {
     if (snap == nullptr || _footContactCfg == nullptr || ws.count() == 0) return;
     const uint32_t INTERVAL_US = 100000;  // 10 Hz
     uint32_t now = micros();
     if ((now - _lastFootContactBroadcast_us) < INTERVAL_US) return;
     _lastFootContactBroadcast_us = now;
 
-    // l_pdev / r_pdev are still computed from the latest cached IMUState path -
-    // moved into the snapshot in F4 when neutralPitchRad becomes session data.
-    // For F3, broadcast 0.0f for both; the UI's "dp" display is informational
-    // and will be re-enabled when F4 lands. Pdev computation stays out of the
-    // gate path entirely.
     const FootContactConfig& cfg = *_footContactCfg;
-    char buf[240];
+
+    // Neutral-corrected pitch deviation (the F4 pdev the old stub anticipated):
+    //   pdev = (foot.pitch - neutralPitch) * loaded_pitch_sign
+    // i.e. the exact quantity isFootLoaded() thresholds. Signed radians.
+    const float l_pdev = lf.valid
+        ? (lf.pitch - _leftFootNeutralPitchRad)  * cfg.loaded_pitch_sign : 0.0f;
+    const float r_pdev = rf.valid
+        ? (rf.pitch - _rightFootNeutralPitchRad) * cfg.loaded_pitch_sign : 0.0f;
+
+    // Neutral-corrected predicate PREVIEW (telemetry only — distinct from the
+    // gate booleans above). Routes the captured neutral through the SAME
+    // foot_contact predicate functions the gate uses, so the operator can see
+    // what the gate WOULD read once the control path is flipped onto the tare.
+    const bool l_flatN   = isFootFlat(lf, _leftFootNeutralPitchRad,
+                                      _leftFootNeutralRollRad, cfg);
+    const bool r_flatN   = isFootFlat(rf, _rightFootNeutralPitchRad,
+                                      _rightFootNeutralRollRad, cfg);
+    const bool l_loadedN = isFootLoaded(lf, _leftFootNeutralPitchRad,  cfg);
+    const bool r_loadedN = isFootLoaded(rf, _rightFootNeutralPitchRad, cfg);
+
+    char buf[512];
     snprintf(buf, sizeof(buf),
         "FOOT_CONTACT:l_flat=%d,l_loaded=%d,l_pdev=%.4f,"
         "r_flat=%d,r_loaded=%d,r_pdev=%.4f,"
-        "flatP=%.4f,flatR=%.4f,loadDev=%.4f,loadSign=%.1f",
-        (int)snap->leftFlat,  (int)snap->leftLoaded,  0.0f,
-        (int)snap->rightFlat, (int)snap->rightLoaded, 0.0f,
+        "flatP=%.4f,flatR=%.4f,loadDev=%.4f,loadSign=%.1f,"
+        // Boot-tare neutrals (rad) + validity, and the neutral-corrected
+        // predicate preview. nV=0 means an unclean tare (fail-loud fallback=0).
+        "l_neutP=%.4f,l_neutR=%.4f,l_neutV=%d,l_flatN=%d,l_loadedN=%d,"
+        "r_neutP=%.4f,r_neutR=%.4f,r_neutV=%d,r_flatN=%d,r_loadedN=%d",
+        (int)snap->leftFlat,  (int)snap->leftLoaded,  l_pdev,
+        (int)snap->rightFlat, (int)snap->rightLoaded, r_pdev,
         cfg.flat_pitch_threshold_rad,
         cfg.flat_roll_threshold_rad,
         cfg.loaded_pitch_deviation_rad,
-        cfg.loaded_pitch_sign
+        cfg.loaded_pitch_sign,
+        _leftFootNeutralPitchRad,  _leftFootNeutralRollRad,
+        (int)_leftFootNeutralValid,  (int)l_flatN, (int)l_loadedN,
+        _rightFootNeutralPitchRad, _rightFootNeutralRollRad,
+        (int)_rightFootNeutralValid, (int)r_flatN, (int)r_loadedN
     );
     _sendFiltered(buf);
 }
@@ -670,7 +711,7 @@ void WebComm::broadcastGaitState() {
     const GaitState&            s   = *statePtr;
     const SwingFootLevelerState  lvl = *lvlPtr;
 
-    char buf[2432];
+    char buf[2688];
     snprintf(buf, sizeof(buf),
         "GAIT:phase=%.3f,mode=%d,sub=%d,liftL=%.1f,liftR=%.1f,ws=%.3f,gate=%d,hold=%d,"
         "stepH=%.1f,stanceH=%.1f,stepLen=%.1f,stanceInset=%.1f,"
@@ -767,7 +808,18 @@ void WebComm::broadcastGaitState() {
         // plus the live applied value (pPlMm, post-clamp, post-ramp, post-
         // strideScale; 0 on disabled / gain=0 / IDLE / estopped / deadband).
         // ffGuard = cumulative flat-foot-guard activations this gait session.
-        "pPlEn=%d,pPlGain=%.1f,pPlMax=%.1f,pPlDb=%.3f,pPlSign=%.0f,pPlMm=%.2f,ffGuard=%lu",
+        "pPlEn=%d,pPlGain=%.1f,pPlMax=%.1f,pPlDb=%.3f,pPlSign=%.0f,pPlMm=%.2f,ffGuard=%lu,"
+        // Rollover instrumentation (TELEMETRY ONLY) — per just-landed foot,
+        // anchored at the touchdown latch.
+        //   rollSide    - 0=LEFT,1=RIGHT (the foot that landed)
+        //   rollAct     - inside the post-contact window this tick
+        //   rollFP      - live neutral-corrected foot pitch (rad)
+        //   rollDiv     - commanded ankle pitch − measured foot pitch (deg, proxy)
+        //   rollDur     - latch→first-flat (ms); 0 if flat not reached in-window
+        //   rollCoMSign - sign of post-contact sagittal CoM velocity (-1/0/+1)
+        //   rollPitchPk - peak (signed) torso pitch in-window (rad)
+        "rollSide=%d,rollAct=%d,rollFP=%.4f,rollDiv=%.2f,rollDur=%lu,"
+        "rollCoMSign=%d,rollPitchPk=%.4f",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -932,7 +984,15 @@ void WebComm::broadcastGaitState() {
         _gaitCtrl->getConfig().pitchPlacementDeadbandRad,
         _gaitCtrl->getConfig().pitchPlacementSign,
         s.pitchPlacementMm,
-        (unsigned long)s.flatFootGuardCount
+        (unsigned long)s.flatFootGuardCount,
+        // Rollover instrumentation.
+        (int)s.rolloverSide,
+        (int)s.rolloverActive,
+        s.rolloverFootPitchRad,
+        s.ankleCmdVsFootPitchDivergenceDeg,
+        (unsigned long)s.rolloverDurationMs,
+        (int)s.postContactCoMVelSign,
+        s.postContactBodyPitchPeak
     );
     _sendFiltered(buf);
 }

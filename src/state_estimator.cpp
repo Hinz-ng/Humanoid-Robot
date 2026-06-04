@@ -41,6 +41,10 @@ void StateEstimator::reset() {
     _stillCount   = 0;
     _calibCount   = 0;
     _gyroSumX = _gyroSumY = _gyroSumZ = 0;
+    _accelSumX = _accelSumY = _accelSumZ = 0;
+    _neutralPitch = 0.0f;
+    _neutralRoll  = 0.0f;
+    _neutralValid = false;
     _state        = {};
 }
 
@@ -176,6 +180,14 @@ IMUState StateEstimator::update(const RawIMUData& raw, float dt) {
         _gyroSumX += raw.gyro_x;
         _gyroSumY += raw.gyro_y;
         _gyroSumZ += raw.gyro_z;
+        // Boot neutral tare: accumulate the raw accel vector over the SAME
+        // still window. The robot is stationary here, so the mean accel vector
+        // is pure gravity — its tilt angles are the mounting offset (the
+        // "flat at rest" attitude in robot frame). Piggybacks the gyro window;
+        // no second still-detection pass.
+        _accelSumX += raw.accel_x;
+        _accelSumY += raw.accel_y;
+        _accelSumZ += raw.accel_z;
         _calibCount++;
 
         if (_calibCount >= FilterConfig::CALIB_SAMPLES) {
@@ -183,9 +195,20 @@ IMUState StateEstimator::update(const RawIMUData& raw, float dt) {
             _cfg.gyro_bias_x = (float)_gyroSumX / (float)FilterConfig::CALIB_SAMPLES;
             _cfg.gyro_bias_y = (float)_gyroSumY / (float)FilterConfig::CALIB_SAMPLES;
             _cfg.gyro_bias_z = (float)_gyroSumZ / (float)FilterConfig::CALIB_SAMPLES;
+
+            // Neutral attitude from the MEAN accel vector (angles of the mean,
+            // not the mean of per-sample angles — avoids atan2 nonlinearity and
+            // matches the estimation-phase convention in _accelAngles()).
+            const float inv = 1.0f / (float)FilterConfig::CALIB_SAMPLES;
+            const float ax_g = ((float)_accelSumX * inv) / _cfg.accel_scale;
+            const float ay_g = ((float)_accelSumY * inv) / _cfg.accel_scale;
+            const float az_g = ((float)_accelSumZ * inv) / _cfg.accel_scale;
+            _accelAngles(ax_g, ay_g, az_g, _neutralPitch, _neutralRoll);
+            _neutralValid = true;
+
             _calibState = CALIB_DONE;
             // Note: Serial.printf intentionally not called here.
-            // Caller can check isCalibrated() and log if desired.
+            // Caller can check isCalibrated() / hasNeutral() and log if desired.
         }
 
         // Return invalid state — do not feed un-calibrated data to the filter.

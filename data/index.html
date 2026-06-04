@@ -616,6 +616,30 @@
             </div>
         </div>
 
+        <!-- Boot neutral tare (mounting offset captured during boot calibration).
+             pitch/roll are the per-foot "flat at rest" attitude; flatN/loadedN are
+             the neutral-corrected predicate PREVIEW (what the gate would read once
+             flipped onto the tare — currently telemetry only, gate still uses 0). -->
+        <div class="imu-group-label top-gap">Boot neutral (tare)</div>
+        <div class="imu-grid top-gap-sm">
+            <div class="imu-group">
+                <div class="imu-group-label">Left foot</div>
+                <div class="imu-row"><span class="imu-axis">valid</span><span class="imu-value" id="lf-neutV">—</span></div>
+                <div class="imu-row"><span class="imu-axis">pitch</span><span class="imu-value" id="lf-neutP">—</span></div>
+                <div class="imu-row"><span class="imu-axis">roll</span><span class="imu-value" id="lf-neutR">—</span></div>
+                <div class="imu-row"><span class="imu-axis">flatN</span><span class="imu-value" id="lf-flatN">—</span></div>
+                <div class="imu-row"><span class="imu-axis">loadedN</span><span class="imu-value" id="lf-loadedN">—</span></div>
+            </div>
+            <div class="imu-group">
+                <div class="imu-group-label">Right foot</div>
+                <div class="imu-row"><span class="imu-axis">valid</span><span class="imu-value" id="rf-neutV">—</span></div>
+                <div class="imu-row"><span class="imu-axis">pitch</span><span class="imu-value" id="rf-neutP">—</span></div>
+                <div class="imu-row"><span class="imu-axis">roll</span><span class="imu-value" id="rf-neutR">—</span></div>
+                <div class="imu-row"><span class="imu-axis">flatN</span><span class="imu-value" id="rf-flatN">—</span></div>
+                <div class="imu-row"><span class="imu-axis">loadedN</span><span class="imu-value" id="rf-loadedN">—</span></div>
+            </div>
+        </div>
+
         <div class="imu-group-label top-gap">Predicate thresholds</div>
         <div class="bal-tune-grid">
             <div class="bal-tune-row">
@@ -1609,6 +1633,28 @@
                 <div class="bal-out-val" id="gdTdTorsoRoll">—</div></div>
             <div class="bal-out-cell"><div class="bal-out-lbl">Recovery sub</div>
                 <div class="bal-out-val" id="gdRcvSub">—</div></div>
+        </div>
+
+        <!-- Rollover instrumentation (telemetry only). Per just-landed foot,
+             anchored at the touchdown latch. Baseline for the later ankle-yield
+             experiment: watch divergence (scrub) through the rollover window and
+             whether/when the foot reaches flat. -->
+        <div class="section-label">Rollover (post-contact)</div>
+        <div class="gait-telem-grid">
+            <div class="bal-out-cell"><div class="bal-out-lbl">Rollover foot</div>
+                <div class="bal-out-val" id="gdRollSide">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Window active</div>
+                <div class="bal-out-val" id="gdRollAct">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Foot pitch (°)</div>
+                <div class="bal-out-val" id="gdRollFP">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">AnkleCmd−foot (°)</div>
+                <div class="bal-out-val" id="gdRollDiv">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Rollover dur (ms)</div>
+                <div class="bal-out-val" id="gdRollDur">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Post-CoM vel</div>
+                <div class="bal-out-val" id="gdRollCoM">—</div></div>
+            <div class="bal-out-cell"><div class="bal-out-lbl">Post-pitch peak (°)</div>
+                <div class="bal-out-val" id="gdRollPitchPk">—</div></div>
         </div>
 
     </div><!-- /#gaitDiagBody -->
@@ -3236,6 +3282,30 @@ function initWebSocket() {
             const toDeg = r => (parseFloat(r) * 180 / Math.PI).toFixed(2) + "°";
             document.getElementById("lf-pdev").textContent = v.l_pdev != null ? toDeg(v.l_pdev) : "—";
             document.getElementById("rf-pdev").textContent = v.r_pdev != null ? toDeg(v.r_pdev) : "—";
+
+            // Boot-tare neutrals + neutral-corrected predicate preview. valid=0
+            // means the still-window calibration was unclean — flagged in red,
+            // neutral held at 0 (fail loud). flatN/loadedN are telemetry-only
+            // previews (the gate still uses the zero-referenced booleans above).
+            const setNeutV = (id, val) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                const ok = (val === "1");
+                el.textContent = ok ? "✓ tared" : "✗ none";
+                el.style.color = ok ? "#4caf50" : "#e53935";
+            };
+            setNeutV("lf-neutV", v.l_neutV);
+            setNeutV("rf-neutV", v.r_neutV);
+            const setDegCell = (id, val) =>
+                document.getElementById(id).textContent = val != null ? toDeg(val) : "—";
+            setDegCell("lf-neutP", v.l_neutP);
+            setDegCell("lf-neutR", v.l_neutR);
+            setDegCell("rf-neutP", v.r_neutP);
+            setDegCell("rf-neutR", v.r_neutR);
+            setBool("lf-flatN",   v.l_flatN);
+            setBool("lf-loadedN", v.l_loadedN);
+            setBool("rf-flatN",   v.r_flatN);
+            setBool("rf-loadedN", v.r_loadedN);
 
             if (!_tuneActive) {
                 if (v.flatP != null) {
@@ -5341,6 +5411,31 @@ function parseGaitState(payload) {
             cmpEl.style.color = cmpActD ? "#4caf50" : "#888";
         }
         gdSet("gdWs", wsProg.toFixed(3));
+
+        // Rollover instrumentation (telemetry only) --------------------------
+        // Roll snapshots transported in rad; shown in degrees. rollDur=0 means
+        // flat was not reached within the window. Optional-chained so old
+        // firmware leaves the cells at "—".
+        gdSet("gdRollSide", v["rollSide"] !== undefined
+            ? (parseInt(v["rollSide"]) === 0 ? "LEFT" : "RIGHT") : "—");
+        const rollActD = (v["rollAct"] === "1");
+        const rollActEl = document.getElementById("gdRollAct");
+        if (rollActEl) {
+            rollActEl.textContent = rollActD ? "ACTIVE" : "—";
+            rollActEl.style.color = rollActD ? "#4caf50" : "#888";
+        }
+        gdSet("gdRollFP",  v["rollFP"]  !== undefined
+            ? (parseFloat(v["rollFP"]) * 180 / Math.PI).toFixed(2) + "°" : "—");
+        gdSet("gdRollDiv", v["rollDiv"] !== undefined
+            ? parseFloat(v["rollDiv"]).toFixed(2) + "°" : "—");
+        const rollDur = v["rollDur"] !== undefined ? parseInt(v["rollDur"]) : undefined;
+        gdSet("gdRollDur", rollDur > 0 ? rollDur + " ms"
+            : (rollDur === 0 ? "not flat" : "—"));
+        const comSign = v["rollCoMSign"] !== undefined ? parseInt(v["rollCoMSign"]) : undefined;
+        gdSet("gdRollCoM", comSign === undefined ? "—"
+            : (comSign > 0 ? "+ (fwd)" : comSign < 0 ? "− (back)" : "0"));
+        gdSet("gdRollPitchPk", v["rollPitchPk"] !== undefined
+            ? (parseFloat(v["rollPitchPk"]) * 180 / Math.PI).toFixed(2) + "°" : "—");
 
         // Touchdown / recovery -----------------------------------------------
         const tdSeenD = (v["tdSeen"] === "1");

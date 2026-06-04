@@ -92,6 +92,93 @@ void GaitController::_resetCompliance() {
 }
 
 // ---------------------------------------------------------------------------
+//  _resetRolloverTelemetry — clear the post-contact rollover observation
+//  window + its telemetry mirror. Called on mode entry (start), init, and
+//  recovery entry — same lifecycle as _resetCompliance. NOT called at
+//  half-cycle boundaries: the window is anchored to the touchdown latch and is
+//  allowed to run across _advanceHalf (the landed foot becomes stance while it
+//  is still rolling to flat). TELEMETRY ONLY.
+// ---------------------------------------------------------------------------
+void GaitController::_resetRolloverTelemetry() {
+    _rolloverActive        = false;
+    _rolloverStartMs       = 0;
+    _rolloverFlatReached   = false;
+    _rolloverPeakComVelAbs = 0.0f;
+    _state.rolloverActive                   = false;
+    _state.rolloverFootPitchRad             = 0.0f;
+    _state.ankleCmdVsFootPitchDivergenceDeg = 0.0f;
+    _state.rolloverDurationMs               = 0;
+    _state.postContactCoMVelSign            = 0;
+    _state.postContactBodyPitchPeak         = 0.0f;
+}
+
+// ---------------------------------------------------------------------------
+//  _updateRolloverTelemetry — refresh the post-contact observation window once
+//  per update() tick. TELEMETRY ONLY: reads the just-landed foot's estimator,
+//  the last submitted ankle-pitch command, and the torso IMUState; writes only
+//  GaitState telemetry fields. Submits no joints and gates nothing, so control
+//  behaviour is bit-identical whether or not this runs.
+//
+//  The window opens at the touchdown latch (where _rolloverActive is set) and
+//  auto-closes rolloverWindowMs later. While open it streams the landed foot's
+//  neutral-corrected pitch and the ankle-cmd-vs-foot divergence, latches the
+//  first-flat time (rolloverDurationMs), and tracks the post-contact sagittal
+//  CoM-velocity sign and the peak torso pitch.
+// ---------------------------------------------------------------------------
+void GaitController::_updateRolloverTelemetry(const IMUState& torso) {
+    if (!_rolloverActive) return;
+
+    const uint32_t now     = millis();
+    const uint32_t elapsed = now - _rolloverStartMs;
+    if (elapsed > _cfg.rolloverWindowMs) {
+        // Window closed — stop streaming the live values but KEEP the captured
+        // per-step summaries (duration / sign / peak) for the UI to display.
+        _rolloverActive             = false;
+        _state.rolloverActive       = false;
+        _state.rolloverFootPitchRad = 0.0f;
+        _state.ankleCmdVsFootPitchDivergenceDeg = 0.0f;
+        return;
+    }
+
+    const uint8_t side = _rolloverSide;
+    const StateEstimator* est = _footEst[side];
+    const bool footOk = (est != nullptr) && est->getState().valid;
+
+    // Neutral-corrected pitch of the just-landed foot (robot frame, rad).
+    float footPitchCorr = 0.0f;
+    if (footOk) footPitchCorr = est->getState().pitch - est->getNeutralPitch();
+    _state.rolloverFootPitchRad = footPitchCorr;
+
+    // Scrub proxy: commanded ankle pitch (deg, joint frame) − measured
+    // neutral-corrected foot pitch (deg). The two live in different frames
+    // (different zeros), so the magnitude is relative — read its CHANGE through
+    // the window, which is what the later ankle-yield experiment will reduce.
+    const float footPitchDeg = footPitchCorr * 57.29578f;
+    _state.ankleCmdVsFootPitchDivergenceDeg = _lastAnkleCmdDeg[side] - footPitchDeg;
+
+    // Rollover duration: first tick the foot reaches the flat band of neutral.
+    if (footOk && !_rolloverFlatReached &&
+        fabsf(footPitchCorr) <= _cfg.rolloverFlatBandRad) {
+        _rolloverFlatReached      = true;
+        _state.rolloverDurationMs = elapsed;
+    }
+
+    // Post-contact body response (torso): sign of the sagittal CoM velocity at
+    // its peak |·| (forward-fall + vs backward-shove −), and the peak
+    // (max-|·|, signed) torso pitch over the window.
+    if (torso.valid) {
+        const float vx = torso.vx_CoM_mm_s;   // sagittal CoM velocity (mm/s)
+        if (fabsf(vx) > _rolloverPeakComVelAbs) {
+            _rolloverPeakComVelAbs       = fabsf(vx);
+            _state.postContactCoMVelSign = (vx > 0.0f) ? 1 : (vx < 0.0f ? -1 : 0);
+        }
+        if (fabsf(torso.pitch) > fabsf(_state.postContactBodyPitchPeak)) {
+            _state.postContactBodyPitchPeak = torso.pitch;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 //  _updateCompliance — W4 per-tick touchdown-compliance offset update.
 //
 //  When a compliance event is active, the stance-height offset decays from
@@ -287,6 +374,7 @@ void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController*
     _resetHRestore();
     _resetHeelStrike();
     _resetTrimSuppression();
+    _resetRolloverTelemetry();
     _state.touchdownSide = 0;   // not cleared by _clearTouchdownLatch; explicit on init
     Serial.println("[GaitCtrl] Initialized.");
 }
@@ -354,6 +442,7 @@ void GaitController::start(GaitMode mode) {
                             // telemetry survive a gait stop (non-zero H-Restore panel).
         _resetHeelStrike();
         _resetTrimSuppression();
+        _resetRolloverTelemetry();
         if (_ws) _ws->trigger(ShiftDirection::NONE);
         Serial.println("[GaitCtrl] IDLE — weight shift centered.");
         return;
@@ -384,6 +473,7 @@ void GaitController::start(GaitMode mode) {
     _resetHRestore();
     _resetHeelStrike();
     _resetTrimSuppression();
+    _resetRolloverTelemetry();
     _triggerShiftForSwing(Side::LEFT);  // begin LEFT-swing shift immediately
 
     Serial.printf("[GaitCtrl] start mode=%d\n", static_cast<int>(mode));
@@ -1309,10 +1399,16 @@ LegIKResult GaitController::_submitFootTargetIK(Side side,
     // happens here; the telemetry mirror is refreshed once per tick by
     // _updateHeelStrike, so this call site no longer writes _state.* fields.
     const float heel_bias = _heelStrikeBiasDeg(side);
+    const float ankle_pitch_cmd = r.ankle_pitch_deg + pitch_bias + heel_bias;
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_PITCH),   r.hip_pitch_deg);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::KNEE_PITCH),  r.knee_pitch_deg);
-    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_PITCH), r.ankle_pitch_deg + pitch_bias + heel_bias);
+    _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_PITCH), ankle_pitch_cmd);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_ROLL),    r.hip_roll_deg);
+    // Rollover telemetry: remember the ankle-pitch value actually submitted for
+    // this side (joint frame, deg) so _updateRolloverTelemetry can difference it
+    // against the measured foot pitch. Telemetry only — the submitted value
+    // above is unchanged.
+    _lastAnkleCmdDeg[sideIdx(side)] = ankle_pitch_cmd;
 
     const float ankle_roll = _ankleRollDeg(side, r.ankle_roll_deg);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_ROLL),  ankle_roll);
@@ -1813,6 +1909,25 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             _state.touchdownTorsoRollRad =
                 _lastImuState.roll - _cfg.torsoRollNeutralRad;
 
+            // Rollover instrumentation: open the post-contact observation window
+            // on the just-landed foot (= current _swingSide; it becomes stance
+            // after _advanceHalf, but the window tracks the same physical foot
+            // throughout). Reset the per-step summaries so the new step starts
+            // clean. TELEMETRY ONLY — no control effect. _updateRolloverTelemetry
+            // services this window each tick.
+            _rolloverActive        = true;
+            _rolloverStartMs       = _touchdownMs;   // == millis() at the latch
+            _rolloverSide          = static_cast<uint8_t>(_swingSide);
+            _rolloverFlatReached   = false;
+            _rolloverPeakComVelAbs = 0.0f;
+            _state.rolloverActive               = true;
+            _state.rolloverSide                 = _rolloverSide;
+            _state.rolloverFootPitchRad         = 0.0f;
+            _state.ankleCmdVsFootPitchDivergenceDeg = 0.0f;
+            _state.rolloverDurationMs           = 0;
+            _state.postContactCoMVelSign        = 0;
+            _state.postContactBodyPitchPeak     = 0.0f;
+
             // W4 — touchdown compliance. The same early-contact event that
             // latches the swing leg also fires a brief stance-height yield:
             // both legs flex by complianceDepthMm to absorb the landing
@@ -1847,6 +1962,12 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // Keep the public mirror in sync every tick (clears if a future hook
     // ever clears the internal latch without going through _clearTouchdownLatch).
     _state.touchdownLocked = _touchdownLocked;
+
+    // Rollover instrumentation — service the post-contact observation window
+    // (opened at the latch above). TELEMETRY ONLY; reads this tick's torso
+    // IMUState, submits nothing. Runs every active tick so the window can span
+    // the _advanceHalf role swap.
+    _updateRolloverTelemetry(imuState);
 
     // Active gait modes only: cycle-role aware stance (Stage 3). Both legs
     // receive the stride formula so accumulated body displacement is preserved
@@ -2292,6 +2413,7 @@ void GaitController::triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad) 
     // trajectory anyway. Reset it on entry purely so the telemetry panel does
     // not show a stale decay carried over from the interrupted gait swing.
     _resetCompliance();
+    _resetRolloverTelemetry();   // telemetry only — clear stale rollover window
     // Recovery sets h_sagittal_mm directly and must not inherit a stale h-
     // restore armed by the interrupted gait swing — clear it on entry.
     _resetHRestore();

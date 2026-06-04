@@ -39,7 +39,12 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // Accepts a pre-computed snapshot so the UI displays the same booleans
     // the gait controller saw this tick. Pass nullptr to no-op (used when
     // FOOT_IMU is compiled out).
-    void broadcastFootContact(const FootContactSnapshot* snap);
+    // lf/rf are the per-foot IMUStates (robot frame) — used ONLY to compute the
+    // neutral-corrected telemetry preview (pdev + neutral-aware flat/loaded).
+    // The gate booleans still come from `snap` (zero-referenced), so what the UI
+    // shows for the gate matches the actual gate input. Telemetry only.
+    void broadcastFootContact(const FootContactSnapshot* snap,
+                              const IMUState& lf, const IMUState& rf);
     void broadcastFootImpact();
     // Per-step walking diagnostics ("WALKING:" packet). Sends on step change plus
     // a ≤1 Hz heartbeat. No-op if no WalkingInstrumentation is wired.
@@ -84,6 +89,12 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // refactor closes.
     void setFootNeutralPitch(float leftRad, float rightRad);
     void setFootNeutralPitch(Side side, float rad);
+    // Boot-tare neutral capture (pitch + roll + validity), pushed once per foot
+    // from main.cpp when its estimator reaches CALIB_DONE. `valid=false` (unclean
+    // calibration) leaves the stored neutral at 0 and flags it in telemetry —
+    // fail loud, never silently use garbage. Telemetry / preview only; does not
+    // touch the control-path foot-contact snapshot.
+    void setFootNeutral(Side side, float pitchRad, float rollRad, bool valid);
 private:
     AsyncWebServer server;
     AsyncWebSocket ws;
@@ -109,6 +120,10 @@ private:
     FootContactConfig* _footContactCfg      = nullptr;
     float              _leftFootNeutralPitchRad  = 0.0f;
     float              _rightFootNeutralPitchRad = 0.0f;
+    float              _leftFootNeutralRollRad   = 0.0f;
+    float              _rightFootNeutralRollRad  = 0.0f;
+    bool               _leftFootNeutralValid     = false;  // false until a clean tare
+    bool               _rightFootNeutralValid    = false;
     SwingFootLeveler*  _swingLeveler        = nullptr;
     FootImpactDetector* _footImpact         = nullptr;
     WalkingInstrumentation* _walkInstr      = nullptr;  // per-step walking diagnostics

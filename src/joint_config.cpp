@@ -63,7 +63,7 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
     {  4,  "right_hip_yaw",       118.0f,  +1,  -50.0f,  +50.0f,  180.0f,  667.0f,  1.00f  },  // TUNE  (txGain unverified)
 
     //  Hip Pitch  — 270° servo, 0.11 s/60° → 545 °/s
-    {  5,  "right_hip_pitch",     125.0f,  +1,  -25.0f,  +90.0f,  270.0f,  545.0f,  1.00f  },  // TUNE  (txGain unverified)
+    {  5,  "right_hip_pitch",     124.0f,  +1,  -25.0f,  +90.0f,  270.0f,  545.0f,  1.00f  },  // TUNE  (txGain unverified)
 
 // ▼  LEFT LEG  ───────────────────────────────────────────────────────────────────────
 
@@ -81,11 +81,11 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
 
 // ▼  LEFT LEG (continued)  ───────────────────────────────────────────────────────────
 
-    { 12,  "left_hip_roll",       128.0f,  -1,  -20.0f,  +80.0f,  270.0f,  500.0f,  1.00f  },  // TUNE  (txGain unverified)
+    { 12,  "left_hip_roll",       127.0f,  -1,  -20.0f,  +80.0f,  270.0f,  500.0f,  1.00f  },  // TUNE  (txGain unverified)
     { 13,  "left_knee_pitch",     136.0f,  +1,    0.0f,  +100.0f,  270.0f,  500.0f,  1.00f  },  // TUNE  (txGain unverified)
     //  Left ankle pitch — same 4-bar linkage as right; mirrors txGain.
     { 14,  "left_ankle_pitch",    120.0f,  -1,  -60.0f,  +60.0f,  180.0f,  706.0f,  0.72f  },  // TUNE
-    { 15,  "left_ankle_roll",     134.0f,  -1,  -25.0f,  +25.0f,  270.0f,  333.0f,  1.00f  },  // TUNE
+    { 15,  "left_ankle_roll",     132.0f,  -1,  -25.0f,  +25.0f,  270.0f,  333.0f,  1.00f  },  // TUNE
 
 };
 // Guard: array length must match NUM_JOINTS. If you add or remove a joint,

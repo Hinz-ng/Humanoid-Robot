@@ -73,6 +73,19 @@ struct FootContactConfig {
 bool isFootFlat(const IMUState& state, const FootContactConfig& cfg);
 
 // ---------------------------------------------------------------------------
+// isFootFlat (neutral-corrected)
+//   As above but tests |pitch - neutralPitchRad| / |roll - neutralRollRad|
+//   against the thresholds, so a nonzero mounting offset (boot tare) does not
+//   bias the flat band. The zero-neutral form above delegates here with
+//   neutrals = 0 and is therefore bit-identical to the pre-tare behaviour —
+//   the control-path snapshot keeps using it, telemetry uses this one.
+// ---------------------------------------------------------------------------
+bool isFootFlat(const IMUState& state,
+                float neutralPitchRad,
+                float neutralRollRad,
+                const FootContactConfig& cfg);
+
+// ---------------------------------------------------------------------------
 // isFootLoaded
 //   true iff (state.pitch - neutralPitchRad) * loaded_pitch_sign
 //                                >= loaded_pitch_deviation_rad

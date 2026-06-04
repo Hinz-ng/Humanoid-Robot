@@ -348,6 +348,20 @@ struct GaitConfig {
     float touchdownGatePhase = 0.45f; // [0..1)
 
     // -----------------------------------------------------------------------
+    // Rollover instrumentation (TELEMETRY ONLY — no control effect).
+    //   rolloverWindowMs    — duration of the post-contact observation window,
+    //                         anchored at the touchdown latch (_touchdownMs).
+    //                         The just-landed foot's pitch, the ankle-cmd-vs-
+    //                         foot divergence, and the post-contact CoM/pitch
+    //                         peaks are tracked across this window.
+    //   rolloverFlatBandRad — |neutral-corrected foot pitch| below this counts
+    //                         as "flat reached"; the first crossing fixes
+    //                         rolloverDurationMs. ~0.02 rad ≈ 1.1°.
+    // -----------------------------------------------------------------------
+    uint32_t rolloverWindowMs    = 200;
+    float    rolloverFlatBandRad = 0.020f;
+
+    // -----------------------------------------------------------------------
     // W4 — Touchdown compliance.
     //
     // Event-triggered geometric yield. When the early-contact / swing-
@@ -794,6 +808,41 @@ struct GaitState {
     float meanStepPeriodR  = 0.0f;
     float meanSwingMsL     = 0.0f;
     float meanSwingMsR     = 0.0f;
+
+    // ------------------------------------------------------------------
+    // Rollover instrumentation (TELEMETRY ONLY — nothing in the control
+    // stack reads these). Anchored at the touchdown latch; refer to the
+    // just-landed foot (rolloverSide) through the rolloverWindowMs window.
+    // Reset at each latch fire and on start(). See _updateRolloverTelemetry().
+    //
+    //   rolloverSide                0=LEFT,1=RIGHT — the foot that just landed.
+    //   rolloverActive              true while inside the post-contact window.
+    //   rolloverFootPitchRad        live neutral-corrected pitch of that foot
+    //                               (robot frame, rad). 0 outside the window.
+    //   ankleCmdVsFootPitchDivergenceDeg
+    //                               commanded stance ankle pitch (the value
+    //                               submitted in _submitFootTargetIK, deg, joint
+    //                               frame) − measured neutral-corrected foot
+    //                               pitch (deg). Scrub/fighting proxy; the
+    //                               magnitude is frame-relative (different zeros)
+    //                               so read its CHANGE through the window, not
+    //                               its absolute value. 0 outside the window.
+    //   rolloverDurationMs          latch → foot pitch first within
+    //                               rolloverFlatBandRad of the tared neutral.
+    //                               0 if flat is never reached in-window.
+    //   postContactCoMVelSign       sign (-1/0/+1) of the sagittal CoM velocity
+    //                               at its peak |·| in the window. Forward-fall
+    //                               (+) vs backward-shove (−) discriminator.
+    //   postContactBodyPitchPeak    peak (max-|·|, signed) torso pitch in the
+    //                               window (rad).
+    // ------------------------------------------------------------------
+    uint8_t  rolloverSide       = 0;
+    bool     rolloverActive     = false;
+    float    rolloverFootPitchRad = 0.0f;
+    float    ankleCmdVsFootPitchDivergenceDeg = 0.0f;
+    uint32_t rolloverDurationMs = 0;
+    int8_t   postContactCoMVelSign  = 0;
+    float    postContactBodyPitchPeak = 0.0f;
 };
 
 // ---------------------------------------------------------------------------
@@ -877,6 +926,16 @@ private:
     FootImpactDetector* _impact      = nullptr;   // Stage 0/1 — observational
     // Per-foot estimators — read-only, touchdown roll telemetry only.
     const StateEstimator* _footEst[SIDE_COUNT] = { nullptr, nullptr };
+
+    // Rollover instrumentation state (TELEMETRY ONLY). _lastAnkleCmdDeg holds
+    // the ankle-pitch value actually submitted per side in _submitFootTargetIK
+    // (joint frame, deg); the rest track the post-contact observation window.
+    float    _lastAnkleCmdDeg[SIDE_COUNT] = { 0.0f, 0.0f };
+    bool     _rolloverActive     = false;
+    uint32_t _rolloverStartMs    = 0;
+    uint8_t  _rolloverSide       = 0;
+    bool     _rolloverFlatReached = false;
+    float    _rolloverPeakComVelAbs = 0.0f;  // tracks the peak |sagittal CoM vel| seen
 
     GaitConfig   _cfg;
     GaitState    _state;
@@ -1005,6 +1064,11 @@ private:
     // the offset must be allowed to keep decaying.
     void _resetCompliance();
 
+    // Clear the rollover observation window + its telemetry mirror. Same
+    // lifecycle as _resetCompliance (mode entry / init / recovery), NOT at
+    // half-cycle boundaries — the window outlives the touchdown latch.
+    void _resetRolloverTelemetry();
+
     // -----------------------------------------------------------------------
     // H-restore — deferred swing-leg stance-height restoration state.
     //
@@ -1126,6 +1190,12 @@ private:
     // the freeze snapshot fresh. Must run once per update(), before any trim
     // helper or _buildFootTarget() reads the result.
     void _updateTrimSuppression();
+
+    // Rollover instrumentation — refresh the post-contact observation window
+    // once per update() tick (TELEMETRY ONLY, submits nothing). torso is the
+    // current-tick body IMUState. Reads _footEst[]/_lastAnkleCmdDeg; writes only
+    // GaitState telemetry fields. The window is opened at the touchdown latch.
+    void _updateRolloverTelemetry(const IMUState& torso);
 
     // Zero the trim-suppression state + telemetry mirror. Call on mode entry
     // (start), init — NOT at half-cycle boundaries, where the post-latch hold

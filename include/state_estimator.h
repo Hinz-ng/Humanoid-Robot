@@ -142,6 +142,17 @@ public:
     void              setConfig(const FilterConfig& cfg) { _cfg = cfg; }
     const FilterConfig& getConfig() const { return _cfg; }
 
+    // --- Boot neutral tare (mounting offset) ----------------------------------
+    // Mean attitude captured during the SAME still-window used for gyro-bias
+    // calibration (no second still window). Valid only once CALIB_DONE is
+    // reached cleanly; until then both read 0 and hasNeutral() is false so a
+    // consumer can fail loud rather than use garbage. Robot frame, radians.
+    // Telemetry / contact-predicate baseline only — the filter does NOT
+    // subtract these from its live pitch/roll output.
+    float getNeutralPitch() const { return _neutralPitch; }
+    float getNeutralRoll()  const { return _neutralRoll; }
+    bool  hasNeutral()      const { return _neutralValid; }
+
 private:
     FilterConfig _cfg;
 
@@ -163,6 +174,16 @@ private:
     int32_t    _gyroSumX   = 0;  // int32_t: safe for 2000 * int16_t without overflow
     int32_t    _gyroSumY   = 0;
     int32_t    _gyroSumZ   = 0;
+    // Accel-sum accumulators for the boot neutral tare. Same window, same
+    // overflow headroom as the gyro sums (2000 * int16_t fits int32_t).
+    int32_t    _accelSumX  = 0;
+    int32_t    _accelSumY  = 0;
+    int32_t    _accelSumZ  = 0;
+
+    // --- Boot neutral (mounting offset), captured at CALIB_DONE ---
+    float _neutralPitch = 0.0f;   // mean accel pitch over the still window (rad)
+    float _neutralRoll  = 0.0f;   // mean accel roll  over the still window (rad)
+    bool  _neutralValid = false;  // true once a clean CALIB_DONE has been reached
 
     IMUState _state = {};
 

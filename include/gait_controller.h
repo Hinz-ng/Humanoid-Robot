@@ -810,39 +810,61 @@ struct GaitState {
     float meanSwingMsR     = 0.0f;
 
     // ------------------------------------------------------------------
-    // Rollover instrumentation (TELEMETRY ONLY — nothing in the control
-    // stack reads these). Anchored at the touchdown latch; refer to the
-    // just-landed foot (rolloverSide) through the rolloverWindowMs window.
-    // Reset at each latch fire and on start(). See _updateRolloverTelemetry().
+    // Rollover instrumentation (TELEMETRY ONLY — nothing in the control stack
+    // reads these). These are the COMPLETE per-event aggregates, finalized once
+    // when each post-contact window closes (rolloverWindowMs after the touchdown
+    // latch) and held stable until the next window closes. They are NOT
+    // broadcast standalone — WalkingInstrumentation consumes them into its
+    // per-step ring (current / 10-step history / rolling average) on the rising
+    // edge of `rolloverSeq`. The window is anchored to the touchdown latch and
+    // spans the _advanceHalf role swap (the landed foot becomes stance while
+    // still rolling to flat), so a completed result describes the foot that just
+    // became stance.
     //
-    //   rolloverSide                0=LEFT,1=RIGHT — the foot that just landed.
-    //   rolloverActive              true while inside the post-contact window.
-    //   rolloverFootPitchRad        live neutral-corrected pitch of that foot
-    //                               (robot frame, rad). 0 outside the window.
-    //   ankleCmdVsFootPitchDivergenceDeg
-    //                               commanded stance ankle pitch (the value
-    //                               submitted in _submitFootTargetIK, deg, joint
-    //                               frame) − measured neutral-corrected foot
-    //                               pitch (deg). Scrub/fighting proxy; the
-    //                               magnitude is frame-relative (different zeros)
-    //                               so read its CHANGE through the window, not
-    //                               its absolute value. 0 outside the window.
+    //   rolloverSeq                 increments once per completed window. The
+    //                               consumer edge-detects this to know a fresh
+    //                               result is ready (and which step it lands in).
+    //   rolloverSide                0=LEFT,1=RIGHT — the foot that landed.
+    //   rolloverFootPitchPeakDeg    peak |neutral-corrected foot pitch| over the
+    //                               window (deg). 0 ⇒ stayed flat after tare.
+    //   rolloverFootPitchRangeDeg   (max − min) neutral-corrected foot pitch over
+    //                               the window (deg) — full toe→flat excursion.
+    //   rolloverDivergencePeakRelDeg
+    //                               peak |commanded ankle pitch − measured
+    //                               neutral-corrected foot pitch| over the window
+    //                               (deg). RELATIVE proxy: the two terms live in
+    //                               different frames with different zeros, so the
+    //                               ABSOLUTE value is NOT physically meaningful.
+    //                               What IS meaningful: comparison between runs,
+    //                               the trajectory through the rollover, and any
+    //                               reduction in peak excursion (the target the
+    //                               later ankle-yield experiment will try to cut).
     //   rolloverDurationMs          latch → foot pitch first within
     //                               rolloverFlatBandRad of the tared neutral.
     //                               0 if flat is never reached in-window.
+    //   postContactBodyPitchPeakDeg peak-MAGNITUDE SIGNED torso pitch over the
+    //                               window (deg, neutral-corrected by
+    //                               torsoPitchNeutralRad): the largest-|·| sample,
+    //                               sign retained. NOT a forward-only metric — a
+    //                               backward excursion reports negative. ~0 for a
+    //                               stable step with no pitch excursion.
     //   postContactCoMVelSign       sign (-1/0/+1) of the sagittal CoM velocity
     //                               at its peak |·| in the window. Forward-fall
     //                               (+) vs backward-shove (−) discriminator.
-    //   postContactBodyPitchPeak    peak (max-|·|, signed) torso pitch in the
-    //                               window (rad).
+    //                               CAVEAT: vx_CoM is an inverted-pendulum proxy
+    //                               that the estimator documents as DEGRADED
+    //                               during double support / foot-strike (see
+    //                               ARCHITECTURE.md) — i.e. exactly this window.
+    //                               Treat as a coarse hint, not ground truth.
     // ------------------------------------------------------------------
-    uint8_t  rolloverSide       = 0;
-    bool     rolloverActive     = false;
-    float    rolloverFootPitchRad = 0.0f;
-    float    ankleCmdVsFootPitchDivergenceDeg = 0.0f;
-    uint32_t rolloverDurationMs = 0;
-    int8_t   postContactCoMVelSign  = 0;
-    float    postContactBodyPitchPeak = 0.0f;
+    uint32_t rolloverSeq                  = 0;
+    uint8_t  rolloverSide                 = 0;
+    float    rolloverFootPitchPeakDeg     = 0.0f;
+    float    rolloverFootPitchRangeDeg    = 0.0f;
+    float    rolloverDivergencePeakRelDeg = 0.0f;
+    uint32_t rolloverDurationMs           = 0;
+    float    postContactBodyPitchPeakDeg  = 0.0f;
+    int8_t   postContactCoMVelSign        = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -929,13 +951,23 @@ private:
 
     // Rollover instrumentation state (TELEMETRY ONLY). _lastAnkleCmdDeg holds
     // the ankle-pitch value actually submitted per side in _submitFootTargetIK
-    // (joint frame, deg); the rest track the post-contact observation window.
+    // (joint frame, deg); the rest are the live accumulators for the in-flight
+    // post-contact window, finalized into the GaitState aggregates at window
+    // close. Internal — not broadcast.
     float    _lastAnkleCmdDeg[SIDE_COUNT] = { 0.0f, 0.0f };
-    bool     _rolloverActive     = false;
-    uint32_t _rolloverStartMs    = 0;
-    uint8_t  _rolloverSide       = 0;
-    bool     _rolloverFlatReached = false;
-    float    _rolloverPeakComVelAbs = 0.0f;  // tracks the peak |sagittal CoM vel| seen
+    bool     _rolloverActive       = false;
+    uint32_t _rolloverStartMs      = 0;
+    uint8_t  _rolloverSide         = 0;
+    bool     _rolloverFlatReached  = false;
+    uint32_t _rolloverDurationMs   = 0;      // running latch→flat time this window
+    bool     _rolloverFpSeen       = false;  // a valid foot-pitch sample seen this window
+    float    _rolloverFpPeakAbs    = 0.0f;   // peak |corrected foot pitch| (rad)
+    float    _rolloverFpMin        = 0.0f;   // min corrected foot pitch (rad)
+    float    _rolloverFpMax        = 0.0f;   // max corrected foot pitch (rad)
+    float    _rolloverDivPeakAbs   = 0.0f;   // peak |ankleCmd − footPitch| (deg)
+    float    _rolloverBodyPitchPk  = 0.0f;   // peak-magnitude signed torso pitch (rad)
+    float    _rolloverComVelPeakAbs = 0.0f;  // peak |sagittal CoM vel| (mm/s)
+    int8_t   _rolloverComVelSign   = 0;      // sign at that peak
 
     GaitConfig   _cfg;
     GaitState    _state;

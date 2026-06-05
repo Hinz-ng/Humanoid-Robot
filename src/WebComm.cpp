@@ -410,10 +410,11 @@ void WebComm::broadcastWalkingInstr() {
         "swSpd", "swHor", "swVer", "swEng",
         "comBob", "comVz", "comLat", "comSag", "trRate", "trTd",
         "reach", "ffGuard",
-        "tdVert", "tdHoriz", "tdDur", "tdWinRoll", "rollT"
+        "tdVert", "tdHoriz", "tdDur", "tdWinRoll", "rollT",
+        "roFpPk", "roFpRng", "roDiv", "roDur", "roBodyPk", "roComSgn"
     };
 
-    char buf[4096];
+    char buf[5120];   // 28 metrics × (cur+avg+10-history) + onset timeline
     const int cap = (int)sizeof(buf);
     int n = snprintf(buf, cap, "WALKING:en=%d,step=%lu,n=%u,onsets=%u",
                      s.enabled ? 1 : 0,
@@ -808,18 +809,7 @@ void WebComm::broadcastGaitState() {
         // plus the live applied value (pPlMm, post-clamp, post-ramp, post-
         // strideScale; 0 on disabled / gain=0 / IDLE / estopped / deadband).
         // ffGuard = cumulative flat-foot-guard activations this gait session.
-        "pPlEn=%d,pPlGain=%.1f,pPlMax=%.1f,pPlDb=%.3f,pPlSign=%.0f,pPlMm=%.2f,ffGuard=%lu,"
-        // Rollover instrumentation (TELEMETRY ONLY) — per just-landed foot,
-        // anchored at the touchdown latch.
-        //   rollSide    - 0=LEFT,1=RIGHT (the foot that landed)
-        //   rollAct     - inside the post-contact window this tick
-        //   rollFP      - live neutral-corrected foot pitch (rad)
-        //   rollDiv     - commanded ankle pitch − measured foot pitch (deg, proxy)
-        //   rollDur     - latch→first-flat (ms); 0 if flat not reached in-window
-        //   rollCoMSign - sign of post-contact sagittal CoM velocity (-1/0/+1)
-        //   rollPitchPk - peak (signed) torso pitch in-window (rad)
-        "rollSide=%d,rollAct=%d,rollFP=%.4f,rollDiv=%.2f,rollDur=%lu,"
-        "rollCoMSign=%d,rollPitchPk=%.4f",
+        "pPlEn=%d,pPlGain=%.1f,pPlMax=%.1f,pPlDb=%.3f,pPlSign=%.0f,pPlMm=%.2f,ffGuard=%lu",
         s.phase,
         static_cast<int>(s.mode),
         static_cast<int>(s.subState),
@@ -984,15 +974,7 @@ void WebComm::broadcastGaitState() {
         _gaitCtrl->getConfig().pitchPlacementDeadbandRad,
         _gaitCtrl->getConfig().pitchPlacementSign,
         s.pitchPlacementMm,
-        (unsigned long)s.flatFootGuardCount,
-        // Rollover instrumentation.
-        (int)s.rolloverSide,
-        (int)s.rolloverActive,
-        s.rolloverFootPitchRad,
-        s.ankleCmdVsFootPitchDivergenceDeg,
-        (unsigned long)s.rolloverDurationMs,
-        (int)s.postContactCoMVelSign,
-        s.postContactBodyPitchPeak
+        (unsigned long)s.flatFootGuardCount
     );
     _sendFiltered(buf);
 }

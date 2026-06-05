@@ -100,82 +100,117 @@ void GaitController::_resetCompliance() {
 //  is still rolling to flat). TELEMETRY ONLY.
 // ---------------------------------------------------------------------------
 void GaitController::_resetRolloverTelemetry() {
-    _rolloverActive        = false;
-    _rolloverStartMs       = 0;
-    _rolloverFlatReached   = false;
-    _rolloverPeakComVelAbs = 0.0f;
-    _state.rolloverActive                   = false;
-    _state.rolloverFootPitchRad             = 0.0f;
-    _state.ankleCmdVsFootPitchDivergenceDeg = 0.0f;
-    _state.rolloverDurationMs               = 0;
-    _state.postContactCoMVelSign            = 0;
-    _state.postContactBodyPitchPeak         = 0.0f;
+    _rolloverActive         = false;
+    _rolloverStartMs        = 0;
+    _rolloverFlatReached    = false;
+    _rolloverDurationMs     = 0;
+    _rolloverFpSeen         = false;
+    _rolloverFpPeakAbs      = 0.0f;
+    _rolloverFpMin          = 0.0f;
+    _rolloverFpMax          = 0.0f;
+    _rolloverDivPeakAbs     = 0.0f;
+    _rolloverBodyPitchPk    = 0.0f;
+    _rolloverComVelPeakAbs  = 0.0f;
+    _rolloverComVelSign     = 0;
+    // Clear the published aggregates (hygiene). rolloverSeq is intentionally NOT
+    // reset — it must stay monotonic so the WalkingInstrumentation consumer's
+    // edge-detector is never tricked into recording a stale result on a restart.
+    _state.rolloverSide                 = 0;
+    _state.rolloverFootPitchPeakDeg     = 0.0f;
+    _state.rolloverFootPitchRangeDeg    = 0.0f;
+    _state.rolloverDivergencePeakRelDeg = 0.0f;
+    _state.rolloverDurationMs           = 0;
+    _state.postContactBodyPitchPeakDeg  = 0.0f;
+    _state.postContactCoMVelSign        = 0;
 }
 
 // ---------------------------------------------------------------------------
-//  _updateRolloverTelemetry — refresh the post-contact observation window once
-//  per update() tick. TELEMETRY ONLY: reads the just-landed foot's estimator,
-//  the last submitted ankle-pitch command, and the torso IMUState; writes only
-//  GaitState telemetry fields. Submits no joints and gates nothing, so control
-//  behaviour is bit-identical whether or not this runs.
+//  _updateRolloverTelemetry — accumulate the post-contact observation window
+//  once per update() tick, and FINALIZE the per-event aggregates when the window
+//  closes. TELEMETRY ONLY: reads the just-landed foot's estimator, the last
+//  submitted ankle-pitch command, and the torso IMUState; writes only GaitState
+//  telemetry fields. Submits no joints and gates nothing, so control behaviour
+//  is bit-identical whether or not this runs.
 //
 //  The window opens at the touchdown latch (where _rolloverActive is set) and
-//  auto-closes rolloverWindowMs later. While open it streams the landed foot's
-//  neutral-corrected pitch and the ankle-cmd-vs-foot divergence, latches the
-//  first-flat time (rolloverDurationMs), and tracks the post-contact sagittal
-//  CoM-velocity sign and the peak torso pitch.
+//  auto-closes rolloverWindowMs later. While open it accumulates peaks/range of
+//  the landed foot's neutral-corrected pitch, the peak ankle-cmd-vs-foot
+//  divergence, the latch→flat time, and the post-contact CoM-velocity sign and
+//  peak-magnitude (signed) torso pitch. At close it writes the complete
+//  aggregates to GaitState and bumps rolloverSeq so WalkingInstrumentation can
+//  edge-detect a fresh result and fold it into its per-step ring.
+//
+//  Frame notes (carried into the metric names/UI so they cannot be misread):
+//   - rolloverDivergencePeakRelDeg is RELATIVE — commanded ankle pitch (joint
+//     frame) minus measured foot pitch (robot frame). Different zeros, so the
+//     absolute value is not physical; only run-to-run / trajectory / peak-
+//     reduction comparisons are meaningful.
+//   - postContactBodyPitchPeakDeg is peak-MAGNITUDE SIGNED and neutral-corrected
+//     (torsoPitchNeutralRad): it measures dynamic excursion, not standing bias,
+//     and a backward excursion reports negative.
+//   - postContactCoMVelSign rides vx_CoM, an inverted-pendulum proxy the
+//     estimator documents as degraded during double support / foot-strike —
+//     exactly this window. Coarse hint only.
 // ---------------------------------------------------------------------------
 void GaitController::_updateRolloverTelemetry(const IMUState& torso) {
     if (!_rolloverActive) return;
-
-    const uint32_t now     = millis();
-    const uint32_t elapsed = now - _rolloverStartMs;
-    if (elapsed > _cfg.rolloverWindowMs) {
-        // Window closed — stop streaming the live values but KEEP the captured
-        // per-step summaries (duration / sign / peak) for the UI to display.
-        _rolloverActive             = false;
-        _state.rolloverActive       = false;
-        _state.rolloverFootPitchRad = 0.0f;
-        _state.ankleCmdVsFootPitchDivergenceDeg = 0.0f;
-        return;
-    }
 
     const uint8_t side = _rolloverSide;
     const StateEstimator* est = _footEst[side];
     const bool footOk = (est != nullptr) && est->getState().valid;
 
-    // Neutral-corrected pitch of the just-landed foot (robot frame, rad).
-    float footPitchCorr = 0.0f;
-    if (footOk) footPitchCorr = est->getState().pitch - est->getNeutralPitch();
-    _state.rolloverFootPitchRad = footPitchCorr;
+    const uint32_t now     = millis();
+    const uint32_t elapsed = now - _rolloverStartMs;
 
-    // Scrub proxy: commanded ankle pitch (deg, joint frame) − measured
-    // neutral-corrected foot pitch (deg). The two live in different frames
-    // (different zeros), so the magnitude is relative — read its CHANGE through
-    // the window, which is what the later ankle-yield experiment will reduce.
-    const float footPitchDeg = footPitchCorr * 57.29578f;
-    _state.ankleCmdVsFootPitchDivergenceDeg = _lastAnkleCmdDeg[side] - footPitchDeg;
-
-    // Rollover duration: first tick the foot reaches the flat band of neutral.
-    if (footOk && !_rolloverFlatReached &&
-        fabsf(footPitchCorr) <= _cfg.rolloverFlatBandRad) {
-        _rolloverFlatReached      = true;
-        _state.rolloverDurationMs = elapsed;
+    if (elapsed <= _cfg.rolloverWindowMs) {
+        // ---- accumulate this tick ----
+        if (footOk) {
+            const float footPitchCorr = est->getState().pitch - est->getNeutralPitch();  // rad
+            const float a = fabsf(footPitchCorr);
+            if (a > _rolloverFpPeakAbs) _rolloverFpPeakAbs = a;
+            if (!_rolloverFpSeen) {
+                _rolloverFpSeen = true;
+                _rolloverFpMin  = footPitchCorr;
+                _rolloverFpMax  = footPitchCorr;
+            } else {
+                if (footPitchCorr < _rolloverFpMin) _rolloverFpMin = footPitchCorr;
+                if (footPitchCorr > _rolloverFpMax) _rolloverFpMax = footPitchCorr;
+            }
+            // Scrub proxy (RELATIVE): commanded ankle pitch (deg) − measured
+            // foot pitch (deg). Track the peak magnitude over the window.
+            const float divergence = _lastAnkleCmdDeg[side] - footPitchCorr * 57.29578f;
+            if (fabsf(divergence) > _rolloverDivPeakAbs) _rolloverDivPeakAbs = fabsf(divergence);
+            // First tick the foot reaches the flat band of the tared neutral.
+            if (!_rolloverFlatReached && a <= _cfg.rolloverFlatBandRad) {
+                _rolloverFlatReached = true;
+                _rolloverDurationMs  = elapsed;
+            }
+        }
+        if (torso.valid) {
+            const float vx = torso.vx_CoM_mm_s;   // sagittal CoM vel (mm/s), proxy
+            if (fabsf(vx) > _rolloverComVelPeakAbs) {
+                _rolloverComVelPeakAbs = fabsf(vx);
+                _rolloverComVelSign    = (vx > 0.0f) ? 1 : (vx < 0.0f ? -1 : 0);
+            }
+            // Peak-MAGNITUDE signed torso pitch, neutral-corrected (excursion,
+            // not standing bias).
+            const float pitchCorr = torso.pitch - _cfg.torsoPitchNeutralRad;
+            if (fabsf(pitchCorr) > fabsf(_rolloverBodyPitchPk)) _rolloverBodyPitchPk = pitchCorr;
+        }
+        return;
     }
 
-    // Post-contact body response (torso): sign of the sagittal CoM velocity at
-    // its peak |·| (forward-fall + vs backward-shove −), and the peak
-    // (max-|·|, signed) torso pitch over the window.
-    if (torso.valid) {
-        const float vx = torso.vx_CoM_mm_s;   // sagittal CoM velocity (mm/s)
-        if (fabsf(vx) > _rolloverPeakComVelAbs) {
-            _rolloverPeakComVelAbs       = fabsf(vx);
-            _state.postContactCoMVelSign = (vx > 0.0f) ? 1 : (vx < 0.0f ? -1 : 0);
-        }
-        if (fabsf(torso.pitch) > fabsf(_state.postContactBodyPitchPeak)) {
-            _state.postContactBodyPitchPeak = torso.pitch;
-        }
-    }
+    // ---- window closed: finalize the complete aggregates + publish ----
+    _state.rolloverSide                 = _rolloverSide;
+    _state.rolloverFootPitchPeakDeg     = _rolloverFpPeakAbs * 57.29578f;
+    _state.rolloverFootPitchRangeDeg    = _rolloverFpSeen
+                                          ? (_rolloverFpMax - _rolloverFpMin) * 57.29578f : 0.0f;
+    _state.rolloverDivergencePeakRelDeg = _rolloverDivPeakAbs;
+    _state.rolloverDurationMs           = _rolloverFlatReached ? _rolloverDurationMs : 0;
+    _state.postContactBodyPitchPeakDeg  = _rolloverBodyPitchPk * 57.29578f;
+    _state.postContactCoMVelSign        = _rolloverComVelSign;
+    _state.rolloverSeq++;                 // rising edge → consumer folds into its ring
+    _rolloverActive = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1904,29 +1939,37 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             // neutral-corrected torso roll. Lets a swing-preload A/B sweep
             // observe the landed swing attitude objectively.
             const StateEstimator* swingEst = _footEst[sideIdx(_swingSide)];
+            // Neutral-corrected (tared) swing-foot roll: 0 ⇒ physically flat in
+            // roll. Subtracts the boot mounting offset so this matches the
+            // "foot pitch/roll = 0 when flat" convention used everywhere in the
+            // instrumentation. Telemetry only.
             _state.touchdownSwingFootRollRad =
-                swingEst ? swingEst->getState().roll : 0.0f;
+                swingEst ? (swingEst->getState().roll - swingEst->getNeutralRoll()) : 0.0f;
             _state.touchdownTorsoRollRad =
                 _lastImuState.roll - _cfg.torsoRollNeutralRad;
 
             // Rollover instrumentation: open the post-contact observation window
             // on the just-landed foot (= current _swingSide; it becomes stance
             // after _advanceHalf, but the window tracks the same physical foot
-            // throughout). Reset the per-step summaries so the new step starts
-            // clean. TELEMETRY ONLY — no control effect. _updateRolloverTelemetry
-            // services this window each tick.
+            // throughout). Reset the live accumulators so the new window starts
+            // clean; the published aggregates are NOT touched until the window
+            // closes (so the prior step's result stays readable meanwhile).
+            // TELEMETRY ONLY — no control effect. _swingSide is 0/1 and equals
+            // sideIdx(_swingSide) (side.h static_asserts), so it indexes
+            // _footEst[]/_lastAnkleCmdDeg[] correctly.
             _rolloverActive        = true;
             _rolloverStartMs       = _touchdownMs;   // == millis() at the latch
             _rolloverSide          = static_cast<uint8_t>(_swingSide);
             _rolloverFlatReached   = false;
-            _rolloverPeakComVelAbs = 0.0f;
-            _state.rolloverActive               = true;
-            _state.rolloverSide                 = _rolloverSide;
-            _state.rolloverFootPitchRad         = 0.0f;
-            _state.ankleCmdVsFootPitchDivergenceDeg = 0.0f;
-            _state.rolloverDurationMs           = 0;
-            _state.postContactCoMVelSign        = 0;
-            _state.postContactBodyPitchPeak     = 0.0f;
+            _rolloverDurationMs    = 0;
+            _rolloverFpSeen        = false;
+            _rolloverFpPeakAbs     = 0.0f;
+            _rolloverFpMin         = 0.0f;
+            _rolloverFpMax         = 0.0f;
+            _rolloverDivPeakAbs    = 0.0f;
+            _rolloverBodyPitchPk   = 0.0f;
+            _rolloverComVelPeakAbs = 0.0f;
+            _rolloverComVelSign    = 0;
 
             // W4 — touchdown compliance. The same early-contact event that
             // latches the swing leg also fires a brief stance-height yield:

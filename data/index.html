@@ -1635,27 +1635,9 @@
                 <div class="bal-out-val" id="gdRcvSub">—</div></div>
         </div>
 
-        <!-- Rollover instrumentation (telemetry only). Per just-landed foot,
-             anchored at the touchdown latch. Baseline for the later ankle-yield
-             experiment: watch divergence (scrub) through the rollover window and
-             whether/when the foot reaches flat. -->
-        <div class="section-label">Rollover (post-contact)</div>
-        <div class="gait-telem-grid">
-            <div class="bal-out-cell"><div class="bal-out-lbl">Rollover foot</div>
-                <div class="bal-out-val" id="gdRollSide">—</div></div>
-            <div class="bal-out-cell"><div class="bal-out-lbl">Window active</div>
-                <div class="bal-out-val" id="gdRollAct">—</div></div>
-            <div class="bal-out-cell"><div class="bal-out-lbl">Foot pitch (°)</div>
-                <div class="bal-out-val" id="gdRollFP">—</div></div>
-            <div class="bal-out-cell"><div class="bal-out-lbl">AnkleCmd−foot (°)</div>
-                <div class="bal-out-val" id="gdRollDiv">—</div></div>
-            <div class="bal-out-cell"><div class="bal-out-lbl">Rollover dur (ms)</div>
-                <div class="bal-out-val" id="gdRollDur">—</div></div>
-            <div class="bal-out-cell"><div class="bal-out-lbl">Post-CoM vel</div>
-                <div class="bal-out-val" id="gdRollCoM">—</div></div>
-            <div class="bal-out-cell"><div class="bal-out-lbl">Post-pitch peak (°)</div>
-                <div class="bal-out-val" id="gdRollPitchPk">—</div></div>
-        </div>
+        <!-- Rollover (post-contact) instrumentation lives in the 🔬 Walking
+             Instrumentation panel (per-step ring / average / 10-step history),
+             not here — it is a per-step aggregate, not a live gait-state value. -->
 
     </div><!-- /#gaitDiagBody -->
 </div><!-- /.gait-panel (diagnostics) -->
@@ -1687,6 +1669,8 @@
         <div id="wiSecCoM"></div>
         <div class="section-label">Reach</div>
         <div id="wiSecReach"></div>
+        <div class="section-label">Rollover (post-contact)</div>
+        <div id="wiSecRollover"></div>
     </div>
 </div><!-- /.gait-panel (walking instrumentation) -->
 
@@ -4311,8 +4295,18 @@ const WI_METRICS = [
     { key:"rollT",    sec:"CoM",       label:"Peak Roll-Rate Time (from TD)",    unit:"ms",  dec:0, kind:"measured", signed:true },
     { key:"reach",   sec:"Reach",     label:"Peak Reach Percentage",       unit:"%",      dec:1, kind:"measured" },
     { key:"ffGuard", sec:"Reach",     label:"Flat-Foot Guard Activations", unit:"",       dec:0, kind:"measured" },
+    // Rollover (post-contact) — per-step aggregates from GaitController, folded in
+    // on the rolloverSeq edge (added 2026-06-02). Foot pitch is neutral-corrected
+    // (0 = physically flat after tare). See firmware notes for the caveats baked
+    // into these labels.
+    { key:"roFpPk",   sec:"Rollover", label:"Foot-Pitch Peak (corrected)",      unit:"°",  dec:2, kind:"measured" },
+    { key:"roFpRng",  sec:"Rollover", label:"Foot-Pitch Range (toe→flat)",      unit:"°",  dec:2, kind:"measured" },
+    { key:"roDiv",    sec:"Rollover", label:"AnkleCmd−FootPitch (rel)",         unit:"°",  dec:2, kind:"measured" },
+    { key:"roDur",    sec:"Rollover", label:"Rollover Duration (→flat)",        unit:"ms", dec:0, kind:"measured" },
+    { key:"roBodyPk", sec:"Rollover", label:"Post-Contact Body Pitch Peak",     unit:"°",  dec:2, kind:"measured", signed:true },
+    { key:"roComSgn", sec:"Rollover", label:"Post-Contact CoM Vel Sign (proxy)",unit:"",   dec:2, kind:"measured", signed:true },
 ];
-const WI_SECMAP = { Touchdown:"wiSecTouchdown", Swing:"wiSecSwing", CoM:"wiSecCoM", Reach:"wiSecReach" };
+const WI_SECMAP = { Touchdown:"wiSecTouchdown", Swing:"wiSecSwing", CoM:"wiSecCoM", Reach:"wiSecReach", Rollover:"wiSecRollover" };
 let _wiRowsBuilt = false;
 
 function _wiFmt(metric, val) {
@@ -5411,31 +5405,6 @@ function parseGaitState(payload) {
             cmpEl.style.color = cmpActD ? "#4caf50" : "#888";
         }
         gdSet("gdWs", wsProg.toFixed(3));
-
-        // Rollover instrumentation (telemetry only) --------------------------
-        // Roll snapshots transported in rad; shown in degrees. rollDur=0 means
-        // flat was not reached within the window. Optional-chained so old
-        // firmware leaves the cells at "—".
-        gdSet("gdRollSide", v["rollSide"] !== undefined
-            ? (parseInt(v["rollSide"]) === 0 ? "LEFT" : "RIGHT") : "—");
-        const rollActD = (v["rollAct"] === "1");
-        const rollActEl = document.getElementById("gdRollAct");
-        if (rollActEl) {
-            rollActEl.textContent = rollActD ? "ACTIVE" : "—";
-            rollActEl.style.color = rollActD ? "#4caf50" : "#888";
-        }
-        gdSet("gdRollFP",  v["rollFP"]  !== undefined
-            ? (parseFloat(v["rollFP"]) * 180 / Math.PI).toFixed(2) + "°" : "—");
-        gdSet("gdRollDiv", v["rollDiv"] !== undefined
-            ? parseFloat(v["rollDiv"]).toFixed(2) + "°" : "—");
-        const rollDur = v["rollDur"] !== undefined ? parseInt(v["rollDur"]) : undefined;
-        gdSet("gdRollDur", rollDur > 0 ? rollDur + " ms"
-            : (rollDur === 0 ? "not flat" : "—"));
-        const comSign = v["rollCoMSign"] !== undefined ? parseInt(v["rollCoMSign"]) : undefined;
-        gdSet("gdRollCoM", comSign === undefined ? "—"
-            : (comSign > 0 ? "+ (fwd)" : comSign < 0 ? "− (back)" : "0"));
-        gdSet("gdRollPitchPk", v["rollPitchPk"] !== undefined
-            ? (parseFloat(v["rollPitchPk"]) * 180 / Math.PI).toFixed(2) + "°" : "—");
 
         // Touchdown / recovery -----------------------------------------------
         const tdSeenD = (v["tdSeen"] === "1");

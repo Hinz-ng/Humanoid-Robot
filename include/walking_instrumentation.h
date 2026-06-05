@@ -126,6 +126,15 @@ enum WiMetric : uint8_t {
     WI_TD_IMPULSE_DUR,  // Touchdown Impulse Duration (|a|≥onset)    [ms]
     WI_TD_WIN_ROLL,     // Touchdown-Window Peak Roll Rate           [deg/s]
     WI_PEAK_ROLL_TIME,  // Peak Roll-Rate Time (offset from primary) [ms]
+    // ---- rollover (post-contact) — sourced from GaitController's per-event
+    //      aggregates, folded in on the rising edge of GaitState::rolloverSeq
+    //      (added 2026-06-02). See METRIC PROXY NOTES / gait_controller.h. ----
+    WI_ROLL_FP_PEAK,    // Rollover Foot-Pitch Peak (corrected)      [deg]
+    WI_ROLL_FP_RANGE,   // Rollover Foot-Pitch Range (toe→flat)      [deg]
+    WI_ROLL_DIV_REL,    // AnkleCmd−FootPitch peak (RELATIVE proxy)  [deg]
+    WI_ROLL_DURATION,   // Rollover Duration (latch→flat)            [ms]
+    WI_ROLL_BODY_PITCH, // Post-Contact Body Pitch Peak (corrected)  [deg]
+    WI_ROLL_COM_VSIGN,  // Post-Contact CoM Vel Sign (degraded proxy)[-1/0/+1]
     WI_METRIC_COUNT
 };
 
@@ -265,6 +274,16 @@ private:
         bool     liftTimerActive = false;  // landing foot currently above gyro thresh
         uint32_t liftTimerStart  = 0;
         bool     liftConfirmed   = false;  // sustained lift seen since primary
+        // rollover (post-contact) — copied wholesale from GaitController's
+        // per-event aggregates when rolloverSeq ticks during this step. 0 ⇒ no
+        // rollover completed this step (matches the "0 when the event did not
+        // occur" convention of the other metrics).
+        float    rollFpPeakDeg    = 0.0f;
+        float    rollFpRangeDeg   = 0.0f;
+        float    rollDivRelDeg    = 0.0f;
+        float    rollDurationMs   = 0.0f;
+        float    rollBodyPitchDeg = 0.0f;
+        float    rollComVelSign   = 0.0f;
     };
 
     void _resetStepAccum();
@@ -289,6 +308,12 @@ private:
     float        _prevBodyH      = 0.0f;
     float        _bodyHvelPrev   = 0.0f;            // 1-tick-lagged d(bodyH)/dt for CoM-vz@TD
     bool         _prevFlatActive[SIDE_COUNT] = {false, false};
+    // Rollover consumer: edge-detect GaitState::rolloverSeq so each completed
+    // post-contact window is folded into exactly one step record. _rolloverSeqInit
+    // syncs to the live seq on the first tick after reset so a pre-existing
+    // (stale) result is never recorded.
+    bool         _rolloverSeqInit = false;
+    uint32_t     _prevRolloverSeq = 0;
 };
 
 #endif // WALKING_INSTRUMENTATION_H

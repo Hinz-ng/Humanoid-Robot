@@ -35,6 +35,8 @@ void WalkingInstrumentation::reset() {
     _prevBodyHValid = false;
     _prevBodyH      = 0.0f;
     _bodyHvelPrev   = 0.0f;
+    _rolloverSeqInit = false;   // re-sync to gait's live seq on the next tick
+    _prevRolloverSeq = 0;
 }
 
 void WalkingInstrumentation::_resetStepAccum() {
@@ -92,6 +94,14 @@ void WalkingInstrumentation::_finalizeStep() {
     m.v[WI_PEAK_ROLL_TIME] = _acc.primarySet
         ? (float)((int32_t)_acc.peakRollTimeAbsMs - (int32_t)_acc.firstOnsetMs)
         : 0.0f;
+    // Rollover aggregates copied in from GaitController on the rolloverSeq edge
+    // (0 if no post-contact window completed during this step).
+    m.v[WI_ROLL_FP_PEAK]    = _acc.rollFpPeakDeg;
+    m.v[WI_ROLL_FP_RANGE]   = _acc.rollFpRangeDeg;
+    m.v[WI_ROLL_DIV_REL]    = _acc.rollDivRelDeg;
+    m.v[WI_ROLL_DURATION]   = _acc.rollDurationMs;
+    m.v[WI_ROLL_BODY_PITCH] = _acc.rollBodyPitchDeg;
+    m.v[WI_ROLL_COM_VSIGN]  = _acc.rollComVelSign;
 
     // Onset timeline travels with the step (copied into the same ring entry).
     m.onsetN = _acc.onsetN;
@@ -137,7 +147,14 @@ void WalkingInstrumentation::update(float dt_s,
     const uint32_t now = millis();
     const bool dtOk = (dt_s > 1e-6f);
 
-    // Disabled: hold metrics, only keep edge trackers fresh.
+    // Rollover consumer: sync the seq edge-detector to gait's live value on the
+    // first tick after a reset so a pre-existing (stale) result is never folded
+    // into the first step. After this, a change in rolloverSeq means one fresh
+    // post-contact result is ready to record.
+    if (!_rolloverSeqInit) { _prevRolloverSeq = gait.rolloverSeq; _rolloverSeqInit = true; }
+
+    // Disabled: hold metrics, only keep edge trackers fresh (incl. rolloverSeq,
+    // so re-enabling does not retro-record a result that completed while off).
     if (!_cfg.enabled) {
         _running       = gait.running;
         _prevSubState  = gait.subState;
@@ -145,6 +162,7 @@ void WalkingInstrumentation::update(float dt_s,
         _prevTargValid = true;
         for (uint8_t i = 0; i < SIDE_COUNT; ++i) { _prevFx[i] = fx[i]; _prevFy[i] = fy[i]; _prevFh[i] = fh[i]; }
         _prevBodyHValid = true; _prevBodyH = bodyH;
+        _prevRolloverSeq = gait.rolloverSeq;
         return;
     }
 
@@ -181,6 +199,7 @@ void WalkingInstrumentation::update(float dt_s,
             _prevFlatActive[i] = false;
         }
         _prevBodyHValid = true; _prevBodyH = bodyH; _bodyHvelPrev = bodyHvel;
+        _prevRolloverSeq = gait.rolloverSeq;   // sync; don't record while stopped
         return;
     }
 
@@ -190,6 +209,22 @@ void WalkingInstrumentation::update(float dt_s,
         gait.subState != StepSubState::SWINGING) {
         _finalizeStep();
         _resetStepAccum();
+    }
+
+    // ---- rollover (post-contact): fold one completed window into the CURRENT
+    // step on the rising edge of gait.rolloverSeq. Placed after the step-boundary
+    // reset so a result that completes is attributed to the step in progress
+    // (the step in which the just-landed foot is now stance). One result per
+    // step in steady walking; a step with none keeps zeros (matching the other
+    // metrics' "0 when the event did not occur" convention). ----
+    if (gait.rolloverSeq != _prevRolloverSeq) {
+        _prevRolloverSeq      = gait.rolloverSeq;
+        _acc.rollFpPeakDeg    = gait.rolloverFootPitchPeakDeg;
+        _acc.rollFpRangeDeg   = gait.rolloverFootPitchRangeDeg;
+        _acc.rollDivRelDeg    = gait.rolloverDivergencePeakRelDeg;
+        _acc.rollDurationMs   = (float)gait.rolloverDurationMs;
+        _acc.rollBodyPitchDeg = gait.postContactBodyPitchPeakDeg;
+        _acc.rollComVelSign   = (float)gait.postContactCoMVelSign;
     }
 
     // ---- swing-foot speed peaks (max of both feet; swing foot dominates) ----

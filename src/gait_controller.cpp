@@ -408,6 +408,7 @@ void GaitController::init(MotionManager* mm, WeightShift* ws, BalanceController*
     _resetCompliance();
     _resetHRestore();
     _resetHeelStrike();
+    _resetYield();
     _resetTrimSuppression();
     _resetRolloverTelemetry();
     _state.touchdownSide = 0;   // not cleared by _clearTouchdownLatch; explicit on init
@@ -476,6 +477,7 @@ void GaitController::start(GaitMode mode) {
                             // this, _hRestoreActive/_hRestoreDeficitMm and their
                             // telemetry survive a gait stop (non-zero H-Restore panel).
         _resetHeelStrike();
+        _resetYield();
         _resetTrimSuppression();
         _resetRolloverTelemetry();
         if (_ws) _ws->trigger(ShiftDirection::NONE);
@@ -507,6 +509,7 @@ void GaitController::start(GaitMode mode) {
     _resetCompliance();
     _resetHRestore();
     _resetHeelStrike();
+    _resetYield();
     _resetTrimSuppression();
     _resetRolloverTelemetry();
     _triggerShiftForSwing(Side::LEFT);  // begin LEFT-swing shift immediately
@@ -1018,6 +1021,96 @@ float GaitController::_heelStrikeBiasDeg(Side side) const {
     return constrain(-peak * frac, -maxB, maxB);
 }
 
+// ===========================================================================
+//  POST-CONTACT ANKLE YIELD  (off-by-default; gain 0 ⇒ bit-identical no-op)
+//
+//  A post-contact RELEASE: it relaxes the held-flat ankle command on the
+//  just-planted leg so the foot can roll forward under the vaulting body. It is
+//  NOT a driven dorsiflexion and is NEVER present before contact.
+//
+//  Departures from the heel-strike template (deliberate):
+//    - SINGLE GATE: armed ONLY at the touchdown latch (_startYield), which
+//      already gates on _halfPhase > touchdownGatePhase. No eligibility window,
+//      no pre-arm, no second phase check, NO engage-phase branch in the helper.
+//    - NO FALLBACK: _advanceHalf does NOT arm yield. A missed touchdown yields
+//      nothing that step — engagement is 1:1 with detected touchdowns.
+//  Pre-contact dorsiflexion shortens the catch lever and reproduces the already-
+//  falsified heel-strike failure; this gating exists to prevent exactly that.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+//  _yieldBiasDeg — additive POST-IK ankle-pitch bias for `side` (sign baked
+//  NEGATIVE = dorsiflex). Returns 0 on EVERY path unless a release is active on
+//  the locked just-planted side, so the swing foot carries zero yield at any
+//  pre-contact phase. Profile: smoothstep ramp-IN over yieldEngageMs, then
+//  smoothstep decay over yieldReleaseMs, clamped to ±yieldMaxBiasDeg.
+// ---------------------------------------------------------------------------
+float GaitController::_yieldBiasDeg(Side side) const {
+    if (!_cfg.yieldEnabled || oe_is_estopped()) return 0.0f;
+    if (!_yieldActive || side != _yieldSide)    return 0.0f;
+    const uint32_t eng = _cfg.yieldEngageMs;
+    const uint32_t rel = _cfg.yieldReleaseMs;
+    if (rel == 0) return 0.0f;                  // degenerate config guard
+    const uint32_t t = millis() - _yieldStartMs;
+    float frac;
+    if (t < eng) {
+        const float r = (eng > 0) ? (float)t / (float)eng : 1.0f;
+        frac = r * r * (3.0f - 2.0f * r);       // smoothstep UP  0→1
+    } else {
+        const float r = constrain((float)(t - eng) / (float)rel, 0.0f, 1.0f);
+        frac = 1.0f - r * r * (3.0f - 2.0f * r); // smoothstep DOWN 1→0
+    }
+    // Sign baked negative (dorsiflexion). Only the locked just-planted side.
+    // NO swing-leg branch, NO engage-phase branch — either would put bias on the
+    // foot BEFORE contact (the falsified heel-strike failure).
+    return constrain(-_yieldPeakDeg * frac, -_cfg.yieldMaxBiasDeg, +_cfg.yieldMaxBiasDeg);
+}
+
+// ---------------------------------------------------------------------------
+//  _startYield — arm the post-contact release. Call ONLY from the touchdown
+//  latch fire site (beside the compliance / rollover / heel-strike arming). The
+//  magnitude is committed here so a runtime gain change mid-release does not
+//  corrupt the in-flight profile.
+// ---------------------------------------------------------------------------
+void GaitController::_startYield() {
+    if (!_cfg.yieldEnabled) return;
+    if (_yieldActive)       return;             // already releasing — don't restart
+    _yieldSide    = _swingSide;                 // the just-planted foot
+    _yieldStartMs = millis();
+    _yieldPeakDeg = _cfg.yieldDorsiflexDeg;     // commit magnitude
+    _yieldActive  = true;
+}
+
+// ---------------------------------------------------------------------------
+//  _updateYield — per-tick decay/clear + telemetry refresh. Call once per
+//  update() beside _updateHeelStrike(), BEFORE the estop early-return so the
+//  time-based profile keeps decaying on every path and across the role swap.
+// ---------------------------------------------------------------------------
+void GaitController::_updateYield() {
+    if (_yieldActive &&
+        (millis() - _yieldStartMs) >= (_cfg.yieldEngageMs + _cfg.yieldReleaseMs)) {
+        _yieldActive = false;
+    }
+    _state.yieldActive  = _yieldActive;
+    _state.yieldSide    = static_cast<uint8_t>(_yieldSide);
+    _state.yieldBiasDeg = _yieldActive ? _yieldBiasDeg(_yieldSide) : 0.0f;
+}
+
+// ---------------------------------------------------------------------------
+//  _resetYield — zero all yield state + telemetry. Call in init/start/recovery
+//  ONLY. NOT in _advanceHalf / _clearTouchdownLatch — the release must run
+//  across the role swap to completion.
+// ---------------------------------------------------------------------------
+void GaitController::_resetYield() {
+    _yieldActive  = false;
+    _yieldStartMs = 0;
+    _yieldSide    = _swingSide;
+    _yieldPeakDeg = 0.0f;
+    _state.yieldActive  = false;
+    _state.yieldSide    = static_cast<uint8_t>(_swingSide);
+    _state.yieldBiasDeg = 0.0f;
+}
+
 // ---------------------------------------------------------------------------
 //  _buildFootTarget — Stage 1: vertical lift only.
 //  Stance leg returns the neutral pose (x=0, y=0, h=stanceHeight).
@@ -1434,7 +1527,10 @@ LegIKResult GaitController::_submitFootTargetIK(Side side,
     // happens here; the telemetry mirror is refreshed once per tick by
     // _updateHeelStrike, so this call site no longer writes _state.* fields.
     const float heel_bias = _heelStrikeBiasDeg(side);
-    const float ankle_pitch_cmd = r.ankle_pitch_deg + pitch_bias + heel_bias;
+    // Post-contact ankle yield — additive POST-IK, just-planted leg only, 0 at
+    // defaults (gain 0) and 0 on the swing foot at every pre-contact phase.
+    const float yield_bias = _yieldBiasDeg(side);
+    const float ankle_pitch_cmd = r.ankle_pitch_deg + pitch_bias + heel_bias + yield_bias;
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::HIP_PITCH),   r.hip_pitch_deg);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::KNEE_PITCH),  r.knee_pitch_deg);
     _mm->submit(SOURCE_GAIT, channelFor(side, LegJoint::ANKLE_PITCH), ankle_pitch_cmd);
@@ -1645,6 +1741,12 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // estop early-return so the decay is purely time-based and continues
     // smoothly through any FSM path, including across the role swap.
     _updateHeelStrike();
+
+    // Post-contact ankle yield — same placement rationale as _updateHeelStrike:
+    // before the estop early-return so the engage→release decay is purely time-
+    // based and continues across the role swap until it self-clears. No-op at
+    // gain 0; never sets bias before the latch armed it.
+    _updateYield();
 
     // Publish swing-leg hint to WeightShift FIRST. Reflects last tick's
     // substate; consumed on next tick's WS update (2.5 ms staleness).
@@ -1993,6 +2095,13 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             // through the _advanceHalf role swap and out the other side.
             // _startHeelStrikeRelease is a no-op when heelStrikeEnabled=false.
             _startHeelStrikeRelease();
+
+            // Post-contact ankle YIELD — armed ONLY here (single gate; inherits
+            // this site's _halfPhase > touchdownGatePhase gate). NO _advanceHalf
+            // fallback: a missed touchdown yields nothing this step, so the
+            // ankle release is never present before contact. Distinct from the
+            // W4 stance-height "yield" (compliance) armed above. No-op at gain 0.
+            _startYield();
 
             Serial.printf("[GaitCtrl] TOUCHDOWN  swing=%s  phase=%.3f  "
                           "x=%.1f mm  delta_g=%.3f\n",
@@ -2464,6 +2573,9 @@ void GaitController::triggerRecovery(float tilt_pitch_rad, float tilt_roll_rad) 
     // not the engage/release model. Wipe heel-strike state so a release in
     // progress when the disturbance hit does not leak into the recovery ankle.
     _resetHeelStrike();
+    // Same for the post-contact ankle yield — a release in flight at the
+    // disturbance must not bias the recovery ankle.
+    _resetYield();
 
     _state.mode    = GaitMode::RECOVERY_STEP;
     _state.running = true;

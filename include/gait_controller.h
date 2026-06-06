@@ -482,6 +482,31 @@ struct GaitConfig {
     uint32_t heelStrikeReleaseMs    = GAIT_HEELSTRIKE_RELEASE_MS_DEFAULT;
     float    heelStrikeMaxBiasDeg   = GAIT_HEELSTRIKE_MAX_BIAS_DEG;
 
+    // -----------------------------------------------------------------------
+    // Post-contact ankle YIELD (ships inert: yieldDorsiflexDeg=0 → no-op).
+    // A post-contact RELEASE on the just-planted leg: relaxes the held-flat
+    // ankle command (negative/dorsiflex, additive post-IK) so the foot can roll
+    // forward under the vaulting body. NEVER present before contact — armed ONLY
+    // at the touchdown latch (which already gates on _halfPhase >
+    // touchdownGatePhase) with NO _advanceHalf fallback, so engagement is 1:1
+    // with detected touchdowns. Pre-contact dorsiflexion would shorten the catch
+    // lever and reproduce the falsified heel-strike failure; this gating prevents
+    // that. Sign is baked NEGATIVE in _yieldBiasDeg(); config holds magnitude.
+    //
+    //   yieldEnabled      — master enable. WS: "yield"
+    //   yieldDorsiflexDeg — peak dorsiflex MAGNITUDE (deg, >=0). WS: "yieldDeg"
+    //   yieldEngageMs     — smoothstep ramp-IN window after the latch (ms).
+    //                       WS: "yieldEngMs". Profile only, NOT a gating stage.
+    //   yieldReleaseMs    — smoothstep decay window after engage (ms).
+    //                       WS: "yieldRelMs". Kept <= rolloverWindowMs.
+    //   yieldMaxBiasDeg   — hard clamp on |bias| (no WS key; safety only).
+    // -----------------------------------------------------------------------
+    bool     yieldEnabled      = GAIT_YIELD_ENABLED_DEFAULT;
+    float    yieldDorsiflexDeg = GAIT_YIELD_DORSIFLEX_DEG_DEFAULT;
+    uint32_t yieldEngageMs     = GAIT_YIELD_ENGAGE_MS_DEFAULT;
+    uint32_t yieldReleaseMs    = GAIT_YIELD_RELEASE_MS_DEFAULT;
+    float    yieldMaxBiasDeg   = GAIT_YIELD_MAX_BIAS_DEG;
+
     // Swing-foot ankle-roll PREPARATION (support-transition prep). While the
     // swing leg is airborne, its ankle roll is driven toward the orientation it
     // will need as the NEXT stance foot, so it lands prepared for support
@@ -775,6 +800,22 @@ struct GaitState {
     float   heelStrikeBiasDeg       = 0.0f;
     bool    heelStrikeReleaseActive = false;
     uint8_t heelStrikeActiveSide    = 0;
+
+    // ------------------------------------------------------------------
+    // Post-contact ankle yield — telemetry mirror, refreshed once per tick in
+    // _updateYield(). The bias rides the just-planted (then stance) leg from the
+    // touchdown latch through the role swap until it self-clears.
+    //
+    //   yieldActive   true while the engage→release profile is in progress.
+    //   yieldSide     leg carrying the yield bias: 0=LEFT, 1=RIGHT (the foot
+    //                 that landed; becomes stance after _advanceHalf).
+    //   yieldBiasDeg  live applied bias this tick (signed; <= 0 dorsiflex).
+    //                 0 before the latch on EVERY leg/phase — the
+    //                 heel-strike-avoidance invariant (zero before contact).
+    // ------------------------------------------------------------------
+    bool    yieldActive  = false;
+    uint8_t yieldSide    = 0;
+    float   yieldBiasDeg = 0.0f;
 
     // ------------------------------------------------------------------
     // Step-timing instrumentation. Updated at each footfall (before
@@ -1156,6 +1197,35 @@ private:
     Side     _heelStrikeActiveSide     = Side::LEFT;
     uint32_t _heelStrikeReleaseStartMs = 0;
     float    _heelStrikePeakFrac       = 0.0f;
+
+    // -----------------------------------------------------------------------
+    // Post-contact ankle yield — timer-based, side-locked release state. Armed
+    // ONLY at the touchdown latch (single site, no fallback). Mirrors the
+    // heel-strike RELEASE shape but with NO engage-phase branch: _yieldBiasDeg()
+    // returns 0 unless _yieldActive AND side == _yieldSide, so the swing foot
+    // carries zero yield at any pre-contact phase (zero-before-contact).
+    //   _yieldActive    true between the latch and self-clear (engage+release).
+    //   _yieldStartMs   millis() at the latch (the engage/release time origin).
+    //   _yieldSide      the just-planted foot, frozen at arm — survives the
+    //                   _advanceHalf role swap.
+    //   _yieldPeakDeg   committed magnitude (snapshot of yieldDorsiflexDeg at
+    //                   arm, so a runtime gain change mid-release can't corrupt
+    //                   the in-flight profile).
+    bool     _yieldActive  = false;
+    uint32_t _yieldStartMs = 0;
+    Side     _yieldSide    = Side::LEFT;
+    float    _yieldPeakDeg = 0.0f;
+
+    // Post-contact ankle-yield helpers (see gait_controller.cpp). _yieldBiasDeg
+    // is the additive POST-IK ankle-pitch term (sign baked negative). _startYield
+    // arms the release at the touchdown latch ONLY. _updateYield runs once per
+    // tick (before the estop early-return) to decay/clear + refresh telemetry.
+    // _resetYield zeroes everything; call in init/start/recovery ONLY (NOT in
+    // _advanceHalf / _clearTouchdownLatch — the release runs across the swap).
+    float _yieldBiasDeg(Side side) const;
+    void  _startYield();
+    void  _updateYield();
+    void  _resetYield();
 
     // Engage fraction (0..1) at the given half-phase. Ramps via smoothstep on
     // the window [heelStrikeGatePhase, touchdownGatePhase], then HOLDS at 1.0

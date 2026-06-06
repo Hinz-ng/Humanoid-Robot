@@ -2384,6 +2384,107 @@
             </div>
 
             <!-- ═══════════════════════════════════════════════════════ -->
+            <!-- POST-CONTACT ANKLE YIELD (ships inert: gain 0 = no-op)  -->
+            <!-- ═══════════════════════════════════════════════════════ -->
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Post-contact ankle yield</span>
+                    <span class="tune-val" id="tvGaitYield">OFF</span>
+                </div>
+                <label class="form-label-inline">
+                    <input type="checkbox" id="cbGaitYield"
+                           onchange="sendGaitKey('yield', this.checked ? 1 : 0); document.getElementById('tvGaitYield').textContent = this.checked ? 'ON' : 'OFF'">
+                    Enable post-contact ankle release
+                </label>
+                <div class="small-note">
+                    A post-contact RELEASE: relaxes the held-flat stance ankle
+                    (dorsiflex) so the just-planted foot rolls forward under the
+                    vaulting body. Armed ONLY at the touchdown latch — NEVER before
+                    contact (pre-contact dorsiflexion reproduces the falsified
+                    heel-strike failure). 1:1 with detected touchdowns, no fallback.
+                    Ships at gain 0 (inert).
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Yield peak bias (deg)</span>
+                    <span class="tune-val" id="tvGaitYieldDeg">0.0</span>
+                </div>
+                <input type="range" id="slGaitYieldDeg" min="0.0" max="10.0" step="0.5" value="0.0"
+                       oninput="updateGaitLabel('yieldDeg', this.value); sendGaitKey('yieldDeg', parseFloat(this.value).toFixed(1))">
+                <div class="small-note">
+                    Peak dorsiflexion MAGNITUDE applied post-contact (deg). Sign is
+                    baked negative in firmware. 0 = inert (shipped). Hard ceiling 10°.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Yield engage ramp (ms)</span>
+                    <span class="tune-val" id="tvGaitYieldEngMs">30</span>
+                </div>
+                <input type="range" id="slGaitYieldEngMs" min="0" max="150" step="5" value="30"
+                       oninput="updateGaitLabel('yieldEngMs', this.value); sendGaitKey('yieldEngMs', parseInt(this.value, 10))">
+                <div class="small-note">
+                    Smoothstep ramp-IN after the latch (ms) — eases the bias in so the
+                    release is not a one-tick step-impulse. NOT a gating stage.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Yield release decay (ms)</span>
+                    <span class="tune-val" id="tvGaitYieldRelMs">170</span>
+                </div>
+                <input type="range" id="slGaitYieldRelMs" min="0" max="400" step="10" value="170"
+                       oninput="updateGaitLabel('yieldRelMs', this.value); sendGaitKey('yieldRelMs', parseInt(this.value, 10))">
+                <div class="small-note">
+                    Smoothstep decay after engage (ms). Keep ≤ rollover window (≈200 ms)
+                    so the release tracks the post-contact observation window.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Yield bias applied (deg)</span>
+                    <span class="tune-val" id="tvGaitYieldBias">0.00</span>
+                </div>
+                <div class="small-note">
+                    Live bias this tick on the just-planted (then stance) leg — always
+                    negative (dorsiflex), 0 before contact on every leg. Active state +
+                    leg shown below.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Yield state</span>
+                    <span class="tune-val" id="tvGaitYieldState">IDLE</span>
+                </div>
+                <div class="small-note">
+                    ACTIVE (engage→release in progress, on the locked just-planted leg)
+                    or IDLE. Side shown: L or R.
+                </div>
+            </div>
+
+            <!-- LATENESS FALSIFIER — the firmware-vs-mechanical decision metric. -->
+            <div class="gait-tune-row" style="border-left:3px solid #ffb74d; padding-left:8px;">
+                <div class="tune-header">
+                    <span>⚖ Yield lateness (firmware-vs-mechanical)</span>
+                    <span class="tune-val" id="tvGaitYieldLateness">—</span>
+                </div>
+                <div class="small-note">
+                    Both yield bias and rollover foot-pitch are timestamped from the
+                    touchdown latch. If the foot pitch has already collapsed toward flat
+                    BEFORE the yield bias ramps past ~half peak, the release is arriving
+                    after the roll is done → the firmware approach is too late on this
+                    hardware → escalate to the mechanical (rockered sole) path. Live
+                    readout: yield |bias| fraction of peak vs rollover foot-pitch peak.
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════════════════════════════ -->
             <!-- SWING-FOOT ANKLE-ROLL PREP (support-transition prep)    -->
             <!-- ═══════════════════════════════════════════════════════ -->
             <div class="gait-tune-row">
@@ -4456,6 +4557,40 @@ function parseWalkingInstr(payload) {
             }).join("");
         }
     }
+
+    // ── LATENESS FALSIFIER (firmware-vs-mechanical decision) ──────────────────
+    // Both the yield bias and the rollover foot-pitch are timestamped from the
+    // touchdown latch. roDur = latch→foot-flat (ms, this step; 0 = flat not
+    // reached in the window). The yield bias passes ~half peak at yieldEngMs/2.
+    // If the foot reaches flat BEFORE the yield is half-engaged, the release is
+    // arriving after the roll is already done → firmware path is too late on this
+    // hardware → escalate to the mechanical (rockered sole) path.
+    const latEl = document.getElementById("tvGaitYieldLateness");
+    if (latEl) {
+        const roDur   = (v["roDur"] !== undefined) ? parseFloat(v["roDur"]) : NaN;
+        const engMs   = (window._yieldEngMs !== undefined) ? window._yieldEngMs : 30;
+        const halfEng = engMs / 2;
+        if (isNaN(roDur)) {
+            latEl.textContent = "—";
+            latEl.style.color = "#888";
+        } else if (roDur === 0) {
+            // Foot never reached flat in the observation window → slow roll →
+            // the release has ample time; not a lateness failure.
+            latEl.textContent = "roll>win — in time";
+            latEl.style.color = "#4caf50";
+        } else {
+            const margin = roDur - halfEng;   // +ve = flat after yield half-peak
+            if (margin >= 0) {
+                latEl.textContent = "OK +" + margin.toFixed(0) + "ms (flat@" +
+                                    roDur.toFixed(0) + " vs ½eng@" + halfEng.toFixed(0) + ")";
+                latEl.style.color = "#4caf50";
+            } else {
+                latEl.textContent = "LATE " + margin.toFixed(0) + "ms → MECHANICAL (flat@" +
+                                    roDur.toFixed(0) + " < ½eng@" + halfEng.toFixed(0) + ")";
+                latEl.style.color = "#e53935";
+            }
+        }
+    }
 }
 
 function resetWalkingInstr() {
@@ -4486,6 +4621,9 @@ const _gaitTuneMap = {
     heelDeg:      { el: "tvGaitHeelDeg",    decimals: 1 },
     heelGate:     { el: "tvGaitHeelGate",   decimals: 2 },
     heelRelMs:    { el: "tvGaitHeelRelMs",  decimals: 0 },
+    yieldDeg:     { el: "tvGaitYieldDeg",   decimals: 1 },
+    yieldEngMs:   { el: "tvGaitYieldEngMs", decimals: 0 },
+    yieldRelMs:   { el: "tvGaitYieldRelMs", decimals: 0 },
     swingPrepGain:{ el: "tvGaitSwingPrepGain", decimals: 2 },
     swingPrepFrac:{ el: "tvGaitSwingPrepFrac", decimals: 2 },
     stabilizeMs:  { el: "tvGaitStab",       decimals: 0 },
@@ -5035,6 +5173,32 @@ function parseGaitState(payload) {
                             (biasMag > 0.01) ? "ENGAGE  " + sideLbl :
                                                "IDLE";
             set("tvGaitHeelPhase", phase);
+        }
+        // Post-contact ankle yield — config echoes sync sliders/toggle; live bias
+        // + state are readouts. yieldEngMs is cached for the lateness falsifier,
+        // which is computed per-step in parseWalkingInstr (where rollover duration
+        // arrives fresh).
+        if (v["yield"] !== undefined) {
+            const en = (v["yield"] === "1");
+            const cb = document.getElementById("cbGaitYield");
+            if (cb) cb.checked = en;
+            set("tvGaitYield", en ? "ON" : "OFF");
+        }
+        if (v["yieldDeg"] !== undefined)
+            _syncSlider("slGaitYieldDeg", "tvGaitYieldDeg", parseFloat(v["yieldDeg"]), 1);
+        if (v["yieldEngMs"] !== undefined) {
+            _syncSlider("slGaitYieldEngMs", "tvGaitYieldEngMs", parseFloat(v["yieldEngMs"]), 0);
+            window._yieldEngMs = parseFloat(v["yieldEngMs"]);   // cache for falsifier
+        }
+        if (v["yieldRelMs"] !== undefined)
+            _syncSlider("slGaitYieldRelMs", "tvGaitYieldRelMs", parseFloat(v["yieldRelMs"]), 0);
+        if (v["yieldBias"] !== undefined)
+            set("tvGaitYieldBias", parseFloat(v["yieldBias"]).toFixed(2));
+        if (v["yieldAct"] !== undefined || v["yieldBias"] !== undefined) {
+            const yAct    = (v["yieldAct"] === "1");
+            const ySide   = parseInt(v["yieldSide"] || "0", 10);
+            const ySideLbl = (ySide === 1) ? "R" : "L";
+            set("tvGaitYieldState", yAct ? ("ACTIVE " + ySideLbl) : "IDLE");
         }
         // Swing-foot ankle-roll prep — config echoes sync sliders/toggle; live
         // swing-prep + migrated CoM-shift biases are readouts.

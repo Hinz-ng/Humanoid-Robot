@@ -788,6 +788,10 @@ void WebComm::broadcastGaitState() {
         // release ms) + live applied bias and release-active flag. Sign is
         // intrinsic to the helper (always dorsiflex/negative), not transported.
         "heelStrike=%d,heelDeg=%.1f,heelGate=%.2f,heelRelMs=%lu,heelBias=%.2f,heelRelAct=%d,heelSide=%d,"
+        // Post-contact ankle yield — config echoes (enable / peak deg / engage ms /
+        // release ms) + live applied bias (signed, dorsiflex/negative), active flag,
+        // and the locked just-planted side. Sign is intrinsic to the helper.
+        "yield=%d,yieldDeg=%.2f,yieldEngMs=%lu,yieldRelMs=%lu,yieldBias=%.3f,yieldAct=%d,yieldSide=%d,"
         // Swing-foot ankle-roll preparation (consolidation refactor) — config
         // echoes (enable / gain / front-load frac) + live applied swing-prep
         // bias, the migrated CoM-shift bias on the grounded leg, and the swing
@@ -937,6 +941,14 @@ void WebComm::broadcastGaitState() {
         s.heelStrikeBiasDeg,
         static_cast<int>(s.heelStrikeReleaseActive),
         static_cast<int>(s.heelStrikeActiveSide),
+        // Post-contact ankle yield — config echoes + live telemetry.
+        static_cast<int>(_gaitCtrl->getConfig().yieldEnabled),
+        _gaitCtrl->getConfig().yieldDorsiflexDeg,
+        (unsigned long)_gaitCtrl->getConfig().yieldEngageMs,
+        (unsigned long)_gaitCtrl->getConfig().yieldReleaseMs,
+        s.yieldBiasDeg,
+        static_cast<int>(s.yieldActive),
+        static_cast<int>(s.yieldSide),
         // Swing-foot ankle-roll preparation — config echoes + live telemetry.
         static_cast<int>(_gaitCtrl->getConfig().swingPrepEnabled),
         _gaitCtrl->getConfig().swingPrepGain,
@@ -2299,6 +2311,25 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         // into _heelStrikeBiasDeg() as intrinsically dorsiflex
                         // (negative). Removed to prevent confusion — confirmed
                         // on hardware, not configurable.
+                        // Post-contact ankle yield (off-by-default; gain 0 = no-op).
+                        else if (key == "yield") cfg.yieldEnabled = (val > 0.5f);
+                        else if (key == "yieldDeg") {
+                            // Peak dorsiflexion MAGNITUDE (deg, >=0). Sign is baked
+                            // negative in _yieldBiasDeg(); config holds magnitude
+                            // only. Hard ceiling = GAIT_YIELD_MAX_BIAS_DEG.
+                            cfg.yieldDorsiflexDeg = constrain(val, 0.0f, GAIT_YIELD_MAX_BIAS_DEG);
+                        }
+                        else if (key == "yieldEngMs") {
+                            // Smoothstep ramp-IN window (ms). Profile only, not a
+                            // gating stage. Capped so engage+release stay inside a
+                            // half-cycle.
+                            cfg.yieldEngageMs = (uint32_t)constrain(val, 0.0f, 150.0f);
+                        }
+                        else if (key == "yieldRelMs") {
+                            // Smoothstep decay window (ms). Kept <= rolloverWindowMs
+                            // so the release matches the rollover observation window.
+                            cfg.yieldReleaseMs = (uint32_t)constrain(val, 0.0f, 400.0f);
+                        }
                         else if (key == "swingPrep") cfg.swingPrepEnabled = (val > 0.5f);
                         else if (key == "swingPrepGain") {
                             // Swing-foot ankle-roll preparation gain: fraction of

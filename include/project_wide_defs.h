@@ -716,4 +716,57 @@ constexpr uint32_t GAIT_HEELSTRIKE_RELEASE_MS_DEFAULT = 500;
 // is symmetric so the magnitude check is unambiguous.
 constexpr float GAIT_HEELSTRIKE_MAX_BIAS_DEG = 12.0f;
 
+// ============================================================
+// POST-CONTACT ANKLE YIELD  (ships inert: gain 0 = bit-identical no-op)
+// ============================================================
+// A post-contact RELEASE: it relaxes the held-flat ankle command on the
+// just-planted leg so the foot can roll forward under the vaulting body. It is
+// NOT a driven dorsiflexion and is NEVER present before contact.
+//
+// CRITICAL — why this is gated 1:1 to detected touchdowns, single-site, no
+// fallback: pre-contact dorsiflexion shortens the catch lever and reproduces
+// the already-FALSIFIED heel-strike failure mode. The yield therefore arms
+// ONLY at the touchdown latch (which already gates on _halfPhase >
+// touchdownGatePhase) and has NO _advanceHalf fallback — a missed detection
+// yields nothing that step, by design. The swing foot carries zero yield at
+// any pre-contact phase (there is no swing-leg branch in _yieldBiasDeg()).
+//
+// Sign is intrinsically NEGATIVE (dorsiflexion), baked into _yieldBiasDeg();
+// the config holds magnitude only and is not user-exposed as a sign.
+// Bias is ADDITIVE AFTER IK — the flat-foot guard (which checks the pure IK
+// solution) is unaffected, same contract as the heel-strike bias.
+//
+// Profile: smoothstep ramp-IN over yieldEngageMs (so the release does not itself
+// step-impulse the ankle the instant after contact), then smoothstep decay over
+// yieldReleaseMs. Timer-based + side-locked: survives the _advanceHalf role swap
+// and runs on the same physical (now-stance) foot to completion.
+// yieldEngageMs + yieldReleaseMs together stay well inside one half-cycle so the
+// bias is back to 0 before the next lift-off.
+// ============================================================
+
+// Master enable at boot. true is safe because the shipped gain is 0 (below):
+// _yieldBiasDeg() returns 0 on every path, ankle-pitch submit is bit-identical.
+constexpr bool GAIT_YIELD_ENABLED_DEFAULT = true;
+
+// Peak dorsiflexion MAGNITUDE (deg). SHIPS AT 0 — a true no-op until an operator
+// raises it at runtime. The applied bias is the negative of this times the
+// engage/release fraction. Expected use a few degrees once enabled.
+constexpr float GAIT_YIELD_DORSIFLEX_DEG_DEFAULT = 2.0f;
+
+// Ramp-IN time (ms) for the bias to smoothstep 0 → peak after the latch. This is
+// NOT a gating stage (the latch already enforced the phase gate) — it only eases
+// the bias in so the post-contact release is not a one-tick step-impulse.
+constexpr uint32_t GAIT_YIELD_ENGAGE_MS_DEFAULT = 10;
+
+// Decay time (ms) for the bias to smoothstep peak → 0 after the engage ramp.
+// Kept <= rolloverWindowMs so the release matches the rollover observation
+// window (the lateness falsifier compares the two traces). engage(30)+release
+// here = 200 ms total, well inside a half-cycle.
+constexpr uint32_t GAIT_YIELD_RELEASE_MS_DEFAULT = 400;
+
+// Hard ceiling on the applied bias magnitude regardless of yieldDorsiflexDeg.
+// Safety backstop; symmetric so the magnitude check is unambiguous. A few deg
+// above expected use.
+constexpr float GAIT_YIELD_MAX_BIAS_DEG = 10.0f;
+
 #endif // PROJECT_WIDE_DEFS_H

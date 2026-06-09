@@ -1074,7 +1074,14 @@ float GaitController::_yieldBiasDeg(Side side) const {
 // ---------------------------------------------------------------------------
 void GaitController::_startYield() {
     if (!_cfg.yieldEnabled) return;
-    if (_yieldActive)       return;             // already releasing — don't restart
+    if (_yieldActive) {
+        // A prior release is still running when this touchdown wanted to arm —
+        // the release window outlasts the step cadence, so this step gets NO
+        // fresh yield. Count it so the release-duration sweep can flag confounded
+        // cadences. (Only this path counts; the disabled path above does not.)
+        _state.yieldSkipCount++;
+        return;
+    }
     _yieldSide    = _swingSide;                 // the just-planted foot
     _yieldStartMs = millis();
     _yieldPeakDeg = _cfg.yieldDorsiflexDeg;     // commit magnitude
@@ -1109,6 +1116,7 @@ void GaitController::_resetYield() {
     _state.yieldActive  = false;
     _state.yieldSide    = static_cast<uint8_t>(_swingSide);
     _state.yieldBiasDeg = 0.0f;
+    _state.yieldSkipCount = 0;
 }
 
 // ---------------------------------------------------------------------------

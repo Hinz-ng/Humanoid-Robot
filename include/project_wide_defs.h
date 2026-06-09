@@ -190,14 +190,14 @@ constexpr float GAIT_STANCE_INSET_MM            = 7.0f;
 //
 // Tune from 0 in ±1mm increments until ankle-pitch IK output sits near each
 // joint's neutralDeg in standing pose. Typical magnitude: ≤ 10 mm.
-constexpr float GAIT_STANCE_X_OFFSET_MM         = 0.0f;
+constexpr float GAIT_STANCE_X_OFFSET_MM         = -1.0f;
 
 // Hold duration (ms) GaitController inserts between half-cycles. Weight shift
 // is centered (trigger NONE) and held for this duration so mechanical/IIR
 // transients damp before the next direction is commanded. Should be ≥ ~5×
 // the IIR time constant from WeightShiftConfig::ankle_tilt_smooth_alpha.
 // At alpha=0.90 / 400 Hz, τ ≈ 25 ms → 150 ms gives ~6τ.
-constexpr uint32_t GAIT_STABILIZE_MS            = 200;
+constexpr uint32_t GAIT_STABILIZE_MS            = 180;
 constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 
 // ============================================================

@@ -2437,11 +2437,12 @@
                     <span>Yield release decay (ms)</span>
                     <span class="tune-val" id="tvGaitYieldRelMs">170</span>
                 </div>
-                <input type="range" id="slGaitYieldRelMs" min="0" max="400" step="10" value="170"
+                <input type="range" id="slGaitYieldRelMs" min="0" max="1000" step="10" value="170"
                        oninput="updateGaitLabel('yieldRelMs', this.value); sendGaitKey('yieldRelMs', parseInt(this.value, 10))">
                 <div class="small-note">
-                    Smoothstep decay after engage (ms). Keep ≤ rollover window (≈200 ms)
-                    so the release tracks the post-contact observation window.
+                    Smoothstep decay after engage (ms). Ceiling 1000 ms for the
+                    release-duration sweep. Above ≈ the step cadence the release
+                    outlasts the step — watch "Yield skips" for confounded steps.
                 </div>
             </div>
 
@@ -2465,6 +2466,20 @@
                 <div class="small-note">
                     ACTIVE (engage→release in progress, on the locked just-planted leg)
                     or IDLE. Side shown: L or R.
+                </div>
+            </div>
+
+            <div class="gait-tune-row">
+                <div class="tune-header">
+                    <span>Yield skips (confound flag)</span>
+                    <span class="tune-val" id="tvGaitYieldSkip">0</span>
+                </div>
+                <div class="small-note">
+                    Cumulative touchdowns that found a release still running and got
+                    NO fresh yield (release window outlasts the step cadence). During
+                    the release-duration sweep: if this rises at a given yieldRelMs,
+                    those steps are confounded — reduce cadence dependence or discard.
+                    Resets when gait (re)starts.
                 </div>
             </div>
 
@@ -5199,6 +5214,14 @@ function parseGaitState(payload) {
             const ySide   = parseInt(v["yieldSide"] || "0", 10);
             const ySideLbl = (ySide === 1) ? "R" : "L";
             set("tvGaitYieldState", yAct ? ("ACTIVE " + ySideLbl) : "IDLE");
+        }
+        if (v["yieldSkip"] !== undefined) {
+            const skip = parseInt(v["yieldSkip"], 10);
+            const skEl = document.getElementById("tvGaitYieldSkip");
+            if (skEl) {
+                skEl.textContent = String(skip);
+                skEl.style.color = (skip > 0) ? "#e53935" : "#888";  // red = confounded
+            }
         }
         // Swing-foot ankle-roll prep — config echoes sync sliders/toggle; live
         // swing-prep + migrated CoM-shift biases are readouts.

@@ -812,10 +812,17 @@ struct GaitState {
     //   yieldBiasDeg  live applied bias this tick (signed; <= 0 dorsiflex).
     //                 0 before the latch on EVERY leg/phase — the
     //                 heel-strike-avoidance invariant (zero before contact).
+    //   yieldSkipCount cumulative count (since _resetYield) of touchdowns that
+    //                 wanted to arm a yield but found one still releasing
+    //                 (_startYield hit its _yieldActive early-return). A rising
+    //                 count means the release window outlasts the step cadence,
+    //                 so those steps got no fresh yield — their result is
+    //                 confounded. Skip-visibility for the release-duration sweep.
     // ------------------------------------------------------------------
-    bool    yieldActive  = false;
-    uint8_t yieldSide    = 0;
-    float   yieldBiasDeg = 0.0f;
+    bool     yieldActive   = false;
+    uint8_t  yieldSide     = 0;
+    float    yieldBiasDeg  = 0.0f;
+    uint16_t yieldSkipCount = 0;
 
     // ------------------------------------------------------------------
     // Step-timing instrumentation. Updated at each footfall (before

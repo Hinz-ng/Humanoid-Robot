@@ -791,7 +791,7 @@ void WebComm::broadcastGaitState() {
         // Post-contact ankle yield — config echoes (enable / peak deg / engage ms /
         // release ms) + live applied bias (signed, dorsiflex/negative), active flag,
         // and the locked just-planted side. Sign is intrinsic to the helper.
-        "yield=%d,yieldDeg=%.2f,yieldEngMs=%lu,yieldRelMs=%lu,yieldBias=%.3f,yieldAct=%d,yieldSide=%d,"
+        "yield=%d,yieldDeg=%.2f,yieldEngMs=%lu,yieldRelMs=%lu,yieldBias=%.3f,yieldAct=%d,yieldSide=%d,yieldSkip=%u,"
         // Swing-foot ankle-roll preparation (consolidation refactor) — config
         // echoes (enable / gain / front-load frac) + live applied swing-prep
         // bias, the migrated CoM-shift bias on the grounded leg, and the swing
@@ -949,6 +949,7 @@ void WebComm::broadcastGaitState() {
         s.yieldBiasDeg,
         static_cast<int>(s.yieldActive),
         static_cast<int>(s.yieldSide),
+        (unsigned)s.yieldSkipCount,
         // Swing-foot ankle-roll preparation — config echoes + live telemetry.
         static_cast<int>(_gaitCtrl->getConfig().swingPrepEnabled),
         _gaitCtrl->getConfig().swingPrepGain,
@@ -2326,9 +2327,12 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             cfg.yieldEngageMs = (uint32_t)constrain(val, 0.0f, 150.0f);
                         }
                         else if (key == "yieldRelMs") {
-                            // Smoothstep decay window (ms). Kept <= rolloverWindowMs
-                            // so the release matches the rollover observation window.
-                            cfg.yieldReleaseMs = (uint32_t)constrain(val, 0.0f, 400.0f);
+                            // Smoothstep decay window (ms). Ceiling widened to
+                            // 1000 ms for the release-duration sweep experiment
+                            // (default unchanged). At long rel the engage+release
+                            // can exceed rolloverWindowMs / a half-cycle — watch
+                            // yieldSkipCount for steps skipped at that cadence.
+                            cfg.yieldReleaseMs = (uint32_t)constrain(val, 0.0f, 1000.0f);
                         }
                         else if (key == "swingPrep") cfg.swingPrepEnabled = (val > 0.5f);
                         else if (key == "swingPrepGain") {

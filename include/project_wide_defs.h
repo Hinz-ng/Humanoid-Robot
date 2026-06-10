@@ -769,4 +769,37 @@ constexpr uint32_t GAIT_YIELD_RELEASE_MS_DEFAULT = 400;
 // above expected use.
 constexpr float GAIT_YIELD_MAX_BIAS_DEG = 10.0f;
 
+// ============================================================
+//  STEERING  (Layer 3.5 hip-yaw turning — Stage 1, open-loop)
+// ------------------------------------------------------------
+// Drives the two otherwise-undriven hip-yaw joints (ch4 right dir+1,
+// ch7 left dir-1, both ±50°) at SOURCE_GAIT to turn the body during
+// GaitMode::RUNNING. See STEERING_PLAN.md for the full law + decision
+// record. The per-tick output is:
+//   yaw = turnEff * yawStepDeg * turnSign * halfSign * (s - 0.5)
+// where s = smoothstep(halfPhase) and halfSign flips with the stance leg.
+// ============================================================
+
+// Master enable at boot. false → SteeringController::update() submits NOTHING
+// (the yaw channels stay an uncontested SOURCE_GAIT slot the UI can still own),
+// so the firmware is bit-identical to the pre-steering build. Turn on only after
+// the inert + unit-test gates pass (STEERING_PLAN §9).
+constexpr bool GAIT_STEER_ENABLED_DEFAULT = false;
+
+// Body-yaw accumulated per footfall at |turnCmd| = 1, in degrees. This is the
+// quantity measured on the floor and the clean seam to a future heading-rate
+// command (rate ÷ cadence = yaw/step). Start small: smoothstep bounds the yaw
+// acceleration but there is no arm counter-swing to cancel the reaction torque.
+constexpr float GAIT_STEER_YAW_STEP_DEG_DEFAULT = 2.5f;
+
+// Hard clamp on the per-tick |hip-yaw output| (deg). Far below the ±50° joint
+// limit so even a mis-tuned yawStepDeg/turnCmd can never command near the stop.
+// JointModel re-clamps to ±50° downstream regardless — this is the first guard.
+constexpr float GAIT_STEER_MAX_YAW_DEG = 15.0f;
+
+// Max rate of change of the internal effective command _turnEff (units/s, where
+// 1 unit = full turnCmd). 2.0 → a full -1→+1 slider slam takes ~1 s. Makes the
+// yaw output C¹ no matter when the operator moves the joystick.
+constexpr float GAIT_STEER_TURN_SLEW_PER_SEC = 2.0f;
+
 #endif // PROJECT_WIDE_DEFS_H

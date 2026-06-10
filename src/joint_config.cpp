@@ -85,7 +85,7 @@ const JointConfig JOINT_CONFIG[NUM_JOINTS] = {
     { 13,  "left_knee_pitch",     136.0f,  +1,    0.0f,  +100.0f,  270.0f,  500.0f,  1.00f  },  // TUNE  (txGain unverified)
     //  Left ankle pitch — same 4-bar linkage as right; mirrors txGain.
     { 14,  "left_ankle_pitch",    120.0f,  -1,  -60.0f,  +60.0f,  180.0f,  706.0f,  0.72f  },  // TUNE
-    { 15,  "left_ankle_roll",     132.0f,  -1,  -25.0f,  +25.0f,  270.0f,  333.0f,  1.00f  },  // TUNE
+    { 15,  "left_ankle_roll",     134.0f,  -1,  -25.0f,  +25.0f,  270.0f,  333.0f,  1.00f  },  // TUNE
 
 };
 // Guard: array length must match NUM_JOINTS. If you add or remove a joint,

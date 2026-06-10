@@ -9,11 +9,13 @@
 #include "weight_shift.h"          // gait: CoM lateral shift
 #include "leg_ik.h"
 #include "gait_controller.h"
+#include "steering_controller.h"   // L3.5 hip-yaw open-loop steering (Stage 1)
 #include "torso_stabilizer.h"      // joint-space torso balance (consolidation refactor)
 #include <math.h>
 
 #ifdef UNIT_TEST
 void runFootImpactTests();
+void runSteeringControllerTests();
 #endif
 
 // ── Phase F1: foot IMUs (read + filter + telemetry, no closed-loop) ───────
@@ -123,6 +125,7 @@ WalkingInstrumentation walkingInstr;   // per-step walking diagnostics (telemetr
 
 #endif
 GaitController    gaitController;   // open-loop walking gait
+SteeringController steeringController; // hip-yaw turning author (Stage 1; default inert)
 
 // =============================================================================
 //  OE CONTROL IMPLEMENTATION
@@ -210,6 +213,7 @@ void setup() {
 
 #ifdef UNIT_TEST
     runFootImpactTests();
+    runSteeringControllerTests();
 #endif
 
     oe_begin();
@@ -252,6 +256,12 @@ void setup() {
     webComm.setWeightShift(&weightShift);
     gaitController.init(&motionManager, &weightShift, &balanceController);
     webComm.setGaitController(&gaitController);
+    // Hip-yaw steering (Stage 1). Submits its own yaw joints at SOURCE_GAIT;
+    // GaitController only pushes (active, swingSide, halfPhase) to it each tick.
+    // Default inert (GAIT_STEER_ENABLED_DEFAULT=false) → no submissions.
+    steeringController.init(&motionManager);
+    gaitController.setSteeringController(&steeringController);
+    webComm.setSteeringController(&steeringController);
     webComm.init();
 
 #if FOOT_IMU_ENABLED
@@ -432,6 +442,12 @@ void loop() {
             const BalanceCorrection bc = balanceController.getLastCorrection();
             gaitController.update(dt, state, &bc, &balState, footSnapPtr);
 
+            // Hip-yaw steering: submits the two yaw joints at SOURCE_GAIT using
+            // the (active, swingSide, halfPhase) GaitController pushed above.
+            // Runs AFTER gait and BEFORE flush so its submissions land this tick.
+            // Default inert (enabled=false → submits nothing).
+            steeringController.update(dt);
+
             // Flush after ALL sources have submitted for this tick:
             //   balanceController.update() → submit(SOURCE_BALANCE, ...)
             //   WebSocket slider events   → submit(SOURCE_UI, ...)  [already queued]
@@ -458,6 +474,7 @@ void loop() {
             webComm.broadcastBalanceState(balState);
             webComm.broadcastTorsoState();
             webComm.broadcastGaitState();
+            webComm.broadcastSteeringState();
 
             // Broadcast calibration progress at 10 Hz (rate-limited inside broadcastCalibStatus).
             // _calibDoneAnnounced ensures one final "done" packet is sent, then stops.

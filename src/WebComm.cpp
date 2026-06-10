@@ -13,6 +13,7 @@
 #include "foot_contact.h"
 #include "foot_impact.h"
 #include "walking_instrumentation.h"  // per-step walking diagnostics (telemetry only)
+#include "steering_controller.h"      // SteeringController — CMD:STEER / STEER_TUNE / STEER:
 
 // Constructor ---------------------------------------------------------------
 WebComm::WebComm(ServoControl* servo)
@@ -41,6 +42,10 @@ void WebComm::setWeightShift(WeightShift* ws) {
 
 void WebComm::setGaitController(GaitController* gc) {
     _gaitCtrl = gc;
+}
+
+void WebComm::setSteeringController(SteeringController* s) {
+    _steeringCtrl = s;
 }
 
 void WebComm::setFootIMUs(LSM6DSVDriver* left, LSM6DSVDriver* right) {
@@ -993,6 +998,36 @@ void WebComm::broadcastGaitState() {
 }
 
 // =============================================================================
+//  STEERING BROADCAST
+//  Protocol: "STEER:turnCmd=..,turnEff=..,yawCmdDeg=..,active=..,
+//             enabled=..,yawStep=..,turnSign=..,slew=.."
+//  turnCmd/turnEff/yawCmdDeg/active are live state; the remaining fields are
+//  config echoes so the UI's STEER_TUNE sliders sync to firmware (source of
+//  truth) without re-sending. Rate-limited to 20 Hz; pushed on connect by
+//  force-arming _lastSteerBroadcast_us in the connect block.
+// =============================================================================
+
+void WebComm::broadcastSteeringState() {
+    if (!_steeringCtrl || ws.count() == 0) return;
+    const uint32_t INTERVAL_US = 50000;  // 20 Hz
+    uint32_t now = micros();
+    if ((now - _lastSteerBroadcast_us) < INTERVAL_US) return;
+    _lastSteerBroadcast_us = now;
+
+    const SteeringState&  st  = _steeringCtrl->getState();
+    const SteeringConfig  cfg = _steeringCtrl->getConfig();
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+        "STEER:turnCmd=%.3f,turnEff=%.3f,yawCmdDeg=%.2f,active=%d,"
+        "enabled=%d,yawStep=%.2f,turnSign=%.0f,slew=%.2f",
+        st.turnCmd, st.turnEff, st.yawCmdDeg, static_cast<int>(st.active),
+        static_cast<int>(cfg.enabled), cfg.yawStepDeg, cfg.turnSign,
+        cfg.turnSlewPerSec
+    );
+    _sendFiltered(buf);
+}
+
+// =============================================================================
 //  SPEED BROADCAST
 //  Protocol: "SPEED:<ch0_speed>,<ch1_speed>,...,<ch15_speed>"
 //  Sent once on connect and after every SPEED or SPEED_ALL command.
@@ -1108,9 +1143,16 @@ void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
         // (deliberately fallback-only) HTML defaults.
         _lastFootContactBroadcast_us = 0;
         _lastGaitBroadcast_us        = 0;
+        _lastSteerBroadcast_us       = 0;   // push STEER: config echo to new client
     }
     if (type == WS_EVT_DISCONNECT) {
         Serial.printf("[WebComm] Client #%u disconnected\n", client->id());
+        // Connection-loss safing: a dropped operator must never leave a turn
+        // latched. Force the steering setpoint to 0 here (before any later safe
+        // handling) so the SteeringController slews the yaw joints back to
+        // neutral and straight walking resumes. The atomic setter is cross-task
+        // safe. See STEERING_PLAN §5.1 / §7.
+        if (_steeringCtrl) _steeringCtrl->setTurnCmd(0.0f);
     }
     if (type == WS_EVT_DATA) {
         AwsFrameInfo* info = (AwsFrameInfo*)arg;
@@ -1237,6 +1279,11 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         // ---------------------------------------------------------------------
         else if (cmd == "ESTOP") {
             oe_estop();
+            // Defense-in-depth: clear any latched turn setpoint on e-stop so a
+            // subsequent CLEAR_ESTOP resumes straight, not mid-turn. (The
+            // controller already parks its yaw output while estopped; this also
+            // zeros the persistent setpoint.)
+            if (_steeringCtrl) _steeringCtrl->setTurnCmd(0.0f);
             broadcastState();
             ws.textAll("ESTOP:ACTIVE");
             Serial.println("[WebComm] CMD: ESTOP received — outputs disabled");
@@ -1993,6 +2040,64 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             if (_gaitCtrl) {
                 _gaitCtrl->triggerRecovery(-0.20f, 0.0f);
                 Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_B — simulating backward push");
+            }
+        }
+        // ---------------------------------------------------------------------
+        //  Hip-yaw STEERING — HOT runtime path.
+        //  Protocol: CMD:STEER:<float>   (turnCmd setpoint, [-1,+1])
+        //
+        //  Streamed by the operator joystick on-change (≤20 Hz). Carries ONLY
+        //  turnCmd; configuration travels on the separate cold STEER_TUNE path.
+        //  Kept minimal — runs at joystick rate. The setter clamps to [-1,+1]
+        //  and is an atomic single-field write (cross-task safe). Note: this
+        //  matches "STEER:" exactly, so "STEER_TUNE:" below does NOT collide.
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("STEER:")) {
+            if (_steeringCtrl) {
+                _steeringCtrl->setTurnCmd(cmd.substring(6).toFloat());
+            }
+        }
+        // ---------------------------------------------------------------------
+        //  Hip-yaw STEERING — COLD configuration path.
+        //  Protocol: CMD:STEER_TUNE:enable=0|1,yawStep=2.5,turnSign=1,slew=2.0
+        //
+        //  Operator/bench action, sent rarely. Carries configuration ONLY (never
+        //  turnCmd). Each field routes to its own atomic setter — no whole-struct
+        //  read-modify-write, which the 400 Hz control task could read torn.
+        // ---------------------------------------------------------------------
+        else if (cmd.startsWith("STEER_TUNE:")) {
+            if (_steeringCtrl) {
+                String params = cmd.substring(11);
+                int start = 0;
+                while (start < (int)params.length()) {
+                    int comma = params.indexOf(',', start);
+                    String pair = (comma == -1) ? params.substring(start)
+                                                : params.substring(start, comma);
+                    int eq = pair.indexOf('=');
+                    if (eq != -1) {
+                        String key = pair.substring(0, eq);
+                        String val = pair.substring(eq + 1);
+                        if      (key == "enable")   _steeringCtrl->setEnabled(val.toInt() != 0);
+                        // yawStep — body-yaw per footfall (deg). Floor 0; ceiling
+                        // at the per-tick output clamp so config can't request
+                        // more turn authority than maxYawDeg will ever pass.
+                        else if (key == "yawStep")  _steeringCtrl->setYawStepDeg(
+                                       constrain(val.toFloat(), 0.0f, GAIT_STEER_MAX_YAW_DEG));
+                        // turnSign — hardware direction. Setter snaps to ±1.
+                        else if (key == "turnSign") _steeringCtrl->setTurnSign(val.toFloat());
+                        // slew — |turnEff| change cap (units/s). Floor 0.1 (never
+                        // frozen); ceiling 10 (a full -1→+1 in 0.2 s, near a step).
+                        else if (key == "slew")     _steeringCtrl->setTurnSlewPerSec(
+                                       constrain(val.toFloat(), 0.1f, 10.0f));
+                    }
+                    start = (comma == -1) ? params.length() : comma + 1;
+                }
+                // Echo config so the UI's STEER_TUNE sliders sync to firmware truth.
+                _lastSteerBroadcast_us = 0;
+                broadcastSteeringState();
+                const SteeringConfig sc = _steeringCtrl->getConfig();
+                Serial.printf("[WebComm] STEER_TUNE: en=%d yawStep=%.2f turnSign=%.0f slew=%.2f\n",
+                              (int)sc.enabled, sc.yawStepDeg, sc.turnSign, sc.turnSlewPerSec);
             }
         }
         // ---------------------------------------------------------------------

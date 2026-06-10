@@ -1744,6 +1744,52 @@
             <span class="note-muted ml-10">Press → Next Pose to advance</span>
         </div>
 
+        <!-- ── Steering (hip-yaw) — Stage 1 ──────────────────────────────── -->
+        <!-- Operator input only: the joystick generates turnCmd on the hot
+             CMD:STEER path. It owns no steering behaviour — the firmware
+             SteeringController does. Y axis is intentionally unused at Stage 1. -->
+        <div class="section-label">Steering — hip-yaw (Stage 1)</div>
+        <div class="flex-row-wrap-sm mb-10">
+            <span class="gait-mode-badge gait-mode-idle" id="steerEnabledBadge">DISABLED</span>
+            <span class="gait-mode-badge gait-mode-idle" id="steerActiveBadge">INACTIVE</span>
+        </div>
+        <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+            <!-- Horizontal joystick pad. X → turnCmd ∈ [-1,+1]; release → 0. -->
+            <div id="steerPad" style="position:relative; width:220px; height:64px;
+                 background:#1c2230; border:1px solid #3a4256; border-radius:8px;
+                 touch-action:none; cursor:pointer; user-select:none;">
+                <div style="position:absolute; left:50%; top:6px; bottom:6px; width:1px;
+                     background:#444;"></div>
+                <div id="steerKnob" style="position:absolute; top:50%; left:50%;
+                     width:28px; height:28px; margin:-14px 0 0 -14px; border-radius:50%;
+                     background:#4d7cff; box-shadow:0 0 6px #4d7cff;"></div>
+            </div>
+            <div style="font-size:12px; line-height:1.7;">
+                <div>turnCmd: <b id="steerTurnCmd">0.000</b></div>
+                <div>turnEff: <b id="steerTurnEff">0.000</b></div>
+                <div>yawCmd: <b id="steerYawCmd">0.00</b>°</div>
+            </div>
+        </div>
+        <div class="small-note">
+            Drag left/right to steer (X → turn command, −1…+1). Release springs
+            back to straight (sends CMD:STEER:0). Y axis is ignored at Stage 1.
+            Closing the tab or losing WiFi forces straight server-side. Steering
+            only acts while gait is RUNNING.
+        </div>
+        <!-- Bench configuration (cold CMD:STEER_TUNE path; kept for tuning). -->
+        <div class="flex-row-wrap-sm mb-10" style="margin-top:8px; align-items:center;">
+            <button class="btn-sign" id="btnSteerEnable" onclick="toggleSteerEnable()">Steering: OFF</button>
+            <label class="small-note">yaw/step°
+                <input type="number" id="steerYawStep" value="2.5" step="0.5" min="0" max="15"
+                       style="width:62px;" onchange="sendSteerTune('yawStep', this.value)">
+            </label>
+            <button class="btn-sign" id="btnSteerSign" onclick="toggleSteerSign()">Sign: +1</button>
+            <label class="small-note">slew/s
+                <input type="number" id="steerSlew" value="2.0" step="0.5" min="0.1" max="10"
+                       style="width:62px;" onchange="sendSteerTune('slew', this.value)">
+            </label>
+        </div>
+
         <!-- Live telemetry -->
         <div class="section-label">
             Live outputs (this tick)
@@ -3222,6 +3268,9 @@ function initWebSocket() {
     ws.onclose = () => {
         document.getElementById('ws-status').innerText   = "Disconnected";
         document.getElementById('ws-status').style.color = "#f44336";
+        // Reset the steering knob to center so the UI never shows a stale turn.
+        // The server already force-zeros turnCmd on disconnect (the real guard).
+        if (typeof resetSteerKnob === 'function') resetSteerKnob();
         setTimeout(initWebSocket, 2000);
     };
 
@@ -3554,6 +3603,9 @@ function initWebSocket() {
         }
         else if (msg.startsWith("GAIT:")) {
             parseGaitState(msg.substring(5));
+        }
+        else if (msg.startsWith("STEER:")) {
+            parseSteeringState(msg.substring(6));
         }
         else if (msg.startsWith("WALKING:")) {
             parseWalkingInstr(msg.substring(8));
@@ -4735,6 +4787,138 @@ function toggleLatCapture() {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(`CMD:GAIT_TUNE:latCapture=${enable ? 1 : 0}`);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Hip-yaw steering — operator joystick (Stage 1). Operator input ONLY: it
+// generates turnCmd on the hot CMD:STEER path and owns no steering behaviour
+// (the firmware SteeringController does). X axis → turnCmd ∈ [-1,+1]; Y ignored.
+// Release springs to center → CMD:STEER:0. The slew on the firmware side makes
+// exact cadence non-critical; the ≤20 Hz cap just keeps the socket quiet.
+// ─────────────────────────────────────────────────────────────────────────
+let _steerDragging = false;
+let _steerLastTx   = 0;       // ms timestamp of last CMD:STEER (≤20 Hz throttle)
+let _steerLastVal  = null;    // last value sent (on-change dedupe)
+
+function _steerSend(x, force) {
+    const now = performance.now();
+    const v = Math.max(-1, Math.min(1, x));
+    if (!force) {
+        if (now - _steerLastTx < 50) return;                 // 50 ms = 20 Hz cap
+        if (_steerLastVal !== null && Math.abs(v - _steerLastVal) < 0.005) return;
+    }
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send("CMD:STEER:" + v.toFixed(3));
+    _steerLastTx  = now;
+    _steerLastVal = v;
+}
+
+function _steerSetKnob(frac) {
+    const pad = document.getElementById('steerPad');
+    if (!pad) return;
+    const half = (pad.clientWidth / 2) - 16;                 // travel limit (px)
+    const knob = document.getElementById('steerKnob');
+    if (knob) knob.style.left = (pad.clientWidth / 2 + frac * half) + 'px';
+}
+
+function _steerFromEvent(ev) {
+    const r = document.getElementById('steerPad').getBoundingClientRect();
+    const half = (r.width / 2) - 16;
+    return Math.max(-1, Math.min(1, ((ev.clientX - r.left) - r.width / 2) / half));
+}
+
+function resetSteerKnob() {
+    _steerDragging = false;
+    _steerSetKnob(0);
+}
+
+(function initSteerJoystick() {
+    const pad = document.getElementById('steerPad');
+    if (!pad) return;
+    pad.addEventListener('pointerdown', (ev) => {
+        _steerDragging = true;
+        pad.setPointerCapture(ev.pointerId);
+        const f = _steerFromEvent(ev);
+        _steerSetKnob(f);
+        _steerSend(f, true);
+        ev.preventDefault();
+    });
+    pad.addEventListener('pointermove', (ev) => {
+        if (!_steerDragging) return;
+        const f = _steerFromEvent(ev);
+        _steerSetKnob(f);
+        _steerSend(f, false);
+    });
+    const release = () => {
+        if (!_steerDragging) return;
+        _steerDragging = false;
+        _steerSetKnob(0);             // spring to center
+        _steerSend(0, true);          // CMD:STEER:0
+    };
+    pad.addEventListener('pointerup', release);
+    pad.addEventListener('pointercancel', release);
+    pad.addEventListener('lostpointercapture', release);
+})();
+
+// Best-effort straighten while the socket may still be open during teardown.
+// The server force-zeros turnCmd on disconnect regardless — this is courtesy.
+window.addEventListener('pagehide', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send("CMD:STEER:0");
+});
+
+// STEER_TUNE (cold configuration) helpers.
+function sendSteerTune(key, val) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const msg = `CMD:STEER_TUNE:${key}=${val}`;
+    ws.send(msg);
+    console.log("[WS TX]", msg);
+}
+function toggleSteerEnable() {
+    const btn = document.getElementById('btnSteerEnable');
+    const enable = btn && btn.textContent.indexOf('OFF') !== -1;
+    sendSteerTune('enable', enable ? 1 : 0);
+}
+function toggleSteerSign() {
+    const btn = document.getElementById('btnSteerSign');
+    const cur = (btn && btn.textContent.indexOf('+1') !== -1) ? +1 : -1;
+    sendSteerTune('turnSign', -cur);
+}
+
+// STEER: telemetry parser. Updates the live readout + syncs config widgets to
+// firmware truth (firmware is source of truth — never push defaults back).
+function parseSteeringState(payload) {
+    const v = {};
+    payload.split(",").forEach(p => { const kv = p.split("="); v[kv[0]] = kv[1]; });
+
+    const set = (id, t) => { const e = document.getElementById(id); if (e) e.textContent = t; };
+    set("steerTurnCmd", parseFloat(v["turnCmd"] || "0").toFixed(3));
+    set("steerTurnEff", parseFloat(v["turnEff"] || "0").toFixed(3));
+    set("steerYawCmd",  parseFloat(v["yawCmdDeg"] || "0").toFixed(2));
+
+    const enabled = v["enabled"] === "1";
+    const active  = v["active"]  === "1";
+    const enBadge = document.getElementById("steerEnabledBadge");
+    if (enBadge) {
+        enBadge.textContent = enabled ? "ENABLED" : "DISABLED";
+        enBadge.className = "gait-mode-badge " + (enabled ? "gait-mode-run" : "gait-mode-idle");
+    }
+    const actBadge = document.getElementById("steerActiveBadge");
+    if (actBadge) {
+        actBadge.textContent = active ? "ACTIVE" : "INACTIVE";
+        actBadge.className = "gait-mode-badge " + (active ? "gait-mode-run" : "gait-mode-idle");
+    }
+    const enBtn = document.getElementById("btnSteerEnable");
+    if (enBtn) enBtn.textContent = "Steering: " + (enabled ? "ON" : "OFF");
+
+    const sign = parseFloat(v["turnSign"] || "1");
+    const signBtn = document.getElementById("btnSteerSign");
+    if (signBtn) signBtn.textContent = "Sign: " + (sign >= 0 ? "+1" : "-1");
+    // Only resync number inputs when the operator is not editing them.
+    const ys = document.getElementById("steerYawStep");
+    if (ys && document.activeElement !== ys && v["yawStep"] !== undefined)
+        ys.value = parseFloat(v["yawStep"]).toFixed(1);
+    const sl = document.getElementById("steerSlew");
+    if (sl && document.activeElement !== sl && v["slew"] !== undefined)
+        sl.value = parseFloat(v["slew"]).toFixed(1);
 }
 
 // Set lateral capture sign (+1 or -1). Active button updates via GAIT: broadcast.

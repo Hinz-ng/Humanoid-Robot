@@ -36,6 +36,10 @@ class FootImpactDetector; // forward declaration — full include in gait_contro
                           // Touchdown-awareness Stage 1: consumer of the
                           // per-side impact detector. Detector remains gait-
                           // agnostic; the policy (when/how to latch) lives here.
+class SteeringController; // forward declaration — L3.5 hip-yaw steering author.
+                          // GaitController only PUSHES it (active/swingSide/
+                          // halfPhase); it never reads back and never submits yaw
+                          // itself. Owned by main.cpp.
 
 // ---------------------------------------------------------------------------
 //  Step execution sub-state (within each half-cycle).
@@ -979,6 +983,12 @@ public:
     // consumer.
     void setFootImpactDetector(FootImpactDetector* d) { _impact = d; }
 
+    // Wire the hip-yaw steering author. Optional — nullptr leaves steering
+    // inert. When wired, update() pushes (active, swingSide, halfPhase) to it
+    // each tick; the SteeringController submits the yaw joints itself at
+    // SOURCE_GAIT. GaitController never authors hip-yaw.
+    void setSteeringController(SteeringController* s) { _steering = s; }
+
     // Wire per-foot estimators (Side-indexed: LEFT, RIGHT). Optional and
     // read-only — used only to snapshot the swing foot's IMU roll into
     // GaitState at touchdown (telemetry). nullptr leaves the field at 0.
@@ -994,6 +1004,7 @@ private:
     BalanceController* _bal          = nullptr;
     SwingFootLeveler*  _swingLeveler = nullptr;
     FootImpactDetector* _impact      = nullptr;   // Stage 0/1 — observational
+    SteeringController* _steering    = nullptr;   // L3.5 hip-yaw author (push-only)
     // Per-foot estimators — read-only, touchdown roll telemetry only.
     const StateEstimator* _footEst[SIDE_COUNT] = { nullptr, nullptr };
 

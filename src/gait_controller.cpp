@@ -39,6 +39,7 @@
 #include "weight_shift.h"
 #include "swing_foot_leveler.h"  // SwingFootLeveler — ankle bias during swing
 #include "foot_impact.h"         // FootImpactDetector — touchdown awareness (Stage 0/1)
+#include "steering_controller.h" // SteeringController — hip-yaw steering author (push-only)
 #include "oe_control.h"
 #include "leg_ik.h"
 #include "joint_config.h"
@@ -1760,6 +1761,16 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // substate; consumed on next tick's WS update (2.5 ms staleness).
     // Placing this at the top guarantees it runs on every early-return path.
     _publishSwingLegMaskToWS();
+
+    // Push this tick's gait state to the hip-yaw steering author. Same staleness
+    // contract as the swing-leg mask above: it sits ahead of the _mm/estop early-
+    // returns so SteeringController always sees a fresh (active, swingSide,
+    // halfPhase) — its own estop/inactive handling parks the yaw joints. Steering
+    // submits its own joints in steeringController.update() (after this returns).
+    if (_steering) {
+        _steering->setGaitInput({ _state.mode == GaitMode::RUNNING,
+                                  _swingSide, _halfPhase });
+    }
 
     if (_mm == nullptr)   return;
     if (oe_is_estopped()) return;

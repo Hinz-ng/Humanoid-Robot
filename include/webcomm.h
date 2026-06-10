@@ -19,6 +19,7 @@ class LSM6DSVDriver;     // forward declare — foot IMU diagnostic
 class SwingFootLeveler;  // forward declare — swing-foot leveler (L0+)
 class FootImpactDetector;
 class WalkingInstrumentation;  // forward declare — per-step walking diagnostics
+class SteeringController; // forward declare — hip-yaw steering author (Stage 1)
 
 class WebComm {
 public:    // ctor can be invoked at global scope; it simply stores the servo pointer.
@@ -61,6 +62,12 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // broadcastSpeeds() (call on connect, after tune commands, etc).
     void broadcastTransmissionState();
     void broadcastGaitState();
+    // Hip-yaw steering telemetry ("STEER:" packet: turnCmd, turnEff, yawCmdDeg,
+    // active). Rate-limited to 20 Hz internally. No-op if no SteeringController
+    // is wired. Operator commands arrive on two paths: CMD:STEER (hot turnCmd
+    // only) and CMD:STEER_TUNE (cold config); both write the one SteeringConfig
+    // via its targeted atomic setters.
+    void broadcastSteeringState();
     // Sends current WeightShiftConfig to a specific client (called on connect).
     // Firmware is source of truth; client updates sliders without sending back.
     void broadcastWeightShiftConfig(AsyncWebSocketClient* client);
@@ -80,6 +87,10 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // Wire swing-foot leveler for CMD:SWING_LEVELER_TUNE and GAIT: telemetry.
     void setSwingFootLeveler(SwingFootLeveler* l);
     void setFootImpactDetector(FootImpactDetector* d);
+    // Wire the hip-yaw steering author for CMD:STEER / CMD:STEER_TUNE and the
+    // STEER: telemetry packet. Also the target of connection-loss / e-stop
+    // turnCmd=0 safing.
+    void setSteeringController(SteeringController* s);
     // Wire per-step walking instrumentation for the "WALKING:" packet and the
     // CMD:WALKING_INSTR:reset/enable commands.
     void setWalkingInstrumentation(WalkingInstrumentation* w);
@@ -115,6 +126,8 @@ private:
     WeightShift*       _weightShift     = nullptr;  // gait: CoM lateral shift
     GaitController*    _gaitCtrl            = nullptr;
     uint32_t           _lastGaitBroadcast_us = 0;
+    SteeringController* _steeringCtrl       = nullptr;  // hip-yaw steering author
+    uint32_t           _lastSteerBroadcast_us = 0;
     LSM6DSVDriver*     _leftFootIMU         = nullptr;
     LSM6DSVDriver*     _rightFootIMU        = nullptr;
     FootContactConfig* _footContactCfg      = nullptr;

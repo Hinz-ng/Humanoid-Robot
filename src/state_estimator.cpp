@@ -67,10 +67,14 @@ void StateEstimator::_scaleRaw(const RawIMUData& raw,
 
     // Deadband: clamp near-zero gyro noise to exactly zero.
     // This prevents the integrator from accumulating sub-threshold jitter at rest.
+    // Applied to pitch/roll axes (gx, gy) which feed the tilt integrator. gz_rs
+    // (yaw rate) is intentionally NOT deadbanded: it is not used by this filter,
+    // and its only consumer (steering characterization, IMUState::yawRate) wants
+    // the raw debiased rate — a ~0.57°/s deadband would bias slow-turn integrals
+    // low.
     const float db = _cfg.gyro_deadband_rs;
     if (fabsf(gx_rs) < db) gx_rs = 0.0f;
     if (fabsf(gy_rs) < db) gy_rs = 0.0f;
-    if (fabsf(gz_rs) < db) gz_rs = 0.0f;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +254,9 @@ if (dt > 0.05f) dt = 0.05f;
     // If the estimate overshoots/inverts, flip the corresponding sign in FilterConfig.
     gx_rs *= _cfg.roll_gyro_sign;    // ±1: rotation about forward(X) → roll
     gy_rs *= _cfg.pitch_gyro_sign;   // ±1: rotation about lateral(Y) → pitch
-    // gz_rs (yaw rate) is not used by this filter.
+    // gz_rs (yaw rate) is not used by the tilt filter, but is surfaced below as
+    // IMUState::yawRate for steering characterization (sensor sign; the steering
+    // layer applies STEERING_YAW_RATE_SIGN to align it to the body convention).
    
    
     // --- Stage 2a: Accel IIR low-pass ---
@@ -293,6 +299,7 @@ if (dt > 0.05f) dt = 0.05f;
     _state.roll      = _roll;
     _state.pitchRate = gy_rs;
     _state.rollRate  = gx_rs;
+    _state.yawRate   = gz_rs;   // debiased, pre-deadband; sensor sign (Stage 1.1)
     // Stage 2.1 — CoM velocity from inverted-pendulum model.
     // Uses post-deadband, post-sign-corrected gyro rates so this stays
     // consistent with pitchRate / rollRate exposed above.

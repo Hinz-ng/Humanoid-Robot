@@ -143,6 +143,123 @@ static bool test_clamp() {
     return pass;
 }
 
+// ===========================================================================
+//  Stage 1.1 — per-step yaw BUDGET (SteeringYawBudget). Driven directly (the
+//  struct is pure; the full update() path is estop-gated off-hardware).
+// ===========================================================================
+
+// Bb1 — cmd consistency: over a synthetic half at constant turnEff, the summed
+//       commanded deltas telescope to yawStep*turnEff*turnSign regardless of N.
+static bool test_budgetCmdConsistency() {
+    const float turnEff = 1.0f, yawStep = 2.5f, sign = STEERING_TURN_SIGN, maxYaw = 15.0f;
+    const float halfSign = +1.0f;   // swing LEFT
+    SteeringYawBudget b;
+    auto q = [&](float h){ return SteeringController::yawLawDeg(turnEff, yawStep, sign, maxYaw, Side::LEFT, h); };
+    b.openWindow(q(0.0f), /*stanceIsLeft=*/false);
+    const int N = 40;
+    for (int i = 0; i <= N; ++i) { float h = (float)i / N; b.tick(q(h), halfSign, 0,0,0, false, 0.0025f); }
+    b.latch(STEERING_RATIO_MIN_CMD_DEG);
+    const float expected = turnEff * yawStep * sign;
+    const bool pass = s_near(b.cmdStep, expected, 0.01f);
+    Serial.printf("[SteerB1] budget_cmd_consistency: %s  cmd=%.3f exp=%.3f\n",
+                  pass ? "PASS" : "FAIL", b.cmdStep, expected);
+    return pass;
+}
+
+// Bb2 — mid-half slew: with turnEff ramping during the window, the commanded
+//       accumulation is the exact telescoped sum halfSign*(qLast - qFirst).
+static bool test_budgetMidHalfSlew() {
+    const float yawStep = 2.5f, sign = STEERING_TURN_SIGN, maxYaw = 15.0f, halfSign = +1.0f;
+    SteeringYawBudget b;
+    auto q = [&](float teff, float h){ return SteeringController::yawLawDeg(teff, yawStep, sign, maxYaw, Side::LEFT, h); };
+    const int N = 50;
+    const float q0 = q(0.0f, 0.0f);
+    b.openWindow(q0, false);
+    float qLast = q0;
+    for (int i = 0; i <= N; ++i) {
+        float h = (float)i / N, teff = (float)i / N;   // slew 0→1 across the half
+        float qq = q(teff, h);
+        b.tick(qq, halfSign, 0,0,0, false, 0.0025f);
+        qLast = qq;
+    }
+    b.latch(STEERING_RATIO_MIN_CMD_DEG);
+    const float expected = halfSign * (qLast - q0);
+    const bool pass = s_near(b.cmdStep, expected, 0.001f);
+    Serial.printf("[SteerB2] budget_midhalf_slew: %s  cmd=%.3f exp=%.3f\n",
+                  pass ? "PASS" : "FAIL", b.cmdStep, expected);
+    return pass;
+}
+
+// Bb3 — role swap: opening the next window re-primes qAnatPrev (no spurious cmd
+//       delta at the boundary) and the stance-foot capture flips correctly.
+static bool test_budgetRoleSwap() {
+    const float yawStep = 2.5f, sign = STEERING_TURN_SIGN, maxYaw = 15.0f;
+    SteeringYawBudget b;
+    auto qA = [&](float h){ return SteeringController::yawLawDeg(1.0f, yawStep, sign, maxYaw, Side::LEFT,  h); };
+    auto qB = [&](float h){ return SteeringController::yawLawDeg(1.0f, yawStep, sign, maxYaw, Side::RIGHT, h); };
+    // Window A: swing LEFT → stance RIGHT → stanceIsLeft=false.
+    b.openWindow(qA(0.0f), /*stanceIsLeft=*/false);
+    const bool aStanceOk = (b.stanceIsLeft == false);
+    for (int i = 0; i <= 20; ++i) { float h = (float)i / 20; b.tick(qA(h), +1.0f, 0,0,0, false, 0.0025f); }
+    b.latch(STEERING_RATIO_MIN_CMD_DEG);
+    // Boundary → Window B: swing RIGHT → stance LEFT → stanceIsLeft=true.
+    const float qB0 = qB(0.0f);
+    b.openWindow(qB0, /*stanceIsLeft=*/true);
+    b.tick(qB0, -1.0f, 0,0,0, false, 0.0025f);          // first B tick at the primed command
+    const bool noSpurious = s_near(b.cmdAccum, 0.0f, 0.0001f);
+    const bool bStanceOk  = (b.stanceIsLeft == true);
+    const bool pass = aStanceOk && bStanceOk && noSpurious;
+    Serial.printf("[SteerB3] budget_role_swap: %s  aStanceL0=%d bStanceL1=%d cmdAccum=%.4f\n",
+                  pass ? "PASS" : "FAIL", (int)aStanceOk, (int)bStanceOk, b.cmdAccum);
+    return pass;
+}
+
+// Bb4 — post-touchdown partition: the locked buckets equal the deltas summed
+//       only while touchdownLocked, exactly (cmd via telescoping, body via dt).
+static bool test_budgetPostTdPartition() {
+    const float yawStep = 2.5f, sign = STEERING_TURN_SIGN, maxYaw = 15.0f, halfSign = +1.0f;
+    const float torsoDps = 8.0f, dt = 0.0025f;
+    SteeringYawBudget b;
+    auto q = [&](float h){ return SteeringController::yawLawDeg(1.0f, yawStep, sign, maxYaw, Side::LEFT, h); };
+    const int N = 40, split = N / 2;
+    b.openWindow(q(0.0f), false);
+    float qSplit = 0, qLast = 0; int lockedTicks = 0;
+    for (int i = 0; i <= N; ++i) {
+        float h = (float)i / N; float qq = q(h);
+        bool locked = (i > split);
+        b.tick(qq, halfSign, torsoDps, 0, 0, locked, dt);
+        if (i == split) qSplit = qq;
+        if (i == N)     qLast  = qq;
+        if (locked)     lockedTicks++;
+    }
+    b.latch(STEERING_RATIO_MIN_CMD_DEG);
+    const float expCmdPost  = halfSign * (qLast - qSplit);
+    const float expBodyPost = torsoDps * dt * (float)lockedTicks;
+    const bool cmdOk  = s_near(b.cmdPostTdStep,  expCmdPost,  0.01f);
+    const bool bodyOk = s_near(b.bodyPostTdStep, expBodyPost, 0.001f);
+    const bool pass = cmdOk && bodyOk;
+    Serial.printf("[SteerB5] budget_posttd_partition: %s  cmdPost=%.3f(exp %.3f) bodyPost=%.3f(exp %.3f)\n",
+                  pass ? "PASS" : "FAIL", b.cmdPostTdStep, expCmdPost, b.bodyPostTdStep, expBodyPost);
+    return pass;
+}
+
+// Bb6 — disabled: with enabled=false, update() leaves every budget field at 0
+//       (estop-independent: the enabled gate returns first).
+static bool test_budgetDisabledZero() {
+    MotionManager mm; SteeringController sc; sc.init(&mm);
+    SteeringConfig cfg; cfg.enabled = false; cfg.turnCmd = 1.0f; sc.setConfig(cfg);
+    sc.setYawRates(0.5f, 0.5f, 0.5f);
+    sc.setGaitInput({ true, Side::LEFT, 0.5f, true });
+    sc.update(0.0025f);
+    const SteeringState& s = sc.getState();
+    const bool pass = s_near(s.cmdYawStepDeg, 0) && s_near(s.bodyYawStepDeg, 0)
+                   && s_near(s.stanceFootStepDeg, 0) && s_near(s.swingFootStepDeg, 0)
+                   && s_near(s.realizationRatio, 0) && s_near(s.meanRealizationRatio, 0)
+                   && s_near(s.yawRateDps, 0);
+    Serial.printf("[SteerB6] budget_disabled_zero: %s\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+
 // ---------------------------------------------------------------------------
 void runSteeringControllerTests() {
     Serial.println("\n[Steering] ══ Unit Tests ══════════════════════════════════");
@@ -155,6 +272,12 @@ void runSteeringControllerTests() {
     run(test_slewBounded());
     run(test_doubleSupportHold());
     run(test_clamp());
+    // Stage 1.1 per-step yaw budget.
+    run(test_budgetCmdConsistency());
+    run(test_budgetMidHalfSlew());
+    run(test_budgetRoleSwap());
+    run(test_budgetPostTdPartition());
+    run(test_budgetDisabledZero());
     Serial.printf("[Steering] ══ %d / %d PASSED ═══════════════════════════════\n\n",
                   pass, total);
 }

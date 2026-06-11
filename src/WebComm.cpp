@@ -999,12 +999,13 @@ void WebComm::broadcastGaitState() {
 
 // =============================================================================
 //  STEERING BROADCAST
-//  Protocol: "STEER:turnCmd=..,turnEff=..,yawCmdDeg=..,active=..,
-//             enabled=..,yawStep=..,turnSign=..,slew=.."
-//  turnCmd/turnEff/yawCmdDeg/active are live state; the remaining fields are
-//  config echoes so the UI's STEER_TUNE sliders sync to firmware (source of
-//  truth) without re-sending. Rate-limited to 20 Hz; pushed on connect by
-//  force-arming _lastSteerBroadcast_us in the connect block.
+//  Protocol: "STEER:turnCmd,turnEff,yawCmdDeg,active,enabled,yawStep,slew,
+//             yawRate,flYaw,frYaw, cmdStep,bodyStep,stanceStep,swingStep,
+//             cmdPostTd,bodyPostTd,ratio, mCmd,mBody,mStance,mSwing,mRatio"
+//  Live state + config echoes (turnSign removed — baked) + the Stage 1.1
+//  per-step yaw budget (cmd*=derived from submitted joint deltas; body/stance/
+//  swing*=measured gyro-Z integrals; ratio=body/cmd; m*=6-step rolling means).
+//  Rate-limited to 20 Hz; pushed on connect by force-arming _lastSteerBroadcast_us.
 // =============================================================================
 
 void WebComm::broadcastSteeringState() {
@@ -1016,13 +1017,26 @@ void WebComm::broadcastSteeringState() {
 
     const SteeringState&  st  = _steeringCtrl->getState();
     const SteeringConfig  cfg = _steeringCtrl->getConfig();
-    char buf[160];
+    char buf[480];
     snprintf(buf, sizeof(buf),
+        // Live command + config echoes (turnSign removed — baked, not tunable).
         "STEER:turnCmd=%.3f,turnEff=%.3f,yawCmdDeg=%.2f,active=%d,"
-        "enabled=%d,yawStep=%.2f,turnSign=%.0f,slew=%.2f",
+        "enabled=%d,yawStep=%.2f,slew=%.2f,"
+        // Live measured yaw rates (deg/s): torso (IIR) + per-foot (raw) for the
+        // gyro-sign gate.
+        "yawRate=%.1f,flYaw=%.1f,frYaw=%.1f,"
+        // Per-step yaw budget (deg): cmd=DERIVED, body/stance/swing=MEASURED.
+        "cmdStep=%.2f,bodyStep=%.2f,stanceStep=%.2f,swingStep=%.2f,"
+        "cmdPostTd=%.2f,bodyPostTd=%.2f,ratio=%.2f,"
+        // 6-step rolling means.
+        "mCmd=%.2f,mBody=%.2f,mStance=%.2f,mSwing=%.2f,mRatio=%.2f",
         st.turnCmd, st.turnEff, st.yawCmdDeg, static_cast<int>(st.active),
-        static_cast<int>(cfg.enabled), cfg.yawStepDeg, cfg.turnSign,
-        cfg.turnSlewPerSec
+        static_cast<int>(cfg.enabled), cfg.yawStepDeg, cfg.turnSlewPerSec,
+        st.yawRateDps, st.footLeftYawDps, st.footRightYawDps,
+        st.cmdYawStepDeg, st.bodyYawStepDeg, st.stanceFootStepDeg, st.swingFootStepDeg,
+        st.cmdYawPostTdDeg, st.bodyYawPostTdDeg, st.realizationRatio,
+        st.meanCmdYawStepDeg, st.meanBodyYawStepDeg, st.meanStanceFootStepDeg,
+        st.meanSwingFootStepDeg, st.meanRealizationRatio
     );
     _sendFiltered(buf);
 }
@@ -2059,11 +2073,13 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         }
         // ---------------------------------------------------------------------
         //  Hip-yaw STEERING — COLD configuration path.
-        //  Protocol: CMD:STEER_TUNE:enable=0|1,yawStep=2.5,turnSign=1,slew=2.0
+        //  Protocol: CMD:STEER_TUNE:enable=0|1,yawStep=2.5,slew=2.0
         //
         //  Operator/bench action, sent rarely. Carries configuration ONLY (never
         //  turnCmd). Each field routes to its own atomic setter — no whole-struct
         //  read-modify-write, which the 400 Hz control task could read torn.
+        //  turnSign is NOT here — it is hardware-verified and baked into
+        //  STEERING_TURN_SIGN (project_wide_defs.h); the runtime control was removed.
         // ---------------------------------------------------------------------
         else if (cmd.startsWith("STEER_TUNE:")) {
             if (_steeringCtrl) {
@@ -2083,8 +2099,6 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         // more turn authority than maxYawDeg will ever pass.
                         else if (key == "yawStep")  _steeringCtrl->setYawStepDeg(
                                        constrain(val.toFloat(), 0.0f, GAIT_STEER_MAX_YAW_DEG));
-                        // turnSign — hardware direction. Setter snaps to ±1.
-                        else if (key == "turnSign") _steeringCtrl->setTurnSign(val.toFloat());
                         // slew — |turnEff| change cap (units/s). Floor 0.1 (never
                         // frozen); ceiling 10 (a full -1→+1 in 0.2 s, near a step).
                         else if (key == "slew")     _steeringCtrl->setTurnSlewPerSec(
@@ -2096,8 +2110,8 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                 _lastSteerBroadcast_us = 0;
                 broadcastSteeringState();
                 const SteeringConfig sc = _steeringCtrl->getConfig();
-                Serial.printf("[WebComm] STEER_TUNE: en=%d yawStep=%.2f turnSign=%.0f slew=%.2f\n",
-                              (int)sc.enabled, sc.yawStepDeg, sc.turnSign, sc.turnSlewPerSec);
+                Serial.printf("[WebComm] STEER_TUNE: en=%d yawStep=%.2f slew=%.2f\n",
+                              (int)sc.enabled, sc.yawStepDeg, sc.turnSlewPerSec);
             }
         }
         // ---------------------------------------------------------------------

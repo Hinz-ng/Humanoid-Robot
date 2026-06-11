@@ -29,6 +29,13 @@ struct IMUState {
     float roll;       // Body tilt left/right  (rad). Positive = leaning right.
     float pitchRate;  // Angular velocity about pitch axis (rad/s).
     float rollRate;   // Angular velocity about roll  axis (rad/s).
+    // Yaw RATE about the vertical axis (rad/s). Surfaced for steering
+    // characterization (Stage 1.1). This is the debiased, scaled gyro-Z,
+    // intentionally WITHOUT the gyro deadband (deadband ≈0.57°/s would bias
+    // slow-turn integrals low). No absolute yaw/heading is estimated (6-axis
+    // IMU — gyro-Z integrates with drift); consumers integrate the rate over
+    // short windows only. 0 until valid.
+    float yawRate;
     // Stage 2.1 — inverted-pendulum CoM velocity estimate.
     //   vx_CoM_mm_s = H_COM_MM × pitchRate  (sagittal: + = body advancing forward)
     //   vy_CoM_mm_s = H_COM_MM × rollRate   (lateral:  + = body translating right)

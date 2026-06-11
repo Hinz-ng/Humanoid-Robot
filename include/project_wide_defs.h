@@ -802,4 +802,32 @@ constexpr float GAIT_STEER_MAX_YAW_DEG = 15.0f;
 // yaw output C¹ no matter when the operator moves the joystick.
 constexpr float GAIT_STEER_TURN_SLEW_PER_SEC = 2.0f;
 
+// Hardware-verified turn direction (Stage 1.1). Positive turnCmd must map to the
+// observed physical turn direction; -1 is the confirmed mapping on this build.
+// This is a HARDWARE PROPERTY, not a tuning parameter — the runtime sign control
+// was removed. Re-verify on a hip-yaw servo swap or re-cabling, then edit here
+// and reflash. SteeringConfig.turnSign initialises from this.
+constexpr float STEERING_TURN_SIGN = -1.0f;
+
+// --- Stage 1.1 characterization telemetry (per-step yaw budget) ---
+// Sign that maps each measured gyro-Z (IMUState::yawRate, world z-up CCW+) onto
+// the steering body-yaw convention so realizationRatio reads positive for a
+// realized turn. Bench-verify once (rotate the robot CCW from above → all three
+// yaw rates must read positive); flip here if not. Applied at ingestion.
+constexpr float STEERING_YAW_RATE_SIGN = +1.0f;
+
+// IIR retention for the live torso yaw-rate DISPLAY only (yawRateDps). Rejects
+// footstrike spikes for a readable number; does not affect the per-step budget
+// integrals (those integrate the unsmoothed rate * dt).
+constexpr float STEERING_YAW_RATE_LPF_ALPHA = 0.90f;
+
+// Rolling-mean window (footfalls) for the budget telemetry — mirrors the
+// GaitState step-timing ring sizing.
+constexpr uint8_t STEERING_STEP_RING_SIZE = 6;
+
+// realizationRatio = bodyYawStepDeg / cmdYawStepDeg is guarded to 0 when the
+// commanded step yaw magnitude is below this (deg), so a near-straight step does
+// not divide measurement noise into a meaningless ratio.
+constexpr float STEERING_RATIO_MIN_CMD_DEG = 1.0f;
+
 #endif // PROJECT_WIDE_DEFS_H

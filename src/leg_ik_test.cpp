@@ -38,11 +38,18 @@ static bool test_nominalHeight() {
 // ---------------------------------------------------------------------------
 //  T2 — FK roundtrip at nominal height, foot centered and offset forward
 // ---------------------------------------------------------------------------
+// NOTE: FootTarget is constructed by named assignment rather than positional
+// brace-init: it has default member initializers, so under the toolchain's
+// gnu++11 it is a non-aggregate and `{...}` aggregate init fails to compile.
 static bool test_roundtrip_centered() {
-    return LegIK::validateRoundtrip({0.0f, 160.0f, 0.0f, 0.0f, true}, 0.5f);
+    FootTarget t; t.x_mm = 0.0f;  t.h_sagittal_mm = 160.0f; t.y_mm = 0.0f;
+    t.h_frontal_mm = 0.0f; t.isRightLeg = true;
+    return LegIK::validateRoundtrip(t, 0.5f);
 }
 static bool test_roundtrip_forward() {
-    return LegIK::validateRoundtrip({20.0f, 155.0f, 0.0f, 0.0f, true}, 0.5f);
+    FootTarget t; t.x_mm = 20.0f; t.h_sagittal_mm = 155.0f; t.y_mm = 0.0f;
+    t.h_frontal_mm = 0.0f; t.isRightLeg = true;
+    return LegIK::validateRoundtrip(t, 0.5f);
 }
 
 // ---------------------------------------------------------------------------

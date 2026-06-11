@@ -1748,7 +1748,7 @@
         <!-- Operator input only: the joystick generates turnCmd on the hot
              CMD:STEER path. It owns no steering behaviour — the firmware
              SteeringController does. Y axis is intentionally unused at Stage 1. -->
-        <div class="section-label">Steering — hip-yaw (Stage 1)</div>
+        <div class="section-label">Steering — hip-yaw (Stage 1.1)</div>
         <div class="flex-row-wrap-sm mb-10">
             <span class="gait-mode-badge gait-mode-idle" id="steerEnabledBadge">DISABLED</span>
             <span class="gait-mode-badge gait-mode-idle" id="steerActiveBadge">INACTIVE</span>
@@ -1768,22 +1768,51 @@
                 <div>turnCmd: <b id="steerTurnCmd">0.000</b></div>
                 <div>turnEff: <b id="steerTurnEff">0.000</b></div>
                 <div>yawCmd: <b id="steerYawCmd">0.00</b>°</div>
+                <div>yaw rate: <b id="steerYawRate">0.0</b> °/s <span class="note-muted">(torso)</span></div>
+                <div class="note-muted">foot L/R: <b id="steerFlYaw">0.0</b> / <b id="steerFrYaw">0.0</b> °/s</div>
             </div>
         </div>
         <div class="small-note">
             Drag left/right to steer (X → turn command, −1…+1). Release springs
-            back to straight (sends CMD:STEER:0). Y axis is ignored at Stage 1.
-            Closing the tab or losing WiFi forces straight server-side. Steering
-            only acts while gait is RUNNING.
+            back to straight (sends CMD:STEER:0). Y axis is ignored. Closing the
+            tab or losing WiFi forces straight server-side. Steering only acts
+            while gait is RUNNING. Gyro-sign check: rotate the robot CCW (from
+            above) — all three yaw rates above should read positive.
         </div>
-        <!-- Bench configuration (cold CMD:STEER_TUNE path; kept for tuning). -->
+
+        <!-- Per-step yaw budget (Stage 1.1 characterization). Each cell shows
+             this-footfall / 6-step mean. -->
+        <div class="section-label">Realization — yaw budget (this step / 6-mean)</div>
+        <div class="gait-telem-grid" style="font-size:12px;">
+            <div><span class="note-muted">cmd (derived)</span>
+                <div class="bal-out-val"><span id="steerCmdStep">0.0</span> / <span id="steerMCmd">0.0</span>°</div></div>
+            <div><span class="note-muted">body (meas)</span>
+                <div class="bal-out-val"><span id="steerBodyStep">0.0</span> / <span id="steerMBody">0.0</span>°</div></div>
+            <div><span class="note-muted">stance foot</span>
+                <div class="bal-out-val"><span id="steerStanceStep">0.0</span> / <span id="steerMStance">0.0</span>°</div></div>
+            <div><span class="note-muted">swing foot</span>
+                <div class="bal-out-val"><span id="steerSwingStep">0.0</span> / <span id="steerMSwing">0.0</span>°</div></div>
+            <div><span class="note-muted">realized</span>
+                <div class="bal-out-val"><span id="steerRatio">0.00</span> / <span id="steerMRatio">0.00</span></div></div>
+            <div><span class="note-muted">post-TD cmd/body</span>
+                <div class="bal-out-val"><span id="steerCmdPostTd">0.0</span> / <span id="steerBodyPostTd">0.0</span>°</div></div>
+        </div>
+        <div class="small-note">
+            <b>cmd</b> = commanded body yaw (DERIVED from the submitted joint deltas).
+            <b>body / stance / swing</b> = MEASURED gyro-Z integrals over the footfall.
+            <b>realized</b> = body ÷ cmd — a <i>relative</i> A/B metric (gyro-Z, not
+            true heading). Compare the mean across phaseRate / stepHeight / stepLength
+            runs to see where authority is lost.
+        </div>
+
+        <!-- Bench configuration (cold CMD:STEER_TUNE path; kept for tuning).
+             turnSign control removed — sign is hardware-verified + baked. -->
         <div class="flex-row-wrap-sm mb-10" style="margin-top:8px; align-items:center;">
             <button class="btn-sign" id="btnSteerEnable" onclick="toggleSteerEnable()">Steering: OFF</button>
             <label class="small-note">yaw/step°
                 <input type="number" id="steerYawStep" value="2.5" step="0.5" min="0" max="15"
                        style="width:62px;" onchange="sendSteerTune('yawStep', this.value)">
             </label>
-            <button class="btn-sign" id="btnSteerSign" onclick="toggleSteerSign()">Sign: +1</button>
             <label class="small-note">slew/s
                 <input type="number" id="steerSlew" value="2.0" step="0.5" min="0.1" max="10"
                        style="width:62px;" onchange="sendSteerTune('slew', this.value)">
@@ -4877,11 +4906,8 @@ function toggleSteerEnable() {
     const enable = btn && btn.textContent.indexOf('OFF') !== -1;
     sendSteerTune('enable', enable ? 1 : 0);
 }
-function toggleSteerSign() {
-    const btn = document.getElementById('btnSteerSign');
-    const cur = (btn && btn.textContent.indexOf('+1') !== -1) ? +1 : -1;
-    sendSteerTune('turnSign', -cur);
-}
+// toggleSteerSign() removed — turn sign is hardware-verified and baked into
+// firmware (STEERING_TURN_SIGN); there is no runtime sign control.
 
 // STEER: telemetry parser. Updates the live readout + syncs config widgets to
 // firmware truth (firmware is source of truth — never push defaults back).
@@ -4890,9 +4916,25 @@ function parseSteeringState(payload) {
     payload.split(",").forEach(p => { const kv = p.split("="); v[kv[0]] = kv[1]; });
 
     const set = (id, t) => { const e = document.getElementById(id); if (e) e.textContent = t; };
+    const f2 = (k) => parseFloat(v[k] || "0").toFixed(2);
+    const f1 = (k) => parseFloat(v[k] || "0").toFixed(1);
     set("steerTurnCmd", parseFloat(v["turnCmd"] || "0").toFixed(3));
     set("steerTurnEff", parseFloat(v["turnEff"] || "0").toFixed(3));
-    set("steerYawCmd",  parseFloat(v["yawCmdDeg"] || "0").toFixed(2));
+    set("steerYawCmd",  f2("yawCmdDeg"));
+
+    // Live measured yaw rates (deg/s): torso + per-foot (gyro-sign gate).
+    set("steerYawRate", f1("yawRate"));
+    set("steerFlYaw",   f1("flYaw"));
+    set("steerFrYaw",   f1("frYaw"));
+
+    // Per-step yaw budget — this-step value / 6-step rolling mean.
+    set("steerCmdStep",    f2("cmdStep"));    set("steerMCmd",    f2("mCmd"));
+    set("steerBodyStep",   f2("bodyStep"));   set("steerMBody",   f2("mBody"));
+    set("steerStanceStep", f2("stanceStep")); set("steerMStance", f2("mStance"));
+    set("steerSwingStep",  f2("swingStep"));  set("steerMSwing",  f2("mSwing"));
+    set("steerRatio",      f2("ratio"));      set("steerMRatio",  f2("mRatio"));
+    set("steerCmdPostTd",  f2("cmdPostTd"));
+    set("steerBodyPostTd", f2("bodyPostTd"));
 
     const enabled = v["enabled"] === "1";
     const active  = v["active"]  === "1";
@@ -4909,9 +4951,6 @@ function parseSteeringState(payload) {
     const enBtn = document.getElementById("btnSteerEnable");
     if (enBtn) enBtn.textContent = "Steering: " + (enabled ? "ON" : "OFF");
 
-    const sign = parseFloat(v["turnSign"] || "1");
-    const signBtn = document.getElementById("btnSteerSign");
-    if (signBtn) signBtn.textContent = "Sign: " + (sign >= 0 ? "+1" : "-1");
     // Only resync number inputs when the operator is not editing them.
     const ys = document.getElementById("steerYawStep");
     if (ys && document.activeElement !== ys && v["yawStep"] !== undefined)

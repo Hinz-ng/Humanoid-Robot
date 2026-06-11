@@ -442,6 +442,21 @@ void loop() {
             const BalanceCorrection bc = balanceController.getLastCorrection();
             gaitController.update(dt, state, &bc, &balState, footSnapPtr);
 
+            // Inject the three measured yaw rates for the Stage 1.1 steering
+            // characterization budget (telemetry only). Foot rates are gated on
+            // estimator validity so footstrike `valid=false` flicker can't push
+            // garbage into the per-step yaw integrals; 0 when foot IMUs are
+            // compiled out. Must precede steeringController.update().
+#if FOOT_IMU_ENABLED
+            const float _lfYaw = lf_state.valid ? lf_state.yawRate : 0.0f;
+            const float _rfYaw = rf_state.valid ? rf_state.yawRate : 0.0f;
+#else
+            const float _lfYaw = 0.0f;
+            const float _rfYaw = 0.0f;
+#endif
+            steeringController.setYawRates(state.valid ? state.yawRate : 0.0f,
+                                           _lfYaw, _rfYaw);
+
             // Hip-yaw steering: submits the two yaw joints at SOURCE_GAIT using
             // the (active, swingSide, halfPhase) GaitController pushed above.
             // Runs AFTER gait and BEFORE flush so its submissions land this tick.

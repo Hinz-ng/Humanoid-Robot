@@ -1768,8 +1768,11 @@ void GaitController::update(float dt_s, const IMUState& imuState,
     // halfPhase) — its own estop/inactive handling parks the yaw joints. Steering
     // submits its own joints in steeringController.update() (after this returns).
     if (_steering) {
+        // touchdownLocked feeds the steering pre/post-touchdown yaw-budget split
+        // (Stage 1.1). 1-tick stale here (the latch is set later in update()),
+        // same staleness contract as the swing-leg mask publish above.
         _steering->setGaitInput({ _state.mode == GaitMode::RUNNING,
-                                  _swingSide, _halfPhase });
+                                  _swingSide, _halfPhase, _touchdownLocked });
     }
 
     if (_mm == nullptr)   return;

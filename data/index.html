@@ -1810,12 +1810,22 @@
         <div class="flex-row-wrap-sm mb-10" style="margin-top:8px; align-items:center;">
             <button class="btn-sign" id="btnSteerEnable" onclick="toggleSteerEnable()">Steering: OFF</button>
             <label class="small-note">yaw/step°
-                <input type="number" id="steerYawStep" value="2.5" step="0.5" min="0" max="15"
+                <input type="number" id="steerYawStep" value="2.5" step="0.5" min="0" max="30"
                        style="width:62px;" onchange="sendSteerTune('yawStep', this.value)">
             </label>
             <label class="small-note">slew/s
                 <input type="number" id="steerSlew" value="2.0" step="0.5" min="0.1" max="10"
                        style="width:62px;" onchange="sendSteerTune('slew', this.value)">
+            </label>
+            <!-- Sweep window (Stage 1.2): fraction of the half-cycle over which the
+                 yaw sweeps; held at the endpoints outside it. 0/1 = legacy no-op. -->
+            <label class="small-note">sweep start
+                <input type="number" id="steerSweepStart" value="0.00" step="0.05" min="0" max="0.8"
+                       style="width:62px;" onchange="sendSteerTune('sweepStart', this.value)">
+            </label>
+            <label class="small-note">sweep end
+                <input type="number" id="steerSweepEnd" value="1.00" step="0.05" min="0.2" max="1.0"
+                       style="width:62px;" onchange="sendSteerTune('sweepEnd', this.value)">
             </label>
         </div>
 
@@ -4958,6 +4968,12 @@ function parseSteeringState(payload) {
     const sl = document.getElementById("steerSlew");
     if (sl && document.activeElement !== sl && v["slew"] !== undefined)
         sl.value = parseFloat(v["slew"]).toFixed(1);
+    const sws = document.getElementById("steerSweepStart");
+    if (sws && document.activeElement !== sws && v["sweepStart"] !== undefined)
+        sws.value = parseFloat(v["sweepStart"]).toFixed(2);
+    const swe = document.getElementById("steerSweepEnd");
+    if (swe && document.activeElement !== swe && v["sweepEnd"] !== undefined)
+        swe.value = parseFloat(v["sweepEnd"]).toFixed(2);
 }
 
 // Set lateral capture sign (+1 or -1). Active button updates via GAIT: broadcast.

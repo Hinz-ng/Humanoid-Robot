@@ -10,24 +10,38 @@
 // ---------------------------------------------------------------------------
 //  yawLawDeg()  —  the pure per-tick yaw law (no estop, no submit, no state).
 //
-//  yaw = turnEff * yawStepDeg * turnSign * halfSign * (s - 0.5), clamped.
+//  yaw = turnEff * yawStepDeg * turnSign * halfSign * (s - 0.5), clamped, where
+//  s is a smoothstep run over the sweep window [wStart, wEnd] and HELD at its
+//  0/1 endpoints outside it (Stage 1.2):
+//      u = clamp((halfPhase - wStart) / (wEnd - wStart), 0, 1)
+//      s = u*u*(3 - 2u)
 //
-//  s = smoothstep(halfPhase): (s-0.5) is the command shape — it is +0.5 at the
-//  half boundary on BOTH sides (continuous across the role swap), 0 at mid-swing,
-//  and has zero slope at the ends, so yaw-RATE is zero at touchdown → no
-//  rotational scrub of the planted foot.
+//  (s-0.5) is the command shape — +0.5 at the half boundary on BOTH sides
+//  (continuous across the role swap), 0 at mid-window, zero slope at the ends, so
+//  yaw-RATE is zero at touchdown → no rotational scrub of the planted foot. The
+//  hold regions [0,wStart] and [wEnd,1] pin q at the SAME ±A/2 endpoints the
+//  legacy law reaches at halfPhase 0/1, so role-swap continuity, zero end-slope,
+//  and per-footfall Δq = yawStepDeg·turnEff are preserved for ANY window. With
+//  the defaults (0,1) the window spans the whole half and this is bit-identical
+//  to the legacy smoothstep. The sweep window relocates the yaw into the airborne
+//  interval (yaw during double support → foot splay, not heading — see
+//  project_wide_defs.h STEERING_SWEEP_*).
 //
 //  halfSign flips the body-effect with the stance leg: +q rotates the body CCW
 //  on right-stance (ψ=φ_R+q_R) and CW on left-stance (ψ=φ_L−q_L). Drop it and
-//  the law oscillates with zero net turn. Over one swing (s: 0→1) the anatomical
-//  Δq is +yawStepDeg on a LEFT swing / −yawStepDeg on a RIGHT swing; combined
-//  with the stance relation each footfall yields the same-signed body yaw.
+//  the law oscillates with zero net turn.
+//
+//  wStart/wEnd are defensively clamped (start ≤ 0.8, end ≥ start+MIN_WIDTH) so the
+//  denominator never degenerates even on a torn cross-task read of one field.
 // ---------------------------------------------------------------------------
 float SteeringController::yawLawDeg(float turnEff, float yawStepDeg,
                                     float turnSign, float maxYawDeg,
-                                    Side swingSide, float halfPhase) {
-    const float h        = halfPhase;
-    const float s        = h * h * (3.0f - 2.0f * h);
+                                    Side swingSide, float halfPhase,
+                                    float wStart, float wEnd) {
+    const float ws       = constrain(wStart, 0.0f, 0.8f);
+    const float we       = constrain(wEnd, ws + STEERING_SWEEP_MIN_WIDTH, 1.0f);
+    const float u        = constrain((halfPhase - ws) / (we - ws), 0.0f, 1.0f);
+    const float s        = u * u * (3.0f - 2.0f * u);
     const float halfSign = (swingSide == Side::LEFT) ? +1.0f : -1.0f;
     const float yaw      = turnEff * yawStepDeg * turnSign * halfSign * (s - 0.5f);
     return constrain(yaw, -maxYawDeg, maxYawDeg);
@@ -97,7 +111,8 @@ void SteeringController::update(float dt_s) {
     }
 
     const float yaw = yawLawDeg(_turnEff, _cfg.yawStepDeg, _cfg.turnSign,
-                                _cfg.maxYawDeg, _in.swingSide, _in.halfPhase);
+                                _cfg.maxYawDeg, _in.swingSide, _in.halfPhase,
+                                _cfg.sweepStartFrac, _cfg.sweepEndFrac);
 
     // Identical anatomical command to BOTH legs — the JointConfig `direction`
     // field (right +1, left -1) handles the physical mirror. No per-leg opposite

@@ -63,6 +63,12 @@ struct SteeringConfig {
     float turnSign       = STEERING_TURN_SIGN;
     float maxYawDeg      = GAIT_STEER_MAX_YAW_DEG;           // |output| clamp ≪ ±50° limit
     float turnSlewPerSec = GAIT_STEER_TURN_SLEW_PER_SEC;     // |turnEff| change cap (units/s)
+    // Sweep window (Stage 1.2): the [start,end] fraction of the half-cycle over
+    // which the yaw sweep runs; held at the ±A/2 endpoints outside it. Defaults
+    // 0/1 reduce the windowed law EXACTLY to the legacy smoothstep (no-op). See
+    // STEERING_SWEEP_* in project_wide_defs.h.
+    float sweepStartFrac = STEERING_SWEEP_START_DEFAULT;
+    float sweepEndFrac   = STEERING_SWEEP_END_DEFAULT;
 };
 
 // Gait-derived inputs pushed once per tick by GaitController.
@@ -206,6 +212,17 @@ public:
     void setEnabled(bool e)         { _cfg.enabled        = e; }
     void setYawStepDeg(float d)     { _cfg.yawStepDeg     = d; }
     void setTurnSlewPerSec(float s) { _cfg.turnSlewPerSec = s; }
+    // Sweep window (Stage 1.2). Takes BOTH bounds and clamps them jointly so the
+    // pair is always valid regardless of which key(s) a STEER_TUNE message
+    // carried or their order: start ∈ [0, 0.8]; end ∈ [start+MIN_WIDTH, 1.0].
+    // (yawLawDeg() re-applies the same defensive clamp, so a torn cross-task read
+    // of one field can never produce a degenerate window.)
+    void setSweepWindow(float start, float end) {
+        const float s = constrain(start, 0.0f, 0.8f);
+        const float e = constrain(end, s + STEERING_SWEEP_MIN_WIDTH, 1.0f);
+        _cfg.sweepStartFrac = s;
+        _cfg.sweepEndFrac   = e;
+    }
     // NOTE: setTurnSign() removed — the sign is hardware-verified and baked into
     // STEERING_TURN_SIGN (project_wide_defs.h); no operator control writes it.
 
@@ -247,8 +264,17 @@ public:
     // The yaw law: anatomical hip-yaw command (deg) for a given effective
     // command. This is the value update() submits to BOTH legs (the JointConfig
     // `direction` field mirrors left/right). Clamped to ±maxYawDeg.
+    //
+    // Sweep windowing (Stage 1.2): the smoothstep runs over [wStart, wEnd] of the
+    // half-cycle and HOLDS at the ±A/2 endpoints outside it. Because the holds pin
+    // q at exactly the values the legacy law reaches at halfPhase 0/1, role-swap
+    // continuity (+0.5 both sides), zero end-slope, and per-footfall
+    // Δq = yawStepDeg·turnEff are preserved for ANY window. wStart/wEnd default to
+    // STEERING_SWEEP_*_DEFAULT (0/1) → reduces EXACTLY to the legacy expression.
     static float yawLawDeg(float turnEff, float yawStepDeg, float turnSign,
-                           float maxYawDeg, Side swingSide, float halfPhase);
+                           float maxYawDeg, Side swingSide, float halfPhase,
+                           float wStart = STEERING_SWEEP_START_DEFAULT,
+                           float wEnd   = STEERING_SWEEP_END_DEFAULT);
 
     // One slew step of `current` toward `target`, change capped at ±maxStep.
     static float slewToward(float current, float target, float maxStep);

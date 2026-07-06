@@ -148,21 +148,30 @@ static bool test_clamp() {
 //  struct is pure; the full update() path is estop-gated off-hardware).
 // ===========================================================================
 
-// Bb1 — cmd consistency: over a synthetic half at constant turnEff, the summed
-//       commanded deltas telescope to yawStep*turnEff*turnSign regardless of N.
+// Bb1 — cmd consistency (AMPLITUDE INVARIANT): over a synthetic half at constant
+//       turnEff, the summed commanded deltas telescope to yawStep*turnEff*turnSign
+//       regardless of N. Stage 1.2: parameterized over sweep windows — the SAME
+//       assertion must hold for ANY window (windowing relocates WHEN the yaw is
+//       commanded, never the per-footfall amount).
 static bool test_budgetCmdConsistency() {
-    const float turnEff = 1.0f, yawStep = 2.5f, sign = STEERING_TURN_SIGN, maxYaw = 15.0f;
+    const float turnEff = 1.0f, yawStep = 2.5f, sign = STEERING_TURN_SIGN, maxYaw = 16.0f;
     const float halfSign = +1.0f;   // swing LEFT
-    SteeringYawBudget b;
-    auto q = [&](float h){ return SteeringController::yawLawDeg(turnEff, yawStep, sign, maxYaw, Side::LEFT, h); };
-    b.openWindow(q(0.0f), /*stanceIsLeft=*/false);
-    const int N = 40;
-    for (int i = 0; i <= N; ++i) { float h = (float)i / N; b.tick(q(h), halfSign, 0,0,0, false, 0.0025f); }
-    b.latch(STEERING_RATIO_MIN_CMD_DEG);
     const float expected = turnEff * yawStep * sign;
-    const bool pass = s_near(b.cmdStep, expected, 0.01f);
-    Serial.printf("[SteerB1] budget_cmd_consistency: %s  cmd=%.3f exp=%.3f\n",
-                  pass ? "PASS" : "FAIL", b.cmdStep, expected);
+    const float wins[][2] = { {0.0f, 1.0f}, {0.2f, 0.8f}, {0.3f, 0.7f} };
+    bool pass = true;
+    for (auto& w : wins) {
+        SteeringYawBudget b;
+        auto q = [&](float h){ return SteeringController::yawLawDeg(
+                     turnEff, yawStep, sign, maxYaw, Side::LEFT, h, w[0], w[1]); };
+        b.openWindow(q(0.0f), /*stanceIsLeft=*/false);
+        const int N = 40;
+        for (int i = 0; i <= N; ++i) { float h = (float)i / N; b.tick(q(h), halfSign, 0,0,0, false, 0.0025f); }
+        b.latch(STEERING_RATIO_MIN_CMD_DEG);
+        const bool ok = s_near(b.cmdStep, expected, 0.01f);
+        pass &= ok;
+        Serial.printf("[SteerB1] budget_cmd_consistency win[%.2f,%.2f]: %s  cmd=%.3f exp=%.3f\n",
+                      w[0], w[1], ok ? "PASS" : "FAIL", b.cmdStep, expected);
+    }
     return pass;
 }
 
@@ -260,6 +269,107 @@ static bool test_budgetDisabledZero() {
     return pass;
 }
 
+// ===========================================================================
+//  Stage 1.2 — sweep windowing (yawLawDeg wStart/wEnd).
+// ===========================================================================
+
+// Legacy closed-form reference (pre-windowing law) for the regression check.
+static float legacyYaw(float turnEff, float yawStep, float sign, float maxYaw,
+                       Side side, float h) {
+    const float s        = h * h * (3.0f - 2.0f * h);
+    const float halfSign = (side == Side::LEFT) ? +1.0f : -1.0f;
+    return constrain(turnEff * yawStep * sign * halfSign * (s - 0.5f), -maxYaw, maxYaw);
+}
+
+// Bw1 — REGRESSION: defaults (0,1) reproduce the legacy smoothstep exactly across
+//       a dense halfPhase sweep, both sides, several turnEff values.
+static bool test_windowDefaultsAreLegacy() {
+    const float yawStep = 2.5f, sign = STEERING_TURN_SIGN, maxYaw = 100.0f;
+    const float teffs[] = { -1.0f, -0.37f, 0.0f, 0.5f, 1.0f };
+    bool ok = true;
+    for (float te : teffs) {
+        for (int i = 0; i <= 100; ++i) {
+            const float h = (float)i / 100.0f;
+            for (Side sd : { Side::LEFT, Side::RIGHT }) {
+                const float got = SteeringController::yawLawDeg(te, yawStep, sign, maxYaw, sd, h);  // default window
+                const float ref = legacyYaw(te, yawStep, sign, maxYaw, sd, h);
+                if (!s_near(got, ref, 1e-5f)) ok = false;
+            }
+        }
+    }
+    Serial.printf("[SteerW1] window_defaults_are_legacy: %s\n", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// Bw2 — HOLD REGIONS: for window (0.3,0.7), q is constant on [0,0.3] and [0.7,1]
+//       and equals the ∓A/2 endpoint values the legacy law reaches at hp 0/1.
+static bool test_windowHoldRegions() {
+    const float te = 1.0f, yawStep = 2.5f, sign = STEERING_TURN_SIGN, maxYaw = 16.0f;
+    auto q = [&](float h){ return SteeringController::yawLawDeg(te, yawStep, sign, maxYaw, Side::LEFT, h, 0.3f, 0.7f); };
+    const float startVal = -0.5f * te * yawStep * sign * (+1.0f); // halfSign +1 (LEFT)
+    const float endVal   = +0.5f * te * yawStep * sign * (+1.0f);
+    bool ok = true;
+    // Pre-window hold [0, 0.3]: all equal the legacy hp=0 endpoint (-A/2 form).
+    for (float h : { 0.0f, 0.1f, 0.2f, 0.3f }) ok &= s_near(q(h), startVal, 1e-4f);
+    // Post-window hold [0.7, 1.0]: all equal the legacy hp=1 endpoint (+A/2 form).
+    for (float h : { 0.7f, 0.8f, 0.9f, 1.0f }) ok &= s_near(q(h), endVal, 1e-4f);
+    Serial.printf("[SteerW2] window_hold_regions: %s  start=%.3f end=%.3f\n",
+                  ok ? "PASS" : "FAIL", startVal, endVal);
+    return ok;
+}
+
+// Bw3 — CONTINUITY: q(L, hp=1) == q(R, hp=0) for several windows incl. asymmetric.
+static bool test_windowRoleSwapContinuity() {
+    const float te = 0.8f, yawStep = 2.5f, sign = STEERING_TURN_SIGN, maxYaw = 16.0f;
+    const float wins[][2] = { {0.0f,1.0f}, {0.2f,0.8f}, {0.15f,0.85f}, {0.25f,0.6f}, {0.4f,0.95f} };
+    bool ok = true;
+    for (auto& w : wins) {
+        const float lEnd   = SteeringController::yawLawDeg(te, yawStep, sign, maxYaw, Side::LEFT,  1.0f, w[0], w[1]);
+        const float rStart = SteeringController::yawLawDeg(te, yawStep, sign, maxYaw, Side::RIGHT, 0.0f, w[0], w[1]);
+        if (!s_near(lEnd, rStart, 1e-4f)) ok = false;
+    }
+    Serial.printf("[SteerW3] window_roleswap_continuity: %s\n", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// Bw4 — DEGENERATE GUARD: wEnd <= wStart is defensively clamped → finite output.
+static bool test_windowDegenerate() {
+    const float te = 1.0f, yawStep = 2.5f, sign = STEERING_TURN_SIGN, maxYaw = 16.0f;
+    bool ok = true;
+    // Inverted, equal, and out-of-range windows across the phase.
+    const float wins[][2] = { {0.5f,0.3f}, {0.6f,0.6f}, {0.9f,0.1f}, {1.0f,0.0f} };
+    for (auto& w : wins) {
+        for (int i = 0; i <= 10; ++i) {
+            const float h = (float)i / 10.0f;
+            const float y = SteeringController::yawLawDeg(te, yawStep, sign, maxYaw, Side::LEFT, h, w[0], w[1]);
+            if (!isfinite(y) || fabsf(y) > maxYaw + 1e-3f) ok = false;
+        }
+    }
+    Serial.printf("[SteerW4] window_degenerate_guard: %s\n", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// Bw5 — CLAMP at the raised ceiling: yawStep=30, turnEff=1, maxYaw=16 → endpoints
+//       ±15 (= A/2) are NOT clipped; an artificially low maxYaw=10 clips at ±10.
+static bool test_windowClampCeiling() {
+    const float sign = STEERING_TURN_SIGN;
+    // Endpoints at full authority: hp=1 (LEFT) → +A/2 form, hp=0 → -A/2 form.
+    const float hi16 = SteeringController::yawLawDeg(1.0f, 30.0f, sign, 16.0f, Side::LEFT, 1.0f);
+    const float lo16 = SteeringController::yawLawDeg(1.0f, 30.0f, sign, 16.0f, Side::LEFT, 0.0f);
+    const float expHi = +0.5f * 30.0f * sign;   // ±15 depending on sign
+    const float expLo = -0.5f * 30.0f * sign;
+    const bool notClipped = s_near(hi16, expHi, 1e-3f) && s_near(lo16, expLo, 1e-3f)
+                         && (fabsf(hi16) <= 15.0f + 1e-3f);
+    // Artificially tight clamp must clip to ±10.
+    const float hi10 = SteeringController::yawLawDeg(1.0f, 30.0f, sign, 10.0f, Side::LEFT, 1.0f);
+    const float lo10 = SteeringController::yawLawDeg(1.0f, 30.0f, sign, 10.0f, Side::LEFT, 0.0f);
+    const bool clipped = s_near(fabsf(hi10), 10.0f, 1e-3f) && s_near(fabsf(lo10), 10.0f, 1e-3f);
+    const bool pass = notClipped && clipped;
+    Serial.printf("[SteerW5] window_clamp_ceiling: %s  hi16=%.2f lo16=%.2f hi10=%.2f lo10=%.2f\n",
+                  pass ? "PASS" : "FAIL", hi16, lo16, hi10, lo10);
+    return pass;
+}
+
 // ---------------------------------------------------------------------------
 void runSteeringControllerTests() {
     Serial.println("\n[Steering] ══ Unit Tests ══════════════════════════════════");
@@ -278,6 +388,12 @@ void runSteeringControllerTests() {
     run(test_budgetRoleSwap());
     run(test_budgetPostTdPartition());
     run(test_budgetDisabledZero());
+    // Stage 1.2 sweep windowing.
+    run(test_windowDefaultsAreLegacy());
+    run(test_windowHoldRegions());
+    run(test_windowRoleSwapContinuity());
+    run(test_windowDegenerate());
+    run(test_windowClampCeiling());
     Serial.printf("[Steering] ══ %d / %d PASSED ═══════════════════════════════\n\n",
                   pass, total);
 }

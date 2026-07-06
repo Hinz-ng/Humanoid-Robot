@@ -795,7 +795,11 @@ constexpr float GAIT_STEER_YAW_STEP_DEG_DEFAULT = 2.5f;
 // Hard clamp on the per-tick |hip-yaw output| (deg). Far below the ±50° joint
 // limit so even a mis-tuned yawStepDeg/turnCmd can never command near the stop.
 // JointModel re-clamps to ±50° downstream regardless — this is the first guard.
-constexpr float GAIT_STEER_MAX_YAW_DEG = 15.0f;
+// Stage 1.2: raised 15 → 16 so it stays >= STEERING_YAW_STEP_MAX_DEG / 2 (= 15):
+// at full authority the sweep-window hold endpoints sit at ±A/2 = ±15°, and a
+// clamp below that would flat-top them. Behavior-neutral — no current shipped or
+// tuned setting reaches the old 15° clamp (prior yawStep max 15 → endpoints ±7.5).
+constexpr float GAIT_STEER_MAX_YAW_DEG = 16.0f;
 
 // Max rate of change of the internal effective command _turnEff (units/s, where
 // 1 unit = full turnCmd). 2.0 → a full -1→+1 slider slam takes ~1 s. Makes the
@@ -829,5 +833,34 @@ constexpr uint8_t STEERING_STEP_RING_SIZE = 6;
 // commanded step yaw magnitude is below this (deg), so a near-straight step does
 // not divide measurement noise into a meaningless ratio.
 constexpr float STEERING_RATIO_MIN_CMD_DEG = 1.0f;
+
+// --- Stage 1.2 sweep windowing ---
+// The yaw smoothstep runs over [sweepStartFrac, sweepEndFrac] of the half-cycle
+// and HOLDS at the ±A/2 endpoints outside that interval.
+//   (a) Defaults 0/1 reduce the windowed law EXACTLY to the legacy smoothstep —
+//       a bit-identical no-op. Ship inert; tune on hardware.
+//   (b) Purpose: relocate the yaw sweep into the phase interval where the swing
+//       foot is reliably AIRBORNE. Yaw commanded while both feet are grounded
+//       resolves into symmetric foot splay (zero net heading), not turning — so
+//       sweeping during double support spends authority on scrub, not rotation.
+//   (c) Peak-rate note: qdotPeak = 1.5 * yawStepDeg / ((wEnd - wStart) * T_half),
+//       with T_half = 1 / (2 * phaseRate). A narrow window, max yawStepDeg, and a
+//       high phaseRate together spike the hip-yaw rate — do NOT combine all three
+//       in one trial.
+//   (d) Suggested first operating window (tune on hardware): start in
+//       [0.15 .. 0.30], end in [0.70 .. 0.85].
+constexpr float STEERING_SWEEP_START_DEFAULT = 0.0f;
+constexpr float STEERING_SWEEP_END_DEFAULT   = 1.0f;
+// Minimum sweep width: the law (and the STEER_TUNE parser) keep
+// sweepEnd >= sweepStart + this, so the smoothstep denominator never degenerates.
+constexpr float STEERING_SWEEP_MIN_WIDTH     = 0.2f;
+
+// --- Stage 1.2 authority ceiling ---
+// Parse-time ceiling for the yawStep= STEER_TUNE key (deg of body-yaw/footfall).
+// Chosen ABOVE the expected physical limit: double-support splay is A/2 per foot
+// at the boundary hold (15° at A=30), which already couples ~26% of the lateral
+// weight-shift ramp into foot-frame fore-aft. Raising past 30 is a design review,
+// not a retune. Does NOT change the shipped yawStepDeg default (still 2.5).
+constexpr float STEERING_YAW_STEP_MAX_DEG = 30.0f;
 
 #endif // PROJECT_WIDE_DEFS_H

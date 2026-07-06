@@ -1000,7 +1000,8 @@ void WebComm::broadcastGaitState() {
 // =============================================================================
 //  STEERING BROADCAST
 //  Protocol: "STEER:turnCmd,turnEff,yawCmdDeg,active,enabled,yawStep,slew,
-//             yawRate,flYaw,frYaw, cmdStep,bodyStep,stanceStep,swingStep,
+//             sweepStart,sweepEnd, yawRate,flYaw,frYaw,
+//             cmdStep,bodyStep,stanceStep,swingStep,
 //             cmdPostTd,bodyPostTd,ratio, mCmd,mBody,mStance,mSwing,mRatio"
 //  Live state + config echoes (turnSign removed — baked) + the Stage 1.1
 //  per-step yaw budget (cmd*=derived from submitted joint deltas; body/stance/
@@ -1021,7 +1022,7 @@ void WebComm::broadcastSteeringState() {
     snprintf(buf, sizeof(buf),
         // Live command + config echoes (turnSign removed — baked, not tunable).
         "STEER:turnCmd=%.3f,turnEff=%.3f,yawCmdDeg=%.2f,active=%d,"
-        "enabled=%d,yawStep=%.2f,slew=%.2f,"
+        "enabled=%d,yawStep=%.2f,slew=%.2f,sweepStart=%.2f,sweepEnd=%.2f,"
         // Live measured yaw rates (deg/s): torso (IIR) + per-foot (raw) for the
         // gyro-sign gate.
         "yawRate=%.1f,flYaw=%.1f,frYaw=%.1f,"
@@ -1032,6 +1033,7 @@ void WebComm::broadcastSteeringState() {
         "mCmd=%.2f,mBody=%.2f,mStance=%.2f,mSwing=%.2f,mRatio=%.2f",
         st.turnCmd, st.turnEff, st.yawCmdDeg, static_cast<int>(st.active),
         static_cast<int>(cfg.enabled), cfg.yawStepDeg, cfg.turnSlewPerSec,
+        cfg.sweepStartFrac, cfg.sweepEndFrac,
         st.yawRateDps, st.footLeftYawDps, st.footRightYawDps,
         st.cmdYawStepDeg, st.bodyYawStepDeg, st.stanceFootStepDeg, st.swingFootStepDeg,
         st.cmdYawPostTdDeg, st.bodyYawPostTdDeg, st.realizationRatio,
@@ -2073,17 +2075,26 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         }
         // ---------------------------------------------------------------------
         //  Hip-yaw STEERING — COLD configuration path.
-        //  Protocol: CMD:STEER_TUNE:enable=0|1,yawStep=2.5,slew=2.0
+        //  Protocol: CMD:STEER_TUNE:enable=0|1,yawStep=2.5,slew=2.0,sweepStart=,sweepEnd=
         //
         //  Operator/bench action, sent rarely. Carries configuration ONLY (never
-        //  turnCmd). Each field routes to its own atomic setter — no whole-struct
-        //  read-modify-write, which the 400 Hz control task could read torn.
+        //  turnCmd). Single-field keys route to their own atomic setter — no
+        //  whole-struct read-modify-write, which the 400 Hz control task could
+        //  read torn. The sweep window is a PAIR: both bounds are staged from the
+        //  CURRENT config, the incoming key(s) applied, then clamped jointly via
+        //  setSweepWindow() — so a single-key update validates against the other
+        //  current value and a both-keys message is order-independent.
         //  turnSign is NOT here — it is hardware-verified and baked into
         //  STEERING_TURN_SIGN (project_wide_defs.h); the runtime control was removed.
         // ---------------------------------------------------------------------
         else if (cmd.startsWith("STEER_TUNE:")) {
             if (_steeringCtrl) {
                 String params = cmd.substring(11);
+                // Stage the sweep pair from the current config so an absent key
+                // keeps its current value through the joint clamp below.
+                const SteeringConfig _cur = _steeringCtrl->getConfig();
+                float ns = _cur.sweepStartFrac;
+                float ne = _cur.sweepEndFrac;
                 int start = 0;
                 while (start < (int)params.length()) {
                     int comma = params.indexOf(',', start);
@@ -2095,23 +2106,32 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                         String val = pair.substring(eq + 1);
                         if      (key == "enable")   _steeringCtrl->setEnabled(val.toInt() != 0);
                         // yawStep — body-yaw per footfall (deg). Floor 0; ceiling
-                        // at the per-tick output clamp so config can't request
-                        // more turn authority than maxYawDeg will ever pass.
+                        // STEERING_YAW_STEP_MAX_DEG (the authority cap, distinct
+                        // from the per-tick output clamp maxYawDeg).
                         else if (key == "yawStep")  _steeringCtrl->setYawStepDeg(
-                                       constrain(val.toFloat(), 0.0f, GAIT_STEER_MAX_YAW_DEG));
+                                       constrain(val.toFloat(), 0.0f, STEERING_YAW_STEP_MAX_DEG));
                         // slew — |turnEff| change cap (units/s). Floor 0.1 (never
                         // frozen); ceiling 10 (a full -1→+1 in 0.2 s, near a step).
                         else if (key == "slew")     _steeringCtrl->setTurnSlewPerSec(
                                        constrain(val.toFloat(), 0.1f, 10.0f));
+                        // Sweep window — staged; clamped jointly after the loop.
+                        else if (key == "sweepStart") ns = val.toFloat();
+                        else if (key == "sweepEnd")   ne = val.toFloat();
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
+                // Joint clamp + store the sweep pair (start∈[0,0.8],
+                // end∈[start+MIN_WIDTH,1]). Always called — a no-op when neither
+                // sweep key was present (ns/ne still equal the current config).
+                _steeringCtrl->setSweepWindow(ns, ne);
                 // Echo config so the UI's STEER_TUNE sliders sync to firmware truth.
                 _lastSteerBroadcast_us = 0;
                 broadcastSteeringState();
                 const SteeringConfig sc = _steeringCtrl->getConfig();
-                Serial.printf("[WebComm] STEER_TUNE: en=%d yawStep=%.2f slew=%.2f\n",
-                              (int)sc.enabled, sc.yawStepDeg, sc.turnSlewPerSec);
+                Serial.printf("[WebComm] STEER_TUNE: en=%d yawStep=%.2f slew=%.2f "
+                              "sweep=[%.2f,%.2f]\n",
+                              (int)sc.enabled, sc.yawStepDeg, sc.turnSlewPerSec,
+                              sc.sweepStartFrac, sc.sweepEndFrac);
             }
         }
         // ---------------------------------------------------------------------

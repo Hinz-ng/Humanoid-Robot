@@ -2917,9 +2917,14 @@ void GaitController::_runRecoveryStep(float dt_s, const IMUState& imuState) {
             //
             // start(IDLE) must come BEFORE triggerRecovery() because triggerRecovery()
             // guards against mode == RECOVERY_STEP. start(IDLE) clears that flag.
-            const bool stillTilted =
-                (fabsf(imuState.roll)  > RECOVERY_CHAIN_TILT_THRESHOLD_RAD) ||
-                (fabsf(imuState.pitch) > RECOVERY_CHAIN_TILT_THRESHOLD_RAD);
+            //
+            // Audit A-17: gate on imuState.valid — an IMU dropout at exactly
+            // this tick would otherwise chain (or skip chaining) on STALE tilt
+            // held from the last valid sample. Fail toward the refractory
+            // lockout, never toward a blind second step on unknown attitude.
+            const bool stillTilted = imuState.valid &&
+                ((fabsf(imuState.roll)  > RECOVERY_CHAIN_TILT_THRESHOLD_RAD) ||
+                 (fabsf(imuState.pitch) > RECOVERY_CHAIN_TILT_THRESHOLD_RAD));
             start(GaitMode::IDLE);  // clears recovery state, centers WeightShift
             if (stillTilted) {
                 Serial.printf("[GaitCtrl] RECOVERY CHAIN — residual tilt "

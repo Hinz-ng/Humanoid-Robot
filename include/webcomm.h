@@ -109,13 +109,56 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // fail loud, never silently use garbage. Telemetry / preview only; does not
     // touch the control-path foot-contact snapshot.
     void setFootNeutral(Side side, float pitchRad, float rollRad, bool valid);
-    // B1 command staging (audit A-01). Applies any config updates the WiFi-task
-    // parsers staged since the last tick. MUST be called exactly once per
+    // B1 command staging (audit A-01/A-02). Applies any config updates the
+    // WiFi-task parsers staged since the last tick, then drains the staged
+    // command queue (gait start/stop/step, recovery tests, weight-shift
+    // triggers, RESETP/STANCE composites). MUST be called exactly once per
     // control tick, on the MAIN task, at the top of the 400 Hz gate — before
-    // any config consumer runs (footImpactDetector.update is the first).
-    // No-op when nothing is staged (six relaxed atomic loads).
+    // any config consumer or FSM runs. Config apply precedes command drain so
+    // e.g. RESETP's balance-disable is live before its resetOutputState runs
+    // (same order the old inline parser code had).
+    // No-op when nothing is staged (a handful of relaxed atomic loads).
     void applyStagedTuning();
 private:
+    // -----------------------------------------------------------------------
+    // B1.2 command staging (audit A-02): WiFi-task parsers used to call
+    // controller FSM mutators (start/stop/trigger/…) directly while the main
+    // task could be mid-tick inside the same FSM. They now enqueue an event
+    // here; the main task drains the queue at the tick boundary inside
+    // applyStagedTuning(). Single producer (async_tcp) / single consumer
+    // (main) ring. Deliberate exceptions, NOT staged:
+    //   ESTOP / CLEAR_ESTOP  — must act immediately (safety latency);
+    //                          documented in audit A-03, scope: read-only.
+    //   TORSO_TARE           — needs a synchronous ok/echo reply.
+    //   ServoControl pose/speed/trim/session-neutral calls — JointModel-level
+    //                          setup operations, documented residual (A-02).
+    // -----------------------------------------------------------------------
+    enum class StagedCmdType : uint8_t {
+        NONE = 0,
+        GAIT_START,             // a = (float)GaitMode
+        GAIT_STOP,
+        GAIT_SINGLE_STEP,
+        GAIT_NEXT_POSE,
+        GAIT_TRIGGER_RECOVERY,  // a = tilt_pitch_rad, b = tilt_roll_rad
+        WS_TRIGGER,             // a = (float)(int8_t)ShiftDirection
+        RESETP,                 // composite — see _drainStagedCommands()
+        STANCE,                 // composite — see _drainStagedCommands()
+    };
+    struct StagedCmd {
+        StagedCmdType type = StagedCmdType::NONE;
+        float a = 0.0f;
+        float b = 0.0f;
+    };
+    static constexpr uint8_t CMD_RING_SIZE = 16;  // operator-rate commands; ample
+    StagedCmd            _cmdRing[CMD_RING_SIZE];
+    std::atomic<uint8_t> _cmdHead{0};   // consumer (main task) index
+    std::atomic<uint8_t> _cmdTail{0};   // producer (WiFi task) index
+    // WiFi task only. Returns false (and logs) when the ring is full — the
+    // command is dropped; the operator's next press retries. Never blocks.
+    bool _enqueueCmd(StagedCmdType t, float a = 0.0f, float b = 0.0f);
+    // Main task only. Executes queued commands in FIFO order.
+    void _drainStagedCommands();
+
     // B1 staged config slots — one per struct with a WiFi-task RMW writer and
     // a main-task reader (audit A-01 enumeration). Parsers beginEdit/publish;
     // applyStagedTuning() consumes. FootContactConfig (in-place per-field

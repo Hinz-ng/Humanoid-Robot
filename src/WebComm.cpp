@@ -136,6 +136,123 @@ void WebComm::applyStagedTuning() {
         SwingFootLevelerConfig c;
         if (_stagedSwingLeveler.consume(c)) _swingLeveler->setConfig(c);
     }
+
+    // B1.2 (audit A-02): drain staged FSM commands AFTER config apply, so a
+    // config change and a command sent together take effect in message order
+    // (e.g. RESETP's balance-disable is live before resetOutputState runs).
+    _drainStagedCommands();
+}
+
+// ---------------------------------------------------------------------------
+//  _enqueueCmd — WiFi task producer side of the staged command ring.
+// ---------------------------------------------------------------------------
+bool WebComm::_enqueueCmd(StagedCmdType t, float a, float b) {
+    const uint8_t tail = _cmdTail.load(std::memory_order_relaxed);
+    const uint8_t next = (uint8_t)((tail + 1) % CMD_RING_SIZE);
+    if (next == _cmdHead.load(std::memory_order_acquire)) {
+        // Ring full — drop and tell the operator. Commands arrive at button-
+        // press rates; a full ring means the main task is not draining
+        // (fault worth surfacing), not a burst worth buffering.
+        Serial.printf("[WebComm] staged-command ring FULL — dropped cmd type=%d\n",
+                      (int)t);
+        return false;
+    }
+    // gnu++11: StagedCmd has default member initializers → not an aggregate,
+    // so positional brace-init is unavailable. Assign fields individually.
+    _cmdRing[tail].type = t;
+    _cmdRing[tail].a    = a;
+    _cmdRing[tail].b    = b;
+    _cmdTail.store(next, std::memory_order_release);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+//  _drainStagedCommands — MAIN TASK ONLY, once per tick from
+//  applyStagedTuning(). FIFO order across all producers' messages.
+// ---------------------------------------------------------------------------
+void WebComm::_drainStagedCommands() {
+    uint8_t head = _cmdHead.load(std::memory_order_relaxed);
+    const uint8_t tail = _cmdTail.load(std::memory_order_acquire);
+    while (head != tail) {
+        const StagedCmd cmd = _cmdRing[head];
+        head = (uint8_t)((head + 1) % CMD_RING_SIZE);
+        _cmdHead.store(head, std::memory_order_release);
+
+        switch (cmd.type) {
+            case StagedCmdType::GAIT_START:
+                if (_gaitCtrl) _gaitCtrl->start(static_cast<GaitMode>((uint8_t)cmd.a));
+                break;
+            case StagedCmdType::GAIT_STOP:
+                if (_gaitCtrl) _gaitCtrl->stop();
+                break;
+            case StagedCmdType::GAIT_SINGLE_STEP:
+                if (_gaitCtrl) _gaitCtrl->singleStep();
+                break;
+            case StagedCmdType::GAIT_NEXT_POSE:
+                if (_gaitCtrl) _gaitCtrl->nextPose();
+                break;
+            case StagedCmdType::GAIT_TRIGGER_RECOVERY:
+                if (_gaitCtrl) _gaitCtrl->triggerRecovery(cmd.a, cmd.b);
+                break;
+            case StagedCmdType::WS_TRIGGER:
+                if (_weightShift)
+                    _weightShift->trigger(static_cast<ShiftDirection>((int8_t)cmd.a));
+                break;
+
+            // RESETP composite — the exact sequence the parser used to run
+            // inline on the WiFi task, now executed atomically at the tick
+            // boundary: stop controllers that own leg joints, then submit the
+            // effective neutral at SOURCE_UI. The balance-disable config was
+            // staged by the parser and applied above, before this drain.
+            case StagedCmdType::RESETP: {
+                if (_gaitCtrl)    _gaitCtrl->stop();
+                if (_weightShift) _weightShift->forceCenterImmediate();
+                if (_balCtrl)     _balCtrl->resetOutputState();
+                if (_servoCtrl) {
+                    for (int i = 0; i < NUM_JOINTS; i++) {
+                        bool skip = false;
+                        for (uint8_t k = 0; k < SKIP_BOOT_NEUTRAL_COUNT; k++) {
+                            if (static_cast<uint8_t>(i) == SKIP_BOOT_NEUTRAL_CHANNELS[k]) {
+                                skip = true; break;
+                            }
+                        }
+                        if (skip) continue;
+                        if (_motionManager) {
+                            // SOURCE_UI submits absolute servo degrees; use the
+                            // EFFECTIVE neutral (factory + session trim).
+                            _motionManager->submit(SOURCE_UI,
+                                                   static_cast<uint8_t>(i),
+                                                   _servoCtrl->getEffectiveNeutralDeg(i));
+                        } else {
+                            _servoCtrl->setGaitOffset(i, 0.0f);
+                        }
+                    }
+                    // Slew the batch at the dedicated pose-transition speed.
+                    _servoCtrl->armTransition();
+                }
+                break;
+            }
+
+            // STANCE composite — wasRunning is evaluated HERE (drain time, on
+            // the main task) rather than at parse time, so the decision uses
+            // the same-tick FSM state it acts on.
+            case StagedCmdType::STANCE: {
+                if (_gaitCtrl) {
+                    const bool wasRunning = _gaitCtrl->getState().running;
+                    _gaitCtrl->stop();   // IDLE: no-op; RUNNING: ramp → idle stance
+                    if (!wasRunning) {
+                        _gaitCtrl->submitStancePose();
+                        if (_servoCtrl) _servoCtrl->armTransition();
+                    }
+                }
+                break;
+            }
+
+            case StagedCmdType::NONE:
+            default:
+                break;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1241,48 +1358,22 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         //  if the balance controller is active it wins on shared joints.
         // ---------------------------------------------------------------------
         if (cmd == "RESETP") {
-    // System-level reset: stop all controllers that own leg joints
-    // before submitting neutral. Without this, GaitController's
-    // per-tick stance submission (priority 1) clobbers SOURCE_UI (0).
-
-    if (_gaitCtrl) _gaitCtrl->stop();          // → IDLE; centers WeightShift
-    if (_weightShift) _weightShift->forceCenterImmediate();
-
+    // System-level reset. The balance-disable is staged as config (applied at
+    // the tick boundary, before the command drain); the controller stops +
+    // neutral-pose submission run as ONE composite command on the main task —
+    // see StagedCmdType::RESETP in _drainStagedCommands(). This removes every
+    // WiFi-task FSM mutation the old inline sequence performed (audit A-02).
     if (_balCtrl) {
         BalanceConfig cfg = _stagedBalance.beginEdit(_balCtrl->getConfig());
         cfg.pitch_enabled = false;
         cfg.roll_enabled  = false;
         _stagedBalance.publish(cfg);   // applied at the next tick boundary
-        _balCtrl->resetOutputState();
     }
-
-    for (int i = 0; i < NUM_JOINTS; i++) {
-        bool skip = false;
-        for (uint8_t k = 0; k < SKIP_BOOT_NEUTRAL_COUNT; k++) {
-            if (static_cast<uint8_t>(i) == SKIP_BOOT_NEUTRAL_CHANNELS[k]) {
-                skip = true; break;
-            }
-        }
-        if (!skip) {
-            if (_motionManager) {
-                // SOURCE_UI submits absolute servo degrees. Use the EFFECTIVE
-                // neutral (factory + runtime session trim) so RESETP returns to
-                // the same corrected neutral every other path references — not
-                // the raw factory pose. With no trim captured these are equal.
-                _motionManager->submit(SOURCE_UI,
-                                       static_cast<uint8_t>(i),
-                                       _servoCtrl->getEffectiveNeutralDeg(i));
-            } else {
-                _servoCtrl->setGaitOffset(i, 0.0f);
-            }
-        }
-    }
-    // Smooth the move: the SOURCE_UI pose submitted above is applied on the next
-    // MotionManager::flush(), which slews the flagged joints at the dedicated
-    // pose-transition speed (and disarms the latch after that batch).
-    if (_servoCtrl) _servoCtrl->armTransition();
+    _enqueueCmd(StagedCmdType::RESETP);
+    // Broadcast reflects pre-apply state; the 10 Hz STATE broadcast catches
+    // up within 100 ms of the neutral actually being submitted.
     broadcastState();
-    Serial.println("[WebComm] RESETP — gait stopped, balance off, neutral submitted.");
+    Serial.println("[WebComm] RESETP staged — gait stop, balance off, neutral at next tick.");
  }
         // ---------------------------------------------------------------------
         //  STANCE — enter the idle/standing-ready stance pose without starting
@@ -1292,16 +1383,12 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         //  and already converges to this same idle stance, so no one-shot needed.
         // ---------------------------------------------------------------------
         else if (cmd == "STANCE") {
-            if (_gaitCtrl) {
-                const bool wasRunning = _gaitCtrl->getState().running;
-                _gaitCtrl->stop();   // IDLE: no-op (returns early); RUNNING: ramp → idle stance
-                if (!wasRunning) {
-                    _gaitCtrl->submitStancePose();             // one-shot idle stance
-                    if (_servoCtrl) _servoCtrl->armTransition();  // smooth the move
-                }
-            }
+            // Staged composite (audit A-02): stop + conditional one-shot stance
+            // pose execute on the main task at the tick boundary, with the
+            // wasRunning decision made against same-tick FSM state.
+            _enqueueCmd(StagedCmdType::STANCE);
             broadcastState();
-            Serial.println("[WebComm] STANCE — idle stance submitted (balance untouched).");
+            Serial.println("[WebComm] STANCE staged — idle stance at next tick (balance untouched).");
         }
         // ---------------------------------------------------------------------
         else if (cmd.startsWith("LOAD:")) {
@@ -1442,14 +1529,19 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
             if (_weightShift) {
                 String dir = cmd.substring(13);
                 dir.trim();
+                // Staged (audit A-02): trigger() mutates ramp state the main
+                // task reads mid-tick; enqueue and let the drain call it.
                 if (dir == "left") {
-                    _weightShift->trigger(ShiftDirection::LEFT);
+                    _enqueueCmd(StagedCmdType::WS_TRIGGER,
+                                (float)(int8_t)ShiftDirection::LEFT);
                     Serial.println("[WebComm] CMD: WEIGHT_SHIFT left");
                 } else if (dir == "right") {
-                    _weightShift->trigger(ShiftDirection::RIGHT);
+                    _enqueueCmd(StagedCmdType::WS_TRIGGER,
+                                (float)(int8_t)ShiftDirection::RIGHT);
                     Serial.println("[WebComm] CMD: WEIGHT_SHIFT right");
                 } else if (dir == "center") {
-                    _weightShift->trigger(ShiftDirection::NONE);
+                    _enqueueCmd(StagedCmdType::WS_TRIGGER,
+                                (float)(int8_t)ShiftDirection::NONE);
                     Serial.println("[WebComm] CMD: WEIGHT_SHIFT center");
                 } else {
                     Serial.printf("[WebComm] WEIGHT_SHIFT: unknown direction '%s'\n",
@@ -2041,68 +2133,52 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         //    liftGate: |wsProgress| threshold before lift allowed (0.0–1.0).
         //    wsThresh: IMU roll threshold (rad) — logged only in Phase 1.
         // ---------------------------------------------------------------------
+        // Gait FSM commands are STAGED (audit A-02): the parser enqueues, the
+        // main task executes at the next tick boundary (≤2.5 ms latency —
+        // imperceptible at operator rates). This closes the WiFi-task-drives-
+        // the-FSM race the old direct calls had.
         else if (cmd == "GAIT_START") {
-            if (_gaitCtrl) {
-                _gaitCtrl->start(GaitMode::RUNNING);
-                Serial.println("[WebComm] CMD: GAIT_START");
-            }
+            _enqueueCmd(StagedCmdType::GAIT_START, (float)(uint8_t)GaitMode::RUNNING);
+            Serial.println("[WebComm] CMD: GAIT_START (staged)");
         }
         else if (cmd == "GAIT_STOP") {
-            if (_gaitCtrl) {
-                _gaitCtrl->stop();
-                Serial.println("[WebComm] CMD: GAIT_STOP");
-            }
+            _enqueueCmd(StagedCmdType::GAIT_STOP);
+            Serial.println("[WebComm] CMD: GAIT_STOP (staged)");
         }
         else if (cmd == "GAIT_STEP") {
-            if (_gaitCtrl) {
-                _gaitCtrl->singleStep();
-                Serial.println("[WebComm] CMD: GAIT_STEP");
-            }
+            _enqueueCmd(StagedCmdType::GAIT_SINGLE_STEP);
+            Serial.println("[WebComm] CMD: GAIT_STEP (staged)");
         }
         else if (cmd == "GAIT_WSHIFT") {
-            if (_gaitCtrl) {
-                _gaitCtrl->start(GaitMode::WSHIFT_ONLY);
-                Serial.println("[WebComm] CMD: GAIT_WSHIFT");
-            }
+            _enqueueCmd(StagedCmdType::GAIT_START, (float)(uint8_t)GaitMode::WSHIFT_ONLY);
+            Serial.println("[WebComm] CMD: GAIT_WSHIFT (staged)");
         }
         else if (cmd == "GAIT_POSE_STEP") {
-            if (_gaitCtrl) {
-                _gaitCtrl->start(GaitMode::POSE_STEP);
-                Serial.println("[WebComm] CMD: GAIT_POSE_STEP");
-            }
+            _enqueueCmd(StagedCmdType::GAIT_START, (float)(uint8_t)GaitMode::POSE_STEP);
+            Serial.println("[WebComm] CMD: GAIT_POSE_STEP (staged)");
         }
         else if (cmd == "GAIT_NEXT") {
-            if (_gaitCtrl) {
-                _gaitCtrl->nextPose();
-                Serial.println("[WebComm] CMD: GAIT_NEXT");
-            }
+            _enqueueCmd(StagedCmdType::GAIT_NEXT_POSE);
+            Serial.println("[WebComm] CMD: GAIT_NEXT (staged)");
         }
         // Stage 1: manual recovery test commands (diagnostic only).
         // Simulate a rightward or leftward push at ~11.5° roll without hardware.
         // Use with balance ARMED and robot standing still. Disable before gait testing.
         else if (cmd == "GAIT_TEST_RECOVERY_R") {
-            if (_gaitCtrl) {
-                _gaitCtrl->triggerRecovery(0.0f, +0.20f);
-                Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_R — simulating right push");
-            }
+            _enqueueCmd(StagedCmdType::GAIT_TRIGGER_RECOVERY, 0.0f, +0.20f);
+            Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_R — simulating right push");
         }
         else if (cmd == "GAIT_TEST_RECOVERY_L") {
-            if (_gaitCtrl) {
-                _gaitCtrl->triggerRecovery(0.0f, -0.20f);
-                Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_L — simulating left push");
-            }
+            _enqueueCmd(StagedCmdType::GAIT_TRIGGER_RECOVERY, 0.0f, -0.20f);
+            Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_L — simulating left push");
         }
         else if (cmd == "GAIT_TEST_RECOVERY_F") {
-            if (_gaitCtrl) {
-                _gaitCtrl->triggerRecovery(+0.20f, 0.0f);
-                Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_F — simulating forward push");
-            }
+            _enqueueCmd(StagedCmdType::GAIT_TRIGGER_RECOVERY, +0.20f, 0.0f);
+            Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_F — simulating forward push");
         }
         else if (cmd == "GAIT_TEST_RECOVERY_B") {
-            if (_gaitCtrl) {
-                _gaitCtrl->triggerRecovery(-0.20f, 0.0f);
-                Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_B — simulating backward push");
-            }
+            _enqueueCmd(StagedCmdType::GAIT_TRIGGER_RECOVERY, -0.20f, 0.0f);
+            Serial.println("[WebComm] CMD: GAIT_TEST_RECOVERY_B — simulating backward push");
         }
         // ---------------------------------------------------------------------
         //  Hip-yaw STEERING — HOT runtime path.

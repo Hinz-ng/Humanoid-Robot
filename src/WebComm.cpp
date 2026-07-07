@@ -636,7 +636,7 @@ void WebComm::broadcastCalibStatus(CalibState state, float progress) {
     if (state != CALIB_DONE && (now - _lastCalibBroadcast_us) < INTERVAL_US) return;
     _lastCalibBroadcast_us = now;
 
-    const float CALIB_TOTAL_S = (float)FilterConfig::CALIB_SAMPLES / 400.0f;
+    const float CALIB_TOTAL_S = (float)FilterConfig::CALIB_SAMPLES / (float)IMU_LOOP_HZ;
     float remaining_s;
     const char* stateStr;
     if (state == CALIB_DONE) {
@@ -1285,7 +1285,7 @@ void WebComm::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
             char buf[80];
             CalibState cs   = _stateEst->getCalibState();
             float      prog = _stateEst->getCalibProgress();
-            const float CALIB_TOTAL_S = (float)FilterConfig::CALIB_SAMPLES / 400.0f;
+            const float CALIB_TOTAL_S = (float)FilterConfig::CALIB_SAMPLES / (float)IMU_LOOP_HZ;
             float remaining_s = (cs == CALIB_DONE) ? 0.0f : CALIB_TOTAL_S * (1.0f - prog);
             const char* stateStr = (cs == CALIB_DONE)       ? "done"
                                  : (cs == CALIB_COLLECTING) ? "collecting"

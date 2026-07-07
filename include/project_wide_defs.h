@@ -15,6 +15,19 @@
 #define I2C_SDA_PIN 8
 #define I2C_SCL_PIN 9
 
+// --- Control-loop rate (B2) ---
+// Single source of truth for the 400 Hz IMU/estimator/control gate.
+// The main-loop gate period and every UI-facing nominal-dt derivation come
+// from this constant. MUST match the BMI160 ODR configured in IMU_init() —
+// change both together, then re-verify the foot-IMU loop budget telemetry.
+//
+// NOTE: runtime control dt is still MEASURED (micros() delta inside the
+// gate, capped in the estimator). This nominal value is for gate scheduling
+// and display math only — do NOT use it as a hardcoded dt in control code
+// (CODING_STANDARD dt rule).
+constexpr uint32_t IMU_LOOP_HZ          = 400;
+constexpr uint32_t IMU_LOOP_INTERVAL_US = 1000000UL / IMU_LOOP_HZ;  // 2500 µs at 400
+
 // --- WiFi ---
 #define AP_SSID "HumanoidRobot"
 #define AP_PASS "robot1234"

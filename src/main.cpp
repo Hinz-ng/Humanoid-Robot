@@ -325,11 +325,12 @@ void loop() {
         }
     }
 
-    // 400 Hz gate: only reads IMU and runs estimator every 2500 µs.
+    // IMU_LOOP_HZ gate: only reads IMU and runs estimator every gate period.
     // WebSocket/servo tasks above still run every loop() iteration (no rate limit).
     {
-        // 2500 µs = 400 Hz. Must match BMI160 ODR set in IMU_init().
-        static const uint32_t ESTIMATOR_INTERVAL_US = 2500;
+        // Derived from IMU_LOOP_HZ (project_wide_defs.h) — 2500 µs at 400 Hz.
+        // The BMI160 ODR in IMU_init() must match IMU_LOOP_HZ.
+        static const uint32_t ESTIMATOR_INTERVAL_US = IMU_LOOP_INTERVAL_US;
         static uint32_t _lastEstimatorMicros = micros();
 
         // _now is used for the gate check only.

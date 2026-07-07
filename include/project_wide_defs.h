@@ -28,6 +28,41 @@
 constexpr uint32_t IMU_LOOP_HZ          = 400;
 constexpr uint32_t IMU_LOOP_INTERVAL_US = 1000000UL / IMU_LOOP_HZ;  // 2500 µs at 400
 
+// --- Servo PWM frame rate (B6 — default-inert readiness) ---
+// PCA9685 output frame rate. 50 Hz is the shipped default and MUST stay 50
+// until the hardware validation ladder below is run — the constant exists so
+// the raise is a one-line change, not a code hunt.
+//
+// The pulse math is already frequency-parametric: degToPulse() produces
+// microseconds and the single hardware write is pwm.writeMicroseconds(),
+// which converts µs → counts from the chip's LIVE prescale. Changing this
+// constant alone therefore keeps every commanded pulse width correct.
+//
+// Why raise it (later): resolution. The PCA9685 has 4096 counts per frame:
+//   50 Hz  → 20000 µs frame → ~4.88 µs/count (≈0.66° on a 270°/2000 µs servo)
+//   300 Hz →  3333 µs frame → ~0.81 µs/count (≈0.11°)
+// Note servo backlash (~1–2°) still dominates precision — treat a raise as
+// a latency/refresh improvement, not an accuracy one.
+//
+// HARD CEILING: the frame period must contain the widest pulse. SD_USMAX =
+// 2500 µs → ceiling ≈ 1e6/2500 = 400 Hz with ZERO margin; with margin, stay
+// ≤ ~333 Hz. A static_assert in servo_driver.cpp enforces this at compile
+// time.
+//
+// VALIDATION LADDER (bench, robot on a stand, before any raise ships):
+//   1. Confirm every installed servo model is rated for the target frame
+//      rate (all current servos are rated ≥330 Hz).
+//   2. Raise in steps: 50 → 100 → 200 → 250/300. At each step, flash and
+//      check: no jitter at rest, no servo heating after 5 min holding
+//      stance, no brown-out under a weight-shift cycle (higher frame rate
+//      raises average servo current draw).
+//   3. Verify joint calibration is unchanged (it must be — pulses are
+//      µs-based; any shift means a servo is misbehaving at that rate).
+//   4. Re-run a 60 s stepping session and compare GAIT: telemetry (IK reach,
+//      flat-foot error, touchdown timing) against the 50 Hz baseline.
+// DO NOT raise the default without completing the ladder (handoff B6 rule).
+constexpr uint32_t SERVO_FRAME_HZ = 50;
+
 // --- WiFi ---
 #define AP_SSID "HumanoidRobot"
 #define AP_PASS "robot1234"

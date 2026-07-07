@@ -28,7 +28,8 @@
 #define SD_USMIN          500       // Pulse at 0°    (µs)
 #define SD_USMAX          2500      // Pulse at 270°  (µs)
 #define SD_ANGLE_RANGE    270.0f    // Total servo travel (degrees)
-#define SD_PWM_FREQ_HZ    50        // PWM frequency (Hz)
+// PWM frame rate now lives in project_wide_defs.h as SERVO_FRAME_HZ (B6) —
+// see the validation ladder there before raising it from 50.
 #define SD_OSCILLATOR_HZ  27000000  // PCA9685 crystal frequency (Hz)
 
 class ServoDriver {

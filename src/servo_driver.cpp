@@ -15,12 +15,21 @@ ServoDriver::ServoDriver() : _pwm(Adafruit_PWMServoDriver()) {
 //  init()
 //  Wire.begin() must already be called before this (done by ServoControl::init).
 // -----------------------------------------------------------------------------
+// The frame period must contain the widest pulse the driver can emit, with
+// margin (writeMicroseconds maps µs→counts within one frame; a pulse wider
+// than the frame is unrepresentable). 200 µs margin → effective ceiling
+// ≈333 Hz at SD_USMAX=2500. See the SERVO_FRAME_HZ ladder in
+// project_wide_defs.h before raising the rate.
+static_assert(1000000UL / SERVO_FRAME_HZ >= SD_USMAX + 200,
+              "SERVO_FRAME_HZ frame period too short for SD_USMAX pulse "
+              "(ceiling ~333 Hz at 2500 us)");
+
 void ServoDriver::init() {
     _pwm.begin();
     _pwm.setOscillatorFrequency(SD_OSCILLATOR_HZ);
-    _pwm.setPWMFreq(SD_PWM_FREQ_HZ);
-    Serial.printf("[ServoDriver] PCA9685 ready. freq=%d Hz  osc=%d Hz\n",
-                  SD_PWM_FREQ_HZ, SD_OSCILLATOR_HZ);
+    _pwm.setPWMFreq(SERVO_FRAME_HZ);
+    Serial.printf("[ServoDriver] PCA9685 ready. freq=%u Hz  osc=%d Hz\n",
+                  (unsigned)SERVO_FRAME_HZ, SD_OSCILLATOR_HZ);
 }
 
 // -----------------------------------------------------------------------------

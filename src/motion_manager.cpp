@@ -59,10 +59,20 @@ void MotionManager::submit(MotionSource src, uint8_t channel, float angleDeg) {
     // "Equal" allows the last same-priority submit to win (e.g. two UI events
     // for the same joint in one tick — take the most recent one).
     if (!slot.occupied || incomingPriority >= slot.priority) {
-        slot.occupied = true;
+        // WRITE ORDER IS LOAD-BEARING (audit A-04): submit() is also called
+        // from the WiFi task (sliders, IK panel) while the main task's
+        // flush() may preempt mid-write. `occupied` is the publish flag and
+        // MUST be stored LAST: if flush() lands between these stores it now
+        // sees either the complete new command or none at all. With the old
+        // occupied-first order, a torn window could dispatch a half-written
+        // command — for SOURCE_UI that frame is ABSOLUTE degrees, so a stale
+        // angleDeg of 0.0 slammed the joint to its clamped anatomical limit.
+        // Worst case now: the command is missed this tick and the UI's next
+        // event (or broadcast resync) recovers it.
+        slot.angleDeg = angleDeg;
         slot.source   = src;
         slot.priority = incomingPriority;
-        slot.angleDeg = angleDeg;
+        slot.occupied = true;   // publish — keep last
     }
     // Lower-priority submission → silently discard. No log needed; this is
     // the normal, expected case when balance is active and UI also submits.

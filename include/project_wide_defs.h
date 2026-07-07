@@ -56,7 +56,8 @@ constexpr uint32_t IMU_LOOP_INTERVAL_US = 1000000UL / IMU_LOOP_HZ;  // 2500 µs 
 
 // --- Balance controller safe gain limits ---
 // Hard ceiling enforced by WebComm when parsing BALANCE_TUNE commands.
-// Derived from phase-margin analysis: at ~50ms servo lag and ω_n ≈ 6.3 rad/s,
+// Derived from phase-margin analysis: at ~50ms servo lag and
+// ω₀ = sqrt(g/h) ≈ 6.68 rad/s (H_COM_MM = 220 — see robot_geometry.h),
 // Kp above 20 deg/rad eliminates phase margin entirely. Kd above 1.0 amplifies
 // gyro shot noise faster than it damps the pendulum.
 // Recalculate if CoM height or servo model changes.
@@ -305,7 +306,7 @@ constexpr float GAIT_COM_LAT_TRIM_RATE_LPF_ALPHA = 0.70f;
 // CAPTURE-POINT — Stage 2.2 (sagittal only)
 // ============================================================
 // LIP natural frequency at H_COM_MM = 220 mm:
-//   omega0 = sqrt(g / h) = sqrt(9.81 / 0.22) ≈ 6.74 rad/s
+//   omega0 = sqrt(g / h) = sqrt(9.81 / 0.220) ≈ 6.68 rad/s → 1/omega0 ≈ 0.1498 s
 // Stored as 1/omega0 to avoid recomputing sqrt each tick.
 // Recompute if H_COM_MM changes:
 //   1.0f / sqrtf(9810.0f / H_COM_MM)   (using mm units consistently)

@@ -51,11 +51,16 @@ const float FOOT_FORE_OF_HIP_PITCH_MM = 2.0f;
 //  Used by StateEstimator to compute approximate CoM velocity from IMU
 //  rotation rates via the inverted-pendulum model: v_CoM ≈ h × ω.
 //
-//  Measured: ~25 cm from sole at neutral standing pose.
+//  Measured: ~22 cm from sole at neutral standing pose.
 //  Re-measure if mass distribution changes (new battery, new IMU mount, etc.).
 //
-//  Tier 2 dependency: capture-point math uses ω₀ = sqrt(g / (h/1000)) = ~6.26 rad/s
-//  at h = 250 mm. Capture-point offset = vx_CoM / ω₀.
+//  Tier 2 dependency: capture-point math uses
+//    ω₀ = sqrt(g / (h/1000)) = sqrt(9.81 / 0.220) ≈ 6.68 rad/s at h = 220 mm.
+//  Capture-point offset = vx_CoM / ω₀; the firmware stores the reciprocal as
+//  GAIT_CAPTURE_INV_OMEGA0_S = 0.1498 s (= 1/6.678 — consistent with this h).
+//  If H_COM_MM changes, recompute BOTH that constant and this comment
+//  (audit B5: the 2026-07 pass verified the constant was already correct for
+//  220 mm — only the stale 250 mm prose here was wrong).
 // =============================================================================
 const float H_COM_MM = 220.0f;
 #endif

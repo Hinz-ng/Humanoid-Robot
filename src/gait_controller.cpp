@@ -1409,7 +1409,8 @@ float GaitController::_swingPrepDeltaDeg(Side side) const {
 }
 
 // Single ankle-roll composition site. flatFootDeg = the IK flat-foot solution
-// (-hip_roll) for this leg. Returns the joint-command ankle roll, clamped to
+// for this leg (= +hip_roll on this hardware — leg_ik.cpp solveFrontal,
+// verified 2026-05-30). Returns the joint-command ankle roll, clamped to
 // the joint soft limit.
 float GaitController::_ankleRollDeg(Side side, float flatFootDeg) const {
     const float comShift = _comShiftTilt(side);

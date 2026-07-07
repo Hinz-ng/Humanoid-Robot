@@ -49,13 +49,19 @@ static FilterConfig _makeFootFilterConfig() {
 
 // Foot IMU axis remap — applied per tick to RawIMUData before estimator.
 //
-// CHIP MOUNTING (verified 2026-05-13 with foot flat on the floor):
-//   chip X axis points robot-right        → robot Y = -chip X
-//   chip Y axis points robot-backward     → robot X = -chip Y
-//   chip Z axis points DOWN through sole  → robot Z = -chip Z
-//
-// Result: (robot_x, robot_y, robot_z) = (-chip_y, -chip_x, -chip_z).
+// The CODE below is the verified truth (a +90° rotation about Z):
+//   (robot_x, robot_y, robot_z) = (-chip_y, +chip_x, +chip_z)
+// which corresponds to this chip mounting:
+//   chip X axis points robot-LEFT          → robot Y (left) = +chip X
+//   chip Y axis points robot-BACKWARD      → robot X (fwd)  = -chip Y
+//   chip Z axis points UP through the foot → robot Z (up)   = +chip Z
 // Same matrix applied to gyro rates (they transform identically).
+//
+// HISTORY (audit A-12): an earlier revision of this comment derived the
+// reflection (-chip_y, -chip_x, -chip_z) from a chip-Z-down mounting; the
+// code never matched it. Do NOT "fix" the code to match old prose — the
+// flying remap is the one below, and ARCHITECTURE.md's "identity remap"
+// claim was also stale.
 //
 // If you re-mount the IMU, EDIT THIS FUNCTION — don't add per-axis sign
 // fields to FilterConfig. The remap is a property of the physical mounting,

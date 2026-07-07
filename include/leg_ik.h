@@ -12,7 +12,10 @@
 //
 //   Frontal plane (YZ): hip_roll + ankle_roll.
 //     Single-rigid-link atan2 model.
-//     Flat-foot constraint: ankle_roll = −hip_roll.
+//     Flat-foot constraint: geometrically ankle_roll = −hip_roll, but the
+//     SHIPPED solver returns ankle_roll = +hip_roll — hardware-verified
+//     2026-05-30 against this robot's joint_config direction fields.
+//     See solveFrontal() in leg_ik.cpp before touching either sign.
 //
 //   The two planes use SEPARATE height parameters — they must not be combined.
 //
@@ -22,13 +25,18 @@
 //   Relationship: h_frontal = h_sagittal − CHAIN_HEIGHT_DELTA_MM (= 25.4mm).
 //   This delta is derived from confirmed chain lengths, not from per-axis offsets.
 //
-// SIGN CONVENTIONS (joint-relative, positive = anatomical flexion):
+// SIGN CONVENTIONS (joint-relative; AS RETURNED BY THIS SOLVER, i.e. after
+// the hardware sign corrections in leg_ik.cpp — audit A-13 fixed this block,
+// which previously described the pre-correction geometric conventions;
+// reverting the code to match the old prose would invert both ankles):
 //   hip_pitch:   + = thigh FORWARD (hip flexion)
 //   knee_pitch:  + = knee BENDS (flexion; 0 at full extension, always >= 0)
-//   ankle_pitch: + = DORSIFLEXION (toes up; compensates backward shank)
+//   ankle_pitch: + = PLANTAR FLEXION on this hardware. The solver NEGATES
+//                    the geometric (dorsiflexion-positive) flat-foot formula
+//                    — see the Step 3 hardware note in leg_ik.cpp.
 //   hip_roll:    + = leg OUTWARD (abduction)
-//   ankle_roll:  + = INVERSION — verify direction on first hardware run.
-//                    Expected: ankle_roll = −hip_roll keeps sole flat.
+//   ankle_roll:  returned as +hip_roll (hardware-verified 2026-05-30; the
+//                    geometric constraint is −hip_roll — see solveFrontal()).
 //
 // INTEGRATION:
 //   Submit output via MotionManager::submit(SOURCE_GAIT, IDX_*, angleDeg).

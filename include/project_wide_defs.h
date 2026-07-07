@@ -219,10 +219,11 @@ constexpr float GAIT_STANCE_HEIGHT_MM           = 185.0f;
 // Applied as the y_mm baseline in _buildFootTarget. FootTarget.y_mm uses
 // outward(+) / inward(-) in each leg's own frame (gait_types.h), so an
 // inset of +N becomes t.y_mm = -N on BOTH legs — symmetric adduction.
-// LegIK's frontal solve enforces the flat-foot constraint
-// (ankle_roll = -hip_roll) for any y_mm, so hip-roll and ankle-roll
-// coordinate automatically and the sole stays flat. Do NOT add a hand-
-// coordinated ankle-roll bias.
+// LegIK's frontal solve enforces the flat-foot constraint for any y_mm
+// (returned as ankle_roll = +hip_roll on this hardware — see
+// leg_ik.cpp solveFrontal, verified 2026-05-30), so hip-roll and
+// ankle-roll coordinate automatically and the sole stays flat. Do NOT
+// add a hand-coordinated ankle-roll bias.
 //
 // 0.0 ships bit-identical to pre-change (t.y_mm baseline = 0). Tune up
 // in ~2 mm steps at runtime via CMD:GAIT_TUNE:stanceInset_mm=...

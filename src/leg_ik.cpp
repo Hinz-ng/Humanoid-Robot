@@ -24,9 +24,12 @@
 //
 // FRONTAL MATH:
 //   hip_roll   = atan2(y, h_frontal)
-//   ankle_roll = −hip_roll                            flat-foot lateral constraint
+//   ankle_roll = −hip_roll         geometric flat-foot lateral constraint —
+//                                  but the SHIPPED code returns +hip_roll
+//                                  (hardware sign correction, verified
+//                                  2026-05-30; see solveFrontal below).
 //
-//   Matches UVC core.cpp: A1W[s] = −k1, where k1 = CHG_SVA·atan(y/h). ✓
+//   Geometric form matches UVC core.cpp: A1W[s] = −k1, k1 = CHG_SVA·atan(y/h).
 //
 // CHAIN HEIGHT RELATIONSHIP:
 //   h_frontal = h_sagittal − CHAIN_HEIGHT_DELTA_MM (= 25.4mm)

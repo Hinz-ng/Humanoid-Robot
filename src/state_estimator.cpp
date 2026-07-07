@@ -130,8 +130,8 @@ float StateEstimator::_accelSanityWeight(float ax_g, float ay_g, float az_g) con
     float deviation = fabsf(mag - 1.0f);
 
     // inner: full trust. outer: zero trust. Linear ramp between.
-    const float inner = _cfg.accel_sanity_margin * 0.5f;  // 0.075g by default
-    const float outer = _cfg.accel_sanity_margin;          // 0.150g by default
+    const float inner = _cfg.accel_sanity_margin * 0.5f;  // 0.10g at the torso default (margin 0.20)
+    const float outer = _cfg.accel_sanity_margin;          // 0.20g at the torso default
 
     if (deviation <= inner) return 1.0f;
     if (deviation >= outer) return 0.0f;

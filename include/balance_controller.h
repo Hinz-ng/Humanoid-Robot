@@ -25,12 +25,22 @@ struct BalanceConfig {
     bool roll_enabled  = false;
 
     // --- Pitch ---
-    // DEFAULT CHANGE: Kp reduced from 20.0 → 10.0.
-    // This is INTENTIONAL for the nonlinear gain boost (TASK-1):
-    //   At Kp=10 + boost_factor=2.0: small errors use Kp=10 (no oscillation),
-    //   large errors use Kp=20 (same recovery as before). Net effect: stability
-    //   near equilibrium is improved while large-disturbance response is unchanged.
+    // Kp TUNING HISTORY: 20.0 → 10.0 (gain-boost introduction) → shipped 8.0.
+    // The nonlinear gain boost below (shipped boost_factor 1.3) raises the
+    // effective Kp for large errors, so the flat Kp can sit lower without
+    // giving up large-disturbance response.
     // After flashing: re-tune from WebSocket using CMD:BALANCE_TUNE:Kp=X
+    //
+    // *** AUDIT A-05 (2026-07): pitch_setpoint_rad = 10.0 RADIANS (~573°) is
+    // almost certainly a units entry error (degrees typed into a rad field —
+    // torso's analogous default is 0.0). It is dormant only because
+    // pitch_enabled ships false. DO NOT arm pitch balance (PITCH_ON /
+    // BALANCE_ON) without first sending BALANCE_TUNE:setpoint=0 (or a sane
+    // small value): with this default the error is ≈ -10 rad, the controller
+    // saturates, and dx rails to its clamp — a stability event. The
+    // BALANCE_TUNE "setpoint" key is also unclamped at parse time. Default
+    // retained pending human decision (default changes are out of audit
+    // scope); change to 0.0f + add a ±0.5 rad parse clamp once confirmed. ***
     float pitch_setpoint_rad = 10.0f;  // rad. WS: "setpoint"
     float Kp = 8.0f;                  // deg/rad. WS: "Kp"
     float Kd = 0.1f;                   // deg/(rad/s). WS: "Kd"

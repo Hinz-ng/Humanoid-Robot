@@ -145,7 +145,8 @@ struct GaitConfig {
 
     // Fraction of |weight shift progress| [0, 1) required before the swing
     // foot is allowed to lift. Gate opens when |wsProgress| >= this value.
-    // 0.70 = 70% shift complete. Lower to 0.50 if gate never opens.
+    // Shipped 0.4 = 40% shift complete (tuned down from the original 0.7 —
+    // the STANCE_FLAT sub-gate carries the real load-transfer check).
     // Raise toward 0.90 if robot falls when foot leaves ground.
     float liftGateThreshold = 0.4f;  // [0, 1). WS: "liftGate"
 
@@ -184,8 +185,9 @@ struct GaitConfig {
     // its swing phase. Stance leg is unaffected (Stage 2 — push-back is Stage 3).
     //
     // Hard-capped at stanceHeightMm × 0.20 by the WebComm parser to protect
-    // hip pitch IK soft limits. Default 0.0 keeps this opt-in: existing
-    // GAIT_START with no GAIT_TUNE will produce identical Phase 1 behavior.
+    // hip pitch IK soft limits. Shipped default is GAIT_STEP_LENGTH_MM = 37
+    // (the cap value at stanceH=185) — forward stride is ON by default; set
+    // stepLength_mm=0 at runtime for stepping-in-place.
     //
     // Tuning order: confirm Phase 1 unchanged at stepLengthMm=0, then
     // ramp 0 → 10 → 15 → 20 mm in 5 mm increments. Watch lastReachPctL/R
@@ -215,8 +217,9 @@ struct GaitConfig {
     // displacement is added to both feet's y_mm every tick (see
     // _comLateralTrimMm()). Independent of LiftGateMode::COM_LATERAL, which
     // is a one-shot gate; this trim is a continuous foot-placement correction.
-    //   comLatTrimEnabled — master enable. Default ON: the trim is the W2
-    //                       headline. Toggle OFF for A/B baseline runs.
+    //   comLatTrimEnabled — master enable. Shipped OFF (false) with gain 0.0
+    //                       — the W2 trim is fully inert by default; enable +
+    //                       raise gain at runtime for A/B runs.
     //   comLatTrimGain    — mm of foot trim per mm of observed CoM offset.
     //   comLatTrimMaxMm   — per-tick cap on the applied trim magnitude.
     bool  comLatTrimEnabled = false;                            // WS: "comLatTrim"
@@ -225,8 +228,10 @@ struct GaitConfig {
 
     // W5 — velocity-damping extension of the lateral CoM trim.
     //   comLatTrimKd       — Kd: mm of foot trim per (mm/s) of lateral CoM
-    //                        velocity (units = seconds). Default 0 → W5 inert,
-    //                        trim stays bit-identical to displacement-only W2.
+    //                        velocity (units = seconds). Shipped 0.01 (small
+    //                        live damping term — but the W2 master enable
+    //                        above ships false, so the whole trim is inactive
+    //                        until enabled at runtime).
     //   comLatTrimRateLpfAlpha — IIR retention factor for the roll-rate LPF.
     //                        0 = raw rate (noisy); →1 = heavy smoothing (laggy).
     //                        The LPF is mandatory — raw gyro rate would feed
@@ -260,10 +265,11 @@ struct GaitConfig {
     //                       Starts conservative; mirrors sagittal default.
     //   latCaptureMaxMm   — hard cap on the offset's contribution to a
     //                       single step (mm). Frontal-IK-reach guard.
-    //   latCaptureSign    — ±1 runtime sign flip. Intended sign: body falling
-    //                       TOWARD a side → swing foot placed TOWARD that
-    //                       side (true capture). Must be confirmed on hardware;
-    //                       flip to -1 if the observed direction is wrong.
+    //   latCaptureSign    — ±1 runtime sign flip. SHIPS AT -1 (the flipped
+    //                       mapping); the intended "true capture" convention
+    //                       — body falling TOWARD a side → swing foot placed
+    //                       TOWARD that side — corresponds to +1. Confirm on
+    //                       hardware before treating either sign as canonical.
     bool  latCaptureEnabled = GAIT_LAT_CAPTURE_ENABLED_DEFAULT; // WS: "latCapture"
     float latCaptureGain    = GAIT_LAT_CAPTURE_GAIN_DEFAULT;    // WS: "latCaptureGain"
     float latCaptureMaxMm   = GAIT_LAT_CAPTURE_OFFSET_MAX_MM;   // WS: "latCaptureMax"
@@ -344,9 +350,9 @@ struct GaitConfig {
     // touchdownGatePhase  — minimum _halfPhase at which an impact detection
     //                       is allowed to fire the latch. Filters out
     //                       false-positive impacts during early/mid swing.
-    //                       Default 0.7: late enough to be safely past peak,
-    //                       generous enough to catch touchdowns ~5 mm
-    //                       early due to floor variation.
+    //                       Shipped 0.45 (tuned down from the original 0.7):
+    //                       with the front-loaded stride (strideCompleteFrac
+    //                       0.2) real touchdowns arrive well before 0.7.
     // -----------------------------------------------------------------------
     bool  touchdownEnabled   = true;
     float touchdownGatePhase = 0.45f; // [0..1)
@@ -379,8 +385,9 @@ struct GaitConfig {
     // from the same `if (imp.detected)` branch that sets the latch. It does
     // NOT add a detection path of its own.
     //
-    //   complianceEnabled — master enable. Default ON. Toggle OFF for A/B
-    //                       baseline runs.
+    //   complianceEnabled — master enable. Shipped OFF
+    //                       (GAIT_TD_COMPLIANCE_ENABLED_DEFAULT = false);
+    //                       enable at runtime for A/B runs.
     //   complianceDepthMm — magnitude of the (negative) stance-height offset
     //                       applied at the event, in mm. Applied as -depth.
     //   complianceDecayMs — time over which the offset smoothsteps back to
@@ -487,7 +494,8 @@ struct GaitConfig {
     float    heelStrikeMaxBiasDeg   = GAIT_HEELSTRIKE_MAX_BIAS_DEG;
 
     // -----------------------------------------------------------------------
-    // Post-contact ankle YIELD (ships inert: yieldDorsiflexDeg=0 → no-op).
+    // Post-contact ankle YIELD (** SHIPS ACTIVE: enabled=true, 2° — audit
+    // A-09, pending human decision; see project_wide_defs.h yield block **).
     // A post-contact RELEASE on the just-planted leg: relaxes the held-flat
     // ankle command (negative/dorsiflex, additive post-IK) so the foot can roll
     // forward under the vaulting body. NEVER present before contact — armed ONLY

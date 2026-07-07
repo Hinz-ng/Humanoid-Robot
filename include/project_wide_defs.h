@@ -108,14 +108,14 @@ constexpr uint32_t SERVO_FRAME_HZ = 50;
 // ============================================================
 // GAIT PARAMETERS — GaitController (weight_shift evolution)
 // ============================================================
-// TUNING NOTE (2026-04-xx): Reduced from 0.4 → 0.25 Hz to give the IMU roll
-// gate (wsThresholdRad) more time to satisfy before the half-cycle advances.
-// Return to 0.4 once stance loading is stable at the lower rate.
+// TUNING HISTORY: 0.4 → 0.25 (2026-04, IMU-roll-gate era) → raised back up as
+// stance loading stabilised; shipped value below is the current tuned rate.
+// (B7b comment sync 2026-07: the old note still claimed 0.25 was current.)
 constexpr float GAIT_PHASE_RATE_HZ          = 0.7f;  // cycles/sec
 
-// TUNING NOTE: Reduced from 20 → 15 mm. The IMU gate now prevents lifting
-// before the stance leg is loaded, so less clearance is needed to avoid drag.
-// If drag returns at 15 mm, the root cause is the gate, not step height.
+// TUNING HISTORY: 20 → 15 → 12 mm. The lift gate prevents lifting before the
+// stance leg is loaded, so less clearance is needed to avoid drag.
+// If drag returns at 12 mm, the root cause is the gate, not step height.
 constexpr float GAIT_STEP_HEIGHT_MM         = 12.0f;  // swing foot clearance
 constexpr float GAIT_STANCE_WIDTH_MM        = 40.0f;  // lateral CoM amplitude
 constexpr float GAIT_STEP_LENGTH_MM         = 37.0f;  // Phase 3+; forward stride
@@ -140,7 +140,8 @@ constexpr float NEUTRAL_TRIM_MAX_DEG = 8.0f;
 //
 // TUNING NOTE 2026-05-20: hardware testing found a strongly front-loaded
 // apex (0.1) noticeably better than the symmetric 0.5 — the long, slow
-// descent visibly reduces touchdown disturbance. Default lowered 0.5 → 0.15.
+// descent visibly reduces touchdown disturbance. Default lowered 0.5 → 0.15,
+// then settled at the shipped 0.2 (matches GAIT_DESIGN §3.6).
 constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.2f;
 
 // Horizontal stride completion fraction (W-stride-frontload). _buildFootTarget()
@@ -153,13 +154,14 @@ constexpr float GAIT_SWING_APEX_FRAC_DEFAULT = 0.2f;
 // isolated from a "shift CoM forward earlier" change).
 //
 // 1.0 = no warp; reduces EXACTLY to the unwarped smoothstep (lpw == localPhase).
-// Ship at 1.0 — flashing must change nothing until tuned down at runtime.
+// SHIPPED AT 0.2 — this is a tuned operating default, NOT the inert 1.0 the
+// original experiment shipped with (B7b comment sync 2026-07). The stride is
+// strongly front-loaded: the swing foot completes its horizontal travel by
+// localPhase 0.2 and holds until touchdown.
 //
 // TUNING: for the front-loading to act before the touchdown latch can fire,
-// keep strideCompleteFrac <= touchdownGatePhase (currently 0.7 — see GaitConfig).
-// Recommended experimental range 0.5–0.7. At 0.6 the swing foot reaches +L/2
-// at localPhase=0.6 and holds horizontally stationary until touchdown at ~0.7+.
-// Clamped to (0.05, 1.0] in GAIT_TUNE.
+// keep strideCompleteFrac <= touchdownGatePhase (shipped 0.45 — see
+// GaitConfig); 0.2 <= 0.45 holds. Clamped to (0.05, 1.0] in GAIT_TUNE.
 constexpr float GAIT_STRIDE_COMPLETE_FRAC_DEFAULT = 0.2f;
 
 // WeightShift swing-bias preload completion fraction. The swing-side ankle-roll
@@ -190,12 +192,13 @@ constexpr float GAIT_WS_SWING_PRELOAD_COMPLETE_FRAC_DEFAULT = 1.0f;
 //   d      = clamp((1 - liftFrac) / swingPrepCompleteFrac, 0, 1)
 //   bias   = target * (d*d*(3 - 2*d))            // smoothstep, zero-slope ends
 //
-// ENABLED default true but GAIN default 0.0 → the term is identically 0, so the
-// shipped config is a bit-identical no-op. Raise gain toward ~0.5–1.0 at runtime
-// after confirming sign on hardware. The swing-prep envelope is 0 through
-// lift-off and the rise, then ramps monotonically across the DESCENT (apex →
-// touchdown). COMPLETE_FRAC 1.0 = completes at touchdown; lower toward 0.5 to
-// complete the outward rotation earlier in the descent. Clamped (0.05, 1.0].
+// SHIPPED ACTIVE: ENABLED=true with GAIN=0.3 — the term is LIVE by default
+// (B7b comment sync 2026-07: an earlier note claimed gain 0.0 / no-op; the
+// gain has since been tuned up on hardware). The swing-prep envelope is 0
+// through lift-off and the rise, then ramps monotonically across the DESCENT
+// (apex → touchdown). COMPLETE_FRAC 1.0 = completes at touchdown; lower
+// toward 0.5 to complete the outward rotation earlier in the descent.
+// Clamped (0.05, 1.0].
 constexpr bool  GAIT_SWING_PREP_ENABLED_DEFAULT       = true;
 constexpr float GAIT_SWING_PREP_GAIN_DEFAULT          = 0.3f;
 constexpr float GAIT_SWING_PREP_COMPLETE_FRAC_DEFAULT = 0.5f;
@@ -225,10 +228,10 @@ constexpr float GAIT_STANCE_HEIGHT_MM           = 185.0f;
 // ankle-roll coordinate automatically and the sole stays flat. Do NOT
 // add a hand-coordinated ankle-roll bias.
 //
-// 0.0 ships bit-identical to pre-change (t.y_mm baseline = 0). Tune up
-// in ~2 mm steps at runtime via CMD:GAIT_TUNE:stanceInset_mm=...
-// Sign is UNVERIFIED until confirmed on hardware in IDLE: a positive
-// inset must move both feet toward the midline.
+// SHIPPED AT 7.0 mm — a tuned operating default (B7b comment sync 2026-07:
+// the original note described the inert 0.0 bring-up value and an
+// unverified sign; the inset has since been tuned on hardware). Tune in
+// ~2 mm steps at runtime via CMD:GAIT_TUNE:stanceInset_mm=...
 constexpr float GAIT_STANCE_INSET_MM            = 7.0f;
 
 // Static fore-aft offset applied to every FootTarget.x_mm built by GaitController.
@@ -245,8 +248,8 @@ constexpr float GAIT_STANCE_X_OFFSET_MM         = -1.0f;
 // Hold duration (ms) GaitController inserts between half-cycles. Weight shift
 // is centered (trigger NONE) and held for this duration so mechanical/IIR
 // transients damp before the next direction is commanded. Should be ≥ ~5×
-// the IIR time constant from WeightShiftConfig::ankle_tilt_smooth_alpha.
-// At alpha=0.90 / 400 Hz, τ ≈ 25 ms → 150 ms gives ~6τ.
+// the IIR time constant from WeightShiftConfig::shift_smooth_alpha.
+// At alpha=0.90 / 400 Hz, τ ≈ 25 ms → the shipped 180 ms gives ~7τ.
 constexpr uint32_t GAIT_STABILIZE_MS            = 180;
 constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 
@@ -258,9 +261,10 @@ constexpr uint32_t GAIT_STOP_RAMP_MS            = 600;
 // transition. Filters transient predicate satisfactions that don't
 // represent a stably-completed support transfer.
 //
-// 80 ms ~= 32 ticks at 400 Hz -- long enough to debounce ramp-edge
+// Shipped 40 ms ~= 16 ticks at 400 Hz -- long enough to debounce ramp-edge
 // transients and brief predicate flickers, short enough that the
-// added per-step latency is mechanically invisible.
+// added per-step latency is mechanically invisible. (History: introduced
+// at 80 ms, halved after hardware sessions.)
 //
 // 0 disables dwell (single-tick gate -- pre-Stage-2 behavior).
 constexpr uint32_t GAIT_LIFT_DWELL_MS_DEFAULT = 40;
@@ -321,9 +325,12 @@ constexpr float GAIT_COM_LAT_TRIM_MAX_MM_DEFAULT = 20.0f;
 //        + comLatVel  * comLatTrimKd        (W5 — velocity     / Kd)
 //
 // comLatTrimKd units: mm of foot trim per (mm/s) of CoM velocity = seconds.
-// DEFAULT 0.0 — W5 is INERT until tuned, so out of the box the trim is
-// bit-identical to W2. Raise in small steps (try 0.02 .. 0.15 s) and stop
-// at the first sign of servo buzz or new oscillation.
+// SHIPPED AT 0.01 — a small live damping term (B7b comment sync 2026-07:
+// an earlier note claimed 0.0/inert). Note the W2 master enable
+// (comLatTrimEnabled) ships FALSE, so the whole trim — Kp and Kd — is
+// inactive until the trim is enabled at runtime; this Kd then applies.
+// Raise in small steps (0.02 .. 0.15 s) and stop at the first sign of
+// servo buzz or new oscillation.
 //
 // The roll rate is low-pass filtered before the Kd term uses it: raw BMI160
 // rollRate carries high-frequency gyro hiss that a Kd term would amplify
@@ -375,20 +382,21 @@ constexpr float GAIT_CAPTURE_OFFSET_MAX_MM = 15.0f;
 // The lateral LIP natural frequency omega0 is identical to the sagittal
 // case (same CoM height H_COM_MM), so GAIT_CAPTURE_INV_OMEGA0_S is shared.
 //
-// DEFAULT GAIN: 0.15 — same starting-conservative rationale as the sagittal
-// capture (well below full LIP correction; raise only after hardware shows
-// the swing-foot placement is responsive but not chasing noise).
+// SHIPPED GAIN: 1.0 — FULL LIP correction (B7b comment sync 2026-07: the
+// original conservative 0.15 note was stale; the gain has been tuned to
+// full on hardware). Back off toward 0.15 if placement starts chasing
+// gyro noise.
 //
-// DEFAULT OFFSET CAP: 15 mm — derived from the frontal reach budget.
+// SHIPPED OFFSET CAP: 30 mm (raised from the original 15) — still inside
+// the frontal reach budget derived below.
 // L_FRONTAL_MM = 166 mm, CHAIN_HEIGHT_DELTA_MM ≈ 25.4 mm → at stanceH=185
 // the frontal chain length is ~159.6 mm, and IK_MAX_REACH_FRACTION (0.99)
 // gives ~158 mm of total |y| budget. After deducting the realistic
 // frontal-plane consumers — WS lateral shift up to ~40 mm
 // (GAIT_STANCE_WIDTH_MM), comLatTrimMaxMm up to 20 mm, and balance
-// correction dy of a few mm — roughly 95 mm of headroom remains. A 15 mm
-// hard cap therefore stays well inside frontal IK reach in any realistic
-// combination. Matches the sagittal cap so both axes scale together.
-// Re-tune after first hardware run; do not raise blindly.
+// correction dy of a few mm — roughly 95 mm of headroom remains. The
+// shipped 30 mm hard cap therefore stays inside frontal IK reach in any
+// realistic combination. Do not raise blindly.
 constexpr bool  GAIT_LAT_CAPTURE_ENABLED_DEFAULT = true;
 constexpr float GAIT_LAT_CAPTURE_GAIN_DEFAULT    = 1.0f;
 constexpr float GAIT_LAT_CAPTURE_OFFSET_MAX_MM   = 30.0f;
@@ -488,10 +496,11 @@ constexpr uint32_t RECOVERY_LOCKOUT_MS      = 800;
 // the refractory lockout. Prevents falls from large disturbances that a
 // single step cannot fully catch.
 //
-// Set below recovery_tilt_roll_rad (~0.18 rad) so it fires on residual lean
-// that the first step reduced but didn't fully recover. Set above normal
+// Set below recovery_tilt_roll_rad (0.13 rad shipped) so it fires on residual
+// lean that the first step reduced but didn't fully recover. Set above normal
 // walking roll (~0.05 rad) so it never fires after a clean step landing.
-// Default 0.07 rad ≈ 4°. Tune after T2.5 if second steps are spurious.
+// Shipped 0.12 rad ≈ 6.9° (raised from the initial 0.07 after spurious
+// second steps). Tune after T2.5 if chaining is still spurious.
 constexpr float RECOVERY_CHAIN_TILT_THRESHOLD_RAD = 0.12f;
 
 // ============================================================
@@ -739,24 +748,24 @@ constexpr float SWING_LEVELER_DISENGAGE_LIFT_FRAC = 1.01f;
 constexpr bool GAIT_HEELSTRIKE_ENABLED_DEFAULT = false;
 
 // Peak dorsiflexion magnitude (deg). The actual bias is the negative of this
-// times the engage/release fraction. 5° ≈ rocker contact without consuming
-// significant IK headroom. Recommended tuning range 5–7°.
+// times the engage/release fraction. Shipped 3° — a gentler rocker than the
+// originally-recommended 5–7° band (feature ships DISABLED regardless).
 constexpr float GAIT_HEELSTRIKE_DORSIFLEX_DEG_DEFAULT = 3.0f;
 
 // Half-phase fraction at which the engage ramp starts [0..1). Below this the
 // bias is 0; above it the bias ramps 0 → peak via smoothstep over the window
 // [heelStrikeGatePhase, touchdownGatePhase], then HOLDS at peak until contact.
-// Default 0.50 puts full peak at touchdownGatePhase (default 0.70). Recommended
-// tuning range 0.45–0.55. INVARIANT: must remain strictly less than
-// touchdownGatePhase so the engage window has nonzero width.
+// Shipped 0.2, pairing with the shipped touchdownGatePhase 0.45 (full peak
+// at 0.45). INVARIANT: must remain strictly less than touchdownGatePhase so
+// the engage window has nonzero width — 0.2 < 0.45 holds.
 constexpr float GAIT_HEELSTRIKE_GATE_PHASE_DEFAULT = 0.2f;
 
 // Time (ms) for the bias to decay from its release-snapshot value to zero
-// after touchdown (or _advanceHalf fallback). 240 ms is long enough for the
-// foot to roll smoothly to flat without a one-tick collapse, and short enough
-// that the bias is gone before the next half-cycle's lift-off. Tuning range
-// 200–280 ms. Independent of FSM state — runs to completion across the role
-// swap, mirroring W4 compliance.
+// after touchdown (or _advanceHalf fallback). Shipped 500 ms — raised from
+// the original 200–280 ms band; at the shipped 0.7 Hz cadence a half-cycle
+// is ~714 ms, so the release still completes before the next lift-off, but
+// re-check this if phaseRate is raised. Independent of FSM state — runs to
+// completion across the role swap, mirroring W4 compliance.
 constexpr uint32_t GAIT_HEELSTRIKE_RELEASE_MS_DEFAULT = 500;
 
 // Hard ceiling on the applied bias magnitude regardless of heelStrike-
@@ -767,7 +776,7 @@ constexpr uint32_t GAIT_HEELSTRIKE_RELEASE_MS_DEFAULT = 500;
 constexpr float GAIT_HEELSTRIKE_MAX_BIAS_DEG = 12.0f;
 
 // ============================================================
-// POST-CONTACT ANKLE YIELD  (ships inert: gain 0 = bit-identical no-op)
+// POST-CONTACT ANKLE YIELD  (** SHIPS ACTIVE — see A-09 note below **)
 // ============================================================
 // A post-contact RELEASE: it relaxes the held-flat ankle command on the
 // just-planted leg so the foot can roll forward under the vaulting body. It is
@@ -794,13 +803,20 @@ constexpr float GAIT_HEELSTRIKE_MAX_BIAS_DEG = 12.0f;
 // bias is back to 0 before the next lift-off.
 // ============================================================
 
-// Master enable at boot. true is safe because the shipped gain is 0 (below):
-// _yieldBiasDeg() returns 0 on every path, ankle-pitch submit is bit-identical.
+// Master enable at boot.
+// *** AUDIT A-09 (2026-07): the yield SHIPS ACTIVE — enabled=true AND
+// dorsiflexDeg=2.0 — so every detected touchdown arms a 2° dorsiflex
+// release. This contradicts the original "ships inert / gain 0" design
+// note (retired below) and the companion docs' "specified, not
+// implemented" status. Presumed a deliberate in-progress experiment
+// (commit "Ankle yield"); PENDING HUMAN DECISION: either bless the active
+// default here or restore 0.0. Any A/B run assuming "release off by
+// default" is confounded until then. ***
 constexpr bool GAIT_YIELD_ENABLED_DEFAULT = true;
 
-// Peak dorsiflexion MAGNITUDE (deg). SHIPS AT 0 — a true no-op until an operator
-// raises it at runtime. The applied bias is the negative of this times the
-// engage/release fraction. Expected use a few degrees once enabled.
+// Peak dorsiflexion MAGNITUDE (deg). Shipped 2.0 → ACTIVE (see A-09 note
+// above; the original design shipped 0 = no-op). The applied bias is the
+// negative of this times the engage/release fraction.
 constexpr float GAIT_YIELD_DORSIFLEX_DEG_DEFAULT = 2.0f;
 
 // Ramp-IN time (ms) for the bias to smoothstep 0 → peak after the latch. This is
@@ -809,9 +825,13 @@ constexpr float GAIT_YIELD_DORSIFLEX_DEG_DEFAULT = 2.0f;
 constexpr uint32_t GAIT_YIELD_ENGAGE_MS_DEFAULT = 10;
 
 // Decay time (ms) for the bias to smoothstep peak → 0 after the engage ramp.
-// Kept <= rolloverWindowMs so the release matches the rollover observation
-// window (the lateness falsifier compares the two traces). engage(30)+release
-// here = 200 ms total, well inside a half-cycle.
+// Shipped engage(10) + release(400) = 410 ms total — this is NOT "well
+// inside a half-cycle": at the shipped 0.7 Hz a half-cycle is ~714 ms minus
+// WAIT_SHIFT/STABILIZING, so the release frequently spans into the next
+// half (by design it survives the role swap), and at higher cadence a new
+// touchdown can find the previous release still active → that step gets NO
+// yield and yieldSkipCount increments (see _startYield early-return).
+// Watch yieldSkipCount when sweeping cadence or release duration.
 constexpr uint32_t GAIT_YIELD_RELEASE_MS_DEFAULT = 400;
 
 // Hard ceiling on the applied bias magnitude regardless of yieldDorsiflexDeg.

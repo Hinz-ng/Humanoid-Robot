@@ -61,9 +61,10 @@ struct WeightShiftConfig {
     // slider and WEIGHT_SHIFT_TUNE:setpoint key still parse without error.
     float setpoint_shift_rad = 0.050f;
 
-    // Ankle roll amplitude (deg). Injected as an ankle-roll bias into
-    // BalanceConfig (not via SOURCE_GAIT). 15.0 deg is the post-tuning working
-    // default; override via WEIGHT_SHIFT_TUNE:ankle=...
+    // Ankle roll amplitude (deg). Consumed by GaitController's single
+    // ankle-roll composition site (_ankleRollDeg / _comShiftTilt) since the
+    // consolidation refactor. Shipped 11.0 deg (tuned down from the earlier
+    // 15.0); override via WEIGHT_SHIFT_TUNE:ankle=...
     float ankle_shift_deg = 11.0f;
     
     // TASK-2: Phase delay between swing and stance ankle ramps (ms).
@@ -91,8 +92,9 @@ struct WeightShiftConfig {
     //             expecting the legacy convention.
     // Magnitude: tune in ~5 mm increments. Working range -20 to -5 mm; floor
     // at -50 / ceiling at +50 enforced by WebComm parser.
-    // TUNING NOTE: Increased magnitude from -10 → -15 mm. More CoM transfer
-    // means more weight on the stance leg at gate-open time, reducing drag risk.
+    // TUNING HISTORY: -10 → -15 → shipped -12.5. More CoM transfer means more
+    // weight on the stance leg at gate-open time (less drag risk); backed off
+    // from -15 after over-shift symptoms.
     float lateral_shift_mm = -12.5f;
 
     // Stage 2: Body forward shift (mm) at |progress| = 1. Replaces ankle_pitch_tilt_deg.
@@ -107,7 +109,14 @@ struct WeightShiftConfig {
     // 0.90 mirrors UVC DYI_DAMPING_FACTOR. τ ≈ 25 ms at 400 Hz.
     float shift_smooth_alpha = 0.90f;
 
-    // Torso roll (direction unverified). 0 = disabled.
+    // Torso roll amplitude (deg) at |progress| = 1. *** LIVE BY DEFAULT ***
+    // (audit A-11): WeightShift::update() submits IDX_TORSO_ROLL =
+    // progress × torso_shift_deg at SOURCE_GAIT whenever |this| > 0.01 —
+    // with the shipped -20 the torso roll swings ±20° through every weight
+    // shift, and with torso balance disabled by default this is the ONLY
+    // writer on that channel (TorsoStabilizer would win at SOURCE_BALANCE
+    // when armed). Direction still unverified on hardware — pending human
+    // confirmation that -20 is intentional. Set 0 to disable the term.
     float torso_shift_deg = -20.0f;
 
     // Time for each ankle to ramp to full shift position (ms).

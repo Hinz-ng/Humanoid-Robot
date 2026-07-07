@@ -2472,8 +2472,8 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                             // foot reaches +L/2 with zero horizontal velocity
                             // before touchdown. For the effect to act before
                             // the touchdown latch can fire, keep this
-                            // <= touchdownGatePhase (default 0.7). Recommended
-                            // experimental range 0.5–0.7.
+                            // <= touchdownGatePhase (shipped 0.45; shipped
+                            // strideComplete default is 0.2).
                             cfg.strideCompleteFrac = constrain(val, 0.05f, 1.0f);
                         }
                         else if (key == "comLatTrim") cfg.comLatTrimEnabled = (val > 0.5f);

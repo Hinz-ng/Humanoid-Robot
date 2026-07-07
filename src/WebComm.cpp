@@ -2879,19 +2879,36 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
     //  Slider control: "<channel>:<angle_degrees>"
     //  Routes through MotionManager so SOURCE_UI authority is declared correctly.
     //  Any active controller (BALANCE, GAIT) will silently override shared joints.
+    //
+    //  Audit A-16 guard: this is the parser's final else — before the checks
+    //  below, ANY unrecognized colon-bearing text parsed as a servo command
+    //  ("foo:bar" → toInt()/toFloat() → ch0 ← 0.0° absolute → the joint slams
+    //  to its clamped anatomical limit). Require a digit-leading channel in
+    //  range and an angle inside the absolute servo envelope; reject and log
+    //  everything else. The real UI always sends numeric, so no behavior
+    //  change for well-formed traffic.
     // -------------------------------------------------------------------------
     else {
         int sep = message.indexOf(':');
         if (sep != -1) {
-            uint8_t ch    = (uint8_t)message.substring(0, sep).toInt();
-            float   angle = message.substring(sep + 1).toFloat();
+            const String chStr    = message.substring(0, sep);
+            const String angleStr = message.substring(sep + 1);
+            const bool chNumeric  = chStr.length() > 0 && isDigit(chStr.charAt(0));
+            const long chVal      = chStr.toInt();
+            const float angle     = angleStr.toFloat();
+            const bool angleOk    = angle >= 0.0f && angle <= SD_ANGLE_RANGE;
 
-            if (_motionManager) {
-                _motionManager->submit(SOURCE_UI, ch, angle);
+            if (chNumeric && chVal >= 0 && chVal < NUM_JOINTS && angleOk) {
+                if (_motionManager) {
+                    _motionManager->submit(SOURCE_UI, (uint8_t)chVal, angle);
+                } else {
+                    _servoCtrl->setTargetAngle((uint8_t)chVal, angle);
+                }
+                broadcastState();
             } else {
-                _servoCtrl->setTargetAngle(ch, angle);
+                Serial.printf("[WebComm] rejected malformed slider message '%s'\n",
+                              message.c_str());
             }
-            broadcastState();
         }
     }
 }

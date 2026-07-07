@@ -341,6 +341,13 @@ void loop() {
             float dt = (_readNow - _lastEstimatorMicros) * 1e-6f;
             _lastEstimatorMicros = _readNow;       // anchor to sensor-read timestamp
 
+            // B1 command staging: apply any WiFi-task staged config updates at
+            // the tick boundary, BEFORE any config consumer runs this tick.
+            // The first consumer is footImpactDetector.update() below; then
+            // weightShift → balance → torso → gait → leveler. Must stay the
+            // first call inside the gate body.
+            webComm.applyStagedTuning();
+
             RawIMUData raw   = IMU_update();
             IMUState   state = stateEstimator.update(raw, dt);
 

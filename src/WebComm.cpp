@@ -98,6 +98,47 @@ void WebComm::setFootNeutral(Side side, float pitchRad, float rollRad, bool vali
 }
 
 // ---------------------------------------------------------------------------
+//  applyStagedTuning — B1 command staging apply point (audit A-01).
+//
+//  MAIN TASK ONLY. Called once per control tick from main.cpp, at the top of
+//  the 400 Hz gate, BEFORE any config consumer runs (the first reader in the
+//  tick is footImpactDetector.update()). Each consume() either hands over a
+//  complete, untorn struct or defers to the next tick — a WiFi-task parser
+//  can no longer tear a config mid-tick.
+//
+//  Note on echoes: parse-time Serial echoes print the staged local copy (the
+//  truth that WILL apply); WS broadcasts read the module's live config and may
+//  therefore lag the staged value by one tick (2.5 ms) — below every
+//  broadcast's rate limit, so the UI never observes it.
+// ---------------------------------------------------------------------------
+void WebComm::applyStagedTuning() {
+    if (_balCtrl && _stagedBalance.hasPending()) {
+        BalanceConfig c;
+        if (_stagedBalance.consume(c)) _balCtrl->setConfig(c);
+    }
+    if (_torsoStab && _stagedTorso.hasPending()) {
+        TorsoConfig c;
+        if (_stagedTorso.consume(c)) _torsoStab->setConfig(c);
+    }
+    if (_gaitCtrl && _stagedGait.hasPending()) {
+        GaitConfig c;
+        if (_stagedGait.consume(c)) _gaitCtrl->setConfig(c);
+    }
+    if (_weightShift && _stagedWeightShift.hasPending()) {
+        WeightShiftConfig c;
+        if (_stagedWeightShift.consume(c)) _weightShift->setConfig(c);
+    }
+    if (_footImpact && _stagedFootImpact.hasPending()) {
+        FootImpactConfig c;
+        if (_stagedFootImpact.consume(c)) _footImpact->setConfig(c);  // re-clamps
+    }
+    if (_swingLeveler && _stagedSwingLeveler.hasPending()) {
+        SwingFootLevelerConfig c;
+        if (_stagedSwingLeveler.consume(c)) _swingLeveler->setConfig(c);
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 void listFiles() {
     Serial.println("[LittleFS] Listing files:");
@@ -1208,10 +1249,10 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
     if (_weightShift) _weightShift->forceCenterImmediate();
 
     if (_balCtrl) {
-        BalanceConfig cfg = _balCtrl->getConfig();
+        BalanceConfig cfg = _stagedBalance.beginEdit(_balCtrl->getConfig());
         cfg.pitch_enabled = false;
         cfg.roll_enabled  = false;
-        _balCtrl->setConfig(cfg);
+        _stagedBalance.publish(cfg);   // applied at the next tick boundary
         _balCtrl->resetOutputState();
     }
 
@@ -1309,52 +1350,52 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         // BALANCE_ON / BALANCE_OFF — legacy shorthand: enable/disable BOTH controllers.
         else if (cmd == "BALANCE_ON") {
             if (_balCtrl) {
-                BalanceConfig cfg = _balCtrl->getConfig();
+                BalanceConfig cfg = _stagedBalance.beginEdit(_balCtrl->getConfig());
                 cfg.pitch_enabled = true;
                 cfg.roll_enabled  = true;
-                _balCtrl->setConfig(cfg);
+                _stagedBalance.publish(cfg);
             }
             Serial.println("[WebComm] CMD: BALANCE_ON (both pitch + roll)");
         }
         else if (cmd == "BALANCE_OFF") {
             if (_balCtrl) {
-                BalanceConfig cfg = _balCtrl->getConfig();
+                BalanceConfig cfg = _stagedBalance.beginEdit(_balCtrl->getConfig());
                 cfg.pitch_enabled = false;
                 cfg.roll_enabled  = false;
-                _balCtrl->setConfig(cfg);
+                _stagedBalance.publish(cfg);
             }
             Serial.println("[WebComm] CMD: BALANCE_OFF (both pitch + roll)");
         }
         // Individual pitch / roll enable commands — use these during testing.
         else if (cmd == "PITCH_ON") {
             if (_balCtrl) {
-                BalanceConfig cfg = _balCtrl->getConfig();
+                BalanceConfig cfg = _stagedBalance.beginEdit(_balCtrl->getConfig());
                 cfg.pitch_enabled = true;
-                _balCtrl->setConfig(cfg);
+                _stagedBalance.publish(cfg);
             }
             Serial.println("[WebComm] CMD: PITCH_ON");
         }
         else if (cmd == "PITCH_OFF") {
             if (_balCtrl) {
-                BalanceConfig cfg = _balCtrl->getConfig();
+                BalanceConfig cfg = _stagedBalance.beginEdit(_balCtrl->getConfig());
                 cfg.pitch_enabled = false;
-                _balCtrl->setConfig(cfg);
+                _stagedBalance.publish(cfg);
             }
             Serial.println("[WebComm] CMD: PITCH_OFF");
         }
         else if (cmd == "ROLL_ON") {
             if (_balCtrl) {
-                BalanceConfig cfg = _balCtrl->getConfig();
+                BalanceConfig cfg = _stagedBalance.beginEdit(_balCtrl->getConfig());
                 cfg.roll_enabled = true;
-                _balCtrl->setConfig(cfg);
+                _stagedBalance.publish(cfg);
             }
             Serial.println("[WebComm] CMD: ROLL_ON");
         }
         else if (cmd == "ROLL_OFF") {
             if (_balCtrl) {
-                BalanceConfig cfg = _balCtrl->getConfig();
+                BalanceConfig cfg = _stagedBalance.beginEdit(_balCtrl->getConfig());
                 cfg.roll_enabled = false;
-                _balCtrl->setConfig(cfg);
+                _stagedBalance.publish(cfg);
             }
             Serial.println("[WebComm] CMD: ROLL_OFF");
         }
@@ -1363,33 +1404,33 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         // ---------------------------------------------------------------------
         else if (cmd == "TORSO_PITCH_ON") {
             if (_torsoStab) {
-                TorsoConfig cfg = _torsoStab->getConfig();
+                TorsoConfig cfg = _stagedTorso.beginEdit(_torsoStab->getConfig());
                 cfg.pitch_enabled = true;
-                _torsoStab->setConfig(cfg);
+                _stagedTorso.publish(cfg);
             }
             Serial.println("[WebComm] CMD: TORSO_PITCH_ON");
         }
         else if (cmd == "TORSO_PITCH_OFF") {
             if (_torsoStab) {
-                TorsoConfig cfg = _torsoStab->getConfig();
+                TorsoConfig cfg = _stagedTorso.beginEdit(_torsoStab->getConfig());
                 cfg.pitch_enabled = false;
-                _torsoStab->setConfig(cfg);
+                _stagedTorso.publish(cfg);
             }
             Serial.println("[WebComm] CMD: TORSO_PITCH_OFF");
         }
         else if (cmd == "TORSO_ROLL_ON") {
             if (_torsoStab) {
-                TorsoConfig cfg = _torsoStab->getConfig();
+                TorsoConfig cfg = _stagedTorso.beginEdit(_torsoStab->getConfig());
                 cfg.roll_enabled = true;
-                _torsoStab->setConfig(cfg);
+                _stagedTorso.publish(cfg);
             }
             Serial.println("[WebComm] CMD: TORSO_ROLL_ON");
         }
         else if (cmd == "TORSO_ROLL_OFF") {
             if (_torsoStab) {
-                TorsoConfig cfg = _torsoStab->getConfig();
+                TorsoConfig cfg = _stagedTorso.beginEdit(_torsoStab->getConfig());
                 cfg.roll_enabled = false;
-                _torsoStab->setConfig(cfg);
+                _stagedTorso.publish(cfg);
             }
             Serial.println("[WebComm] CMD: TORSO_ROLL_OFF");
         }
@@ -1422,7 +1463,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         // ---------------------------------------------------------------------
         else if (cmd.startsWith("WEIGHT_SHIFT_TUNE:")) {
             if (_weightShift) {
-                WeightShiftConfig cfg = _weightShift->getConfig();
+                WeightShiftConfig cfg = _stagedWeightShift.beginEdit(_weightShift->getConfig());
                 String params = cmd.substring(18);
                 int start = 0;
                 while (start < (int)params.length()) {
@@ -1456,7 +1497,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
-                _weightShift->setConfig(cfg);
+                _stagedWeightShift.publish(cfg);
                 Serial.printf("[WebComm] WEIGHT_SHIFT_TUNE: setpoint=%.3f rad  "
                               "lat=%.1fmm  fwd=%.1fmm  torso=%.1f°  ramp=%.0f ms\n",
                               cfg.setpoint_shift_rad, cfg.lateral_shift_mm,
@@ -1516,7 +1557,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         // ---------------------------------------------------------------------
         else if (cmd.startsWith("FOOT_IMPACT_TUNE:")) {
             if (_footImpact) {
-                FootImpactConfig cfg = _footImpact->getConfig();
+                FootImpactConfig cfg = _stagedFootImpact.beginEdit(_footImpact->getConfig());
                 String params = cmd.substring(17);
                 int start = 0;
                 while (start < (int)params.length()) {
@@ -1534,14 +1575,19 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
-                _footImpact->setConfig(cfg);
+                // Pre-clamp at parse time so the echo below shows what will
+                // actually apply; setConfig() re-clamps on apply (harmless).
+                cfg = FootImpactDetector::clampConfig(cfg);
+                _stagedFootImpact.publish(cfg);
+                // Re-arm the rate limit instead of broadcasting here: the next
+                // main-loop broadcast tick (≤2.5 ms away) sends the APPLIED
+                // config — a parse-time broadcast would echo the stale one.
                 _lastFootImpactBroadcast_us = 0;
-                broadcastFootImpact();
                 Serial.printf("[WebComm] FOOT_IMPACT_TUNE: en=%d thr=%.3f lpf=%.3f ref=%lu\n",
-                              (int)_footImpact->getConfig().enabled,
-                              _footImpact->getConfig().threshold_g,
-                              _footImpact->getConfig().lpf_alpha,
-                              (unsigned long)_footImpact->getConfig().refractory_ms);
+                              (int)cfg.enabled,
+                              cfg.threshold_g,
+                              cfg.lpf_alpha,
+                              (unsigned long)cfg.refractory_ms);
             }
         }
         // ─────────────────────────────────────────────────────────────────
@@ -1585,7 +1631,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         // ---------------------------------------------------------------------
         else if (cmd.startsWith("SWING_LEVELER_TUNE:")) {
             if (_swingLeveler) {
-                SwingFootLevelerConfig cfg = _swingLeveler->getConfig();
+                SwingFootLevelerConfig cfg = _stagedSwingLeveler.beginEdit(_swingLeveler->getConfig());
                 String params = cmd.substring(19);
                 int start = 0;
                 while (start < (int)params.length()) {
@@ -1624,7 +1670,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     cfg.peak_lift_frac      = SWING_LEVELER_PEAK_LIFT_FRAC;
                     cfg.disengage_lift_frac = SWING_LEVELER_DISENGAGE_LIFT_FRAC;
                 }
-                _swingLeveler->setConfig(cfg);
+                _stagedSwingLeveler.publish(cfg);
                 Serial.printf("[WebComm] SWING_LEVELER_TUNE: en=%d kpP=%.1f kpR=%.1f "
                               "maxP=%.1f maxR=%.1f dead=%.4f in_lpf=%.2f out_iir=%.2f "
                               "eng=%.2f peak=%.2f dis=%.2f\n",
@@ -1721,7 +1767,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         }
         else if (cmd.startsWith("BALANCE_TUNE:")) {
             if (_balCtrl) {
-                BalanceConfig cfg = _balCtrl->getConfig();
+                BalanceConfig cfg = _stagedBalance.beginEdit(_balCtrl->getConfig());
                 String params = cmd.substring(13);
                 int start = 0;
                 while (start < (int)params.length()) {
@@ -1803,7 +1849,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                 // Legacy joint-space leg balance was retired in the consolidation
                 // refactor: ankle/hip ratios no longer exist. Torso pitch/roll
                 // balance is a fully independent subsystem — see TORSO_TUNE.
-                _balCtrl->setConfig(cfg);
+                _stagedBalance.publish(cfg);
                 Serial.printf("[WebComm] BALANCE_TUNE: Kp=%.3f Kd=%.3f sp=%.4f\n",
                                cfg.Kp, cfg.Kd, cfg.pitch_setpoint_rad);
             }
@@ -1814,7 +1860,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         // ---------------------------------------------------------------------
         else if (cmd.startsWith("TORSO_TUNE:")) {
             if (_torsoStab) {
-                TorsoConfig cfg = _torsoStab->getConfig();
+                TorsoConfig cfg = _stagedTorso.beginEdit(_torsoStab->getConfig());
                 String params = cmd.substring(11);
                 int start = 0;
                 while (start < (int)params.length()) {
@@ -1849,7 +1895,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
-                _torsoStab->setConfig(cfg);
+                _stagedTorso.publish(cfg);
                 Serial.printf("[WebComm] TORSO_TUNE: Kp=%.3f Kd=%.3f Kp_r=%.3f Kd_r=%.3f\n",
                                cfg.Kp, cfg.Kd, cfg.Kp_roll, cfg.Kd_roll);
             }
@@ -1861,7 +1907,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         // ---------------------------------------------------------------------
         else if (cmd.startsWith("RECOVERY_TUNE:")) {
             if (_balCtrl) {
-                BalanceConfig cfg = _balCtrl->getConfig();
+                BalanceConfig cfg = _stagedBalance.beginEdit(_balCtrl->getConfig());
                 String params = cmd.substring(14);
                 int start = 0;
                 while (start < (int)params.length()) {
@@ -1881,7 +1927,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
-                _balCtrl->setConfig(cfg);
+                _stagedBalance.publish(cfg);
                 Serial.printf("[WebComm] RECOVERY_TUNE: en=%d supp=%d pitch=%.3f roll=%.3f sat=%u conf=%u\n",
                               (int)cfg.recovery_enabled, (int)cfg.recovery_suppress_during_gait,
                               cfg.recovery_tilt_pitch_rad, cfg.recovery_tilt_roll_rad,
@@ -2144,7 +2190,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         // ---------------------------------------------------------------------
         else if (cmd.startsWith("TOUCHDOWN_TUNE:")) {
             if (_gaitCtrl) {
-                GaitConfig cfg = _gaitCtrl->getConfig();
+                GaitConfig cfg = _stagedGait.beginEdit(_gaitCtrl->getConfig());
                 String params = cmd.substring(15);
                 int start = 0;
                 while (start < (int)params.length()) {
@@ -2175,7 +2221,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
-                _gaitCtrl->setConfig(cfg);
+                _stagedGait.publish(cfg);
                 Serial.printf("[WebComm] TOUCHDOWN_TUNE: en=%d gatePhase=%.2f "
                               "trimSup=%d trimHold=%lu trimFrz=%d\n",
                               (int)cfg.touchdownEnabled,
@@ -2194,7 +2240,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         // ---------------------------------------------------------------------
         else if (cmd.startsWith("COMPLIANCE_TUNE:")) {
             if (_gaitCtrl) {
-                GaitConfig cfg = _gaitCtrl->getConfig();
+                GaitConfig cfg = _stagedGait.beginEdit(_gaitCtrl->getConfig());
                 String params = cmd.substring(16);
                 int start = 0;
                 while (start < (int)params.length()) {
@@ -2218,7 +2264,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
-                _gaitCtrl->setConfig(cfg);
+                _stagedGait.publish(cfg);
                 Serial.printf("[WebComm] COMPLIANCE_TUNE: en=%d depth=%.1f mm decay=%lu ms\n",
                               (int)cfg.complianceEnabled,
                               cfg.complianceDepthMm,
@@ -2227,7 +2273,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         }
         else if (cmd.startsWith("GAIT_TUNE:")) {
             if (_gaitCtrl) {
-                GaitConfig cfg = _gaitCtrl->getConfig();
+                GaitConfig cfg = _stagedGait.beginEdit(_gaitCtrl->getConfig());
                 const float gaitMaxReachMm = IK_MAX_REACH_FRACTION * (L_THIGH + L_SHANK);
                 String params = cmd.substring(10);
                 int start = 0;
@@ -2510,7 +2556,7 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                     }
                     start = (comma == -1) ? params.length() : comma + 1;
                 }
-                _gaitCtrl->setConfig(cfg);
+                _stagedGait.publish(cfg);
                 Serial.printf("[WebComm] GAIT_TUNE: rate=%.2f Hz  gate=%.2f  wsThresh=%.3f rad  "
                               "stepH=%.1f mm  stanceH=%.1f mm  stepLen=%.1f mm  capEn=%d capGain=%.2f capMax=%.1f  "
                               "dwell=%lu waitMax=%lu comLat=%.1f trP=%.4f trR=%.4f  "

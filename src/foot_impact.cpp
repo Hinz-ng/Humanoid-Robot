@@ -12,13 +12,14 @@
 #include <math.h>
 
 // -----------------------------------------------------------------------------
-// _clampConfig
+// clampConfig
 //
 // Defensive clamping for runtime-tunable fields. Operators tune live via
 // WebSocket; an out-of-range value should not be allowed to silently
-// disable detection or destabilise the filter.
+// disable detection or destabilise the filter. Public + static so the
+// WebComm parser can pre-clamp a staged config at parse time (B1).
 // -----------------------------------------------------------------------------
-FootImpactConfig FootImpactDetector::_clampConfig(FootImpactConfig c) {
+FootImpactConfig FootImpactDetector::clampConfig(FootImpactConfig c) {
     if (c.threshold_g < 0.05f) c.threshold_g = 0.05f;   // floor: noise-level
     if (c.threshold_g > 20.0f) c.threshold_g = 20.0f;   // ceiling: well above any plausible hit
     if (c.lpf_alpha   < 0.05f) c.lpf_alpha   = 0.05f;   // floor: don't fully freeze the LPF
@@ -49,7 +50,7 @@ void FootImpactDetector::reset() {
 }
 
 void FootImpactDetector::setConfig(const FootImpactConfig& c) {
-    _cfg = _clampConfig(c);
+    _cfg = clampConfig(c);
 }
 
 // -----------------------------------------------------------------------------

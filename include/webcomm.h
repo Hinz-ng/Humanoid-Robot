@@ -5,19 +5,22 @@
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include "servo_control.h"
-#include "imu.h" 
+#include "imu.h"
 #include "state_estimator.h"
 #include "balance_controller.h"
 #include "foot_contact.h"
+// B1 command staging: the staged config slots below need the complete config
+// struct types, so these can no longer be forward-declared pointer-only.
+#include "staged_config.h"
+#include "torso_stabilizer.h"    // TorsoConfig
+#include "weight_shift.h"        // WeightShiftConfig
+#include "gait_controller.h"     // GaitConfig
+#include "swing_foot_leveler.h"  // SwingFootLevelerConfig
+#include "foot_impact.h"         // FootImpactConfig
 
 // Forward declarations — only pointers are stored; full types in respective headers.
 class MotionManager;
-class WeightShift;
-class GaitController;    // forward declare — only pointer stored
-class TorsoStabilizer;   // forward declare — joint-space torso balance
 class LSM6DSVDriver;     // forward declare — foot IMU diagnostic
-class SwingFootLeveler;  // forward declare — swing-foot leveler (L0+)
-class FootImpactDetector;
 class WalkingInstrumentation;  // forward declare — per-step walking diagnostics
 class SteeringController; // forward declare — hip-yaw steering author (Stage 1)
 
@@ -106,7 +109,24 @@ public:    // ctor can be invoked at global scope; it simply stores the servo po
     // fail loud, never silently use garbage. Telemetry / preview only; does not
     // touch the control-path foot-contact snapshot.
     void setFootNeutral(Side side, float pitchRad, float rollRad, bool valid);
+    // B1 command staging (audit A-01). Applies any config updates the WiFi-task
+    // parsers staged since the last tick. MUST be called exactly once per
+    // control tick, on the MAIN task, at the top of the 400 Hz gate — before
+    // any config consumer runs (footImpactDetector.update is the first).
+    // No-op when nothing is staged (six relaxed atomic loads).
+    void applyStagedTuning();
 private:
+    // B1 staged config slots — one per struct with a WiFi-task RMW writer and
+    // a main-task reader (audit A-01 enumeration). Parsers beginEdit/publish;
+    // applyStagedTuning() consumes. FootContactConfig (in-place per-field
+    // stores) and SteeringConfig (targeted atomic setters) stay as they are.
+    StagedConfig<BalanceConfig>          _stagedBalance;
+    StagedConfig<TorsoConfig>            _stagedTorso;
+    StagedConfig<GaitConfig>             _stagedGait;
+    StagedConfig<WeightShiftConfig>      _stagedWeightShift;
+    StagedConfig<FootImpactConfig>       _stagedFootImpact;
+    StagedConfig<SwingFootLevelerConfig> _stagedSwingLeveler;
+
     AsyncWebServer server;
     AsyncWebSocket ws;
     ServoControl* _servoCtrl;

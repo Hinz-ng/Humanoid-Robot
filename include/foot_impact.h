@@ -136,9 +136,16 @@ public:
     const FootImpactSideState& getState(Side s) const { return _state[sideIdx(s)]; }
 
     // Live config get/set. Setter validates each field; out-of-range
-    // values are clamped (see foot_impact.cpp::_clampConfig).
+    // values are clamped (see foot_impact.cpp::clampConfig).
     const FootImpactConfig& getConfig() const          { return _cfg; }
     void                    setConfig(const FootImpactConfig& c);
+
+    // Pure clamping of a config candidate. Public + static so the WebComm
+    // parser can pre-clamp a STAGED config at parse time (its echo must show
+    // the values that will actually apply — see B1 command staging).
+    // setConfig() routes through this same function, so parse-time and
+    // apply-time clamping can never diverge.
+    static FootImpactConfig clampConfig(FootImpactConfig c);
 
 private:
     FootImpactConfig     _cfg;
@@ -156,7 +163,6 @@ private:
     PrivSide _priv[SIDE_COUNT];
 
     void _updateSide(Side s, const RawIMUData& raw, uint32_t now_ms);
-    static FootImpactConfig _clampConfig(FootImpactConfig c);
 };
 
 #endif // FOOT_IMPACT_H

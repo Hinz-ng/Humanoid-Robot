@@ -1392,7 +1392,23 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
         }
         // ---------------------------------------------------------------------
         else if (cmd.startsWith("LOAD:")) {
-            _servoCtrl->loadPose(cmd.substring(5));
+            // Audit A-15: pose loads used to write JointModel targets directly
+            // from the WiFi task (loadPose), bypassing MotionManager — racing
+            // the main task and fighting active controllers at hardware level.
+            // Pose files hold ABSOLUTE servo degrees, which is exactly
+            // SOURCE_UI's frame, so submit per joint: an active controller now
+            // wins cleanly by priority (the documented arbitration intent).
+            // The LittleFS read stays on the WiFi task (no tick impact).
+            if (_motionManager) {
+                float angles[NUM_JOINTS];
+                const uint8_t n = _servoCtrl->readPoseAngles(cmd.substring(5),
+                                                             angles, NUM_JOINTS);
+                for (uint8_t i = 0; i < n; i++) {
+                    _motionManager->submit(SOURCE_UI, i, angles[i]);
+                }
+            } else {
+                _servoCtrl->loadPose(cmd.substring(5));  // no manager wired
+            }
             broadcastState();
         }
         // ---------------------------------------------------------------------
@@ -1412,7 +1428,20 @@ void WebComm::handleWebSocketMessage(void* arg, uint8_t* data, size_t len) {
                 Serial.printf("[WebComm] MOVE_NAMED: ch=%d  move=%s  magnitude=%.2f\n",
                               ch, mv.c_str(), mag);
 
-                _servoCtrl->applyNamedMovement(ch, mv.c_str(), mag, false);
+                // Audit A-15: route through MotionManager instead of writing
+                // JointModel targets directly from the WiFi task. The
+                // flex/extend mapping produces joint-relative degrees =
+                // SOURCE_GAIT's frame (smooth-stepped), matching the old
+                // applyNamedMovement(immediate=false) write exactly — except
+                // an active balance controller now overrides by priority
+                // instead of fighting at hardware level.
+                float jointAngle = 0.0f;
+                if (_motionManager &&
+                    ServoControl::namedMovementToJointAngle(mv.c_str(), mag, jointAngle)) {
+                    _motionManager->submit(SOURCE_GAIT, ch, jointAngle);
+                } else {
+                    _servoCtrl->applyNamedMovement(ch, mv.c_str(), mag, false);
+                }
                 broadcastState();
             } else {
                 Serial.printf("[WebComm] MOVE_NAMED parse error: params='%s'\n", params.c_str());

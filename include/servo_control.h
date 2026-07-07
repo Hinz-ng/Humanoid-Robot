@@ -142,12 +142,29 @@ public:
     void applyNamedMovement(uint8_t channel, const char* movementName,
                             float magnitude, bool immediate = false);
 
+    // Pure translation of (movementName, magnitude) → joint-relative degrees.
+    // Returns false on an unknown movement name (jointAngleDeg untouched).
+    // Single source of the flex/extend sign mapping, shared by
+    // applyNamedMovement() and WebComm's MotionManager-routed MOVE_NAMED
+    // path (audit A-15 — WiFi-task pose writes must not bypass arbitration).
+    static bool namedMovementToJointAngle(const char* movementName,
+                                          float magnitude,
+                                          float& jointAngleDeg);
+
     // =========================================================================
     //  POSE MANAGEMENT
     // =========================================================================
     void   saveCurrentPose(String name);
     void   loadPose(String name);
     String listPoses();
+
+    // Read a saved pose's absolute servo angles WITHOUT writing any joint.
+    // Fills out[0..maxCount-1] in channel order; returns the number of
+    // angles read (0 = pose missing/empty). Lets WebComm route pose loads
+    // through MotionManager at SOURCE_UI instead of loadPose()'s direct
+    // JointModel writes from the WiFi task (audit A-15). File I/O only —
+    // safe on the WiFi task.
+    uint8_t readPoseAngles(const String& name, float* out, uint8_t maxCount);
 
     // Reset all joints to neutral and prime PCA9685 registers with safe values.
 // Must be called before re-enabling OE after any e-stop or fall event.

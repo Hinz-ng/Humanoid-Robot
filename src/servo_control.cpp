@@ -138,12 +138,7 @@ void ServoControl::applyNamedMovement(uint8_t channel, const char* movementName,
     if (channel >= NUM_JOINTS) return;
 
     float jointAngle = 0.0f;
-
-    if (strcmp(movementName, "flex") == 0) {
-        jointAngle = +magnitude;
-    } else if (strcmp(movementName, "extend") == 0) {
-        jointAngle = -magnitude;
-    } else {
+    if (!namedMovementToJointAngle(movementName, magnitude, jointAngle)) {
         Serial.printf("[ServoControl] WARNING: unknown movement '%s' on ch=%d\n",
                       movementName, channel);
         return;
@@ -153,6 +148,14 @@ void ServoControl::applyNamedMovement(uint8_t channel, const char* movementName,
                   channel, movementName, magnitude, jointAngle);
 
     _model.setJointAngle(channel, jointAngle, immediate);
+}
+
+/*static*/ bool ServoControl::namedMovementToJointAngle(const char* movementName,
+                                                        float magnitude,
+                                                        float& jointAngleDeg) {
+    if (strcmp(movementName, "flex") == 0)   { jointAngleDeg = +magnitude; return true; }
+    if (strcmp(movementName, "extend") == 0) { jointAngleDeg = -magnitude; return true; }
+    return false;
 }
 
 // =============================================================================
@@ -190,6 +193,25 @@ void ServoControl::loadPose(String name) {
     }
     file.close();
     Serial.printf("[ServoControl] Pose '%s' loaded.\n", name.c_str());
+}
+
+uint8_t ServoControl::readPoseAngles(const String& name, float* out, uint8_t maxCount) {
+    // Read-only variant of loadPose(): same file format (absolute servo
+    // degrees, one per line, channel order), no joint writes. Used by WebComm
+    // to submit pose loads through MotionManager at SOURCE_UI (audit A-15).
+    if (out == nullptr || maxCount == 0) return 0;
+    String filename = "/pose_" + name + ".txt";
+    File file = LittleFS.open(filename, FILE_READ);
+    if (!file) {
+        Serial.printf("[ServoControl] readPoseAngles: pose '%s' not found\n", name.c_str());
+        return 0;
+    }
+    uint8_t n = 0;
+    while (n < maxCount && file.available()) {
+        out[n++] = file.readStringUntil('\n').toFloat();
+    }
+    file.close();
+    return n;
 }
 
 String ServoControl::listPoses() {

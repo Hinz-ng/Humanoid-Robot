@@ -2081,6 +2081,14 @@ void GaitController::update(float dt_s, const IMUState& imuState,
             // TELEMETRY ONLY — no control effect. _swingSide is 0/1 and equals
             // sideIdx(_swingSide) (side.h static_asserts), so it indexes
             // _footEst[]/_lastAnkleCmdDeg[] correctly.
+            // B3 anchor: prove the invariant this block depends on at compile
+            // time, HERE, so a future Side re-numbering fails this line
+            // instead of silently mis-indexing the per-leg arrays.
+            static_assert(sideIdx(Side::LEFT)  == static_cast<uint8_t>(Side::LEFT) &&
+                          sideIdx(Side::RIGHT) == static_cast<uint8_t>(Side::RIGHT) &&
+                          static_cast<uint8_t>(Side::RIGHT) == 1,
+                          "_rolloverSide cast-indexing requires sideIdx(s) == (uint8_t)s "
+                          "with LEFT=0, RIGHT=1");
             _rolloverActive        = true;
             _rolloverStartMs       = _touchdownMs;   // == millis() at the latch
             _rolloverSide          = static_cast<uint8_t>(_swingSide);

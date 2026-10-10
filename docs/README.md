@@ -56,7 +56,6 @@ go, and works out the joint angles to get them there.
 | [Steering plan](STEERING_PLAN.md) | how turning works and why it uses hip yaw |
 | [Current focus](CURRENT_FOCUS.md) | what I'm working on now and what's waiting on testing |
 | [Coding standard](CODING_STANDARD.md) | conventions for the codebase |
-| [Audit findings](docs/AUDIT_FINDINGS.md) | a full code review and the fixes that came out of it |
 
 ## Building
 
@@ -75,4 +74,5 @@ Join the `HumanoidRobot` WiFi network and open the IP address printed on the ser
 src/, include/   firmware, one module per job (sensors, balance, gait, IK, servos, web)
 data/            web control panel served by the robot
 lib/             BMI160 IMU driver
+docs/            design docs (this README included)
 ```

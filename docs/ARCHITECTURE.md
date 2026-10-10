@@ -1,7 +1,7 @@
 # Architecture
 
 **Owner:** Hinz  ·  **Last revised:** 2026-07-07 (V1-closure audit B7 sync)
-**Place this file in:** project knowledge **and** Claude Code repo root.
+**Place this file in:** project knowledge **and** `docs/`.
 **Scope:** Layer map, data flow, per-tick ordering, arbitration rules.
 **Out of scope:** Specific values (read `project_wide_defs.h`), live milestone
 status (see `CURRENT_FOCUS.md`).

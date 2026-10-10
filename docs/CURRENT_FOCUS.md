@@ -1,7 +1,7 @@
 # Current Focus
 
 **Owner:** Hinz · **Updated:** 2026-06-06
-**Place this file in:** project knowledge **and** Claude Code repo root.
+**Place this file in:** project knowledge **and** `docs/`.
 **Purpose:** Live state of the project — what's in progress, what's gated,
 what's open. Update *when* state changes, not on a schedule.
 
@@ -411,7 +411,7 @@ Treat as load-bearing — touch only with regression risk in mind.
   gate (`webComm.applyStagedTuning()`, tick step 0). Covers Balance, Torso,
   Gait, WeightShift, FootImpact, SwingFootLeveler configs + gait/WS/balance
   commands. The "don't tune while armed" workaround is retired. Residuals
-  (documented in `docs/AUDIT_FINDINGS.md`): TORSO_TARE's two direct float
+  (documented in the V1-closure audit, `git show 943f95a:docs/AUDIT_FINDINGS.md`): TORSO_TARE's two direct float
   writes (needs sync reply), ServoControl pose/speed/trim calls, e-stop
   paths (deliberately immediate, A-03).
 - ~~`IMU_LOOP_HZ` not a named constant~~ — **DONE (audit B2):** promoted to

@@ -38,12 +38,9 @@ __pycache__/
 
 #Wildcards
 *BusIO*
-*README*
-*LICENSE*
 *AsyncTCP*
 *Adafruit*
 *.ino
-*.md
 *settings*
 
 

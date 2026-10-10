@@ -2,7 +2,6 @@
 
 A 40 cm walking robot I designed, 3D-printed and programmed from scratch. It balances, shifts its
 weight, steps, and catches itself when pushed, all from its own sensors and a single ESP32-S3.
-No pre-recorded animations: every movement is computed live, 400 times a second.
 
 <!-- Photo or short GIF of the robot standing / stepping / catching a push goes here. -->
 

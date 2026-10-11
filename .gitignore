@@ -45,3 +45,8 @@ __pycache__/
 #Exact Filenames
 integrity.dat
 
+
+# Internal working docs, kept local
+docs/CURRENT_FOCUS.md
+docs/CODING_STANDARD.md
+docs/STEERING_PLAN.md

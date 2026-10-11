@@ -3,8 +3,7 @@
 **Owner:** Hinz  ·  **Last revised:** 2026-07-07 (V1-closure audit B7 sync)
 **Place this file in:** project knowledge **and** `docs/`.
 **Scope:** Layer map, data flow, per-tick ordering, arbitration rules.
-**Out of scope:** Specific values (read `project_wide_defs.h`), live milestone
-status (see `CURRENT_FOCUS.md`).
+**Out of scope:** Specific values (read `project_wide_defs.h`) and live milestone status.
 
 > If this document and the code disagree, the code wins. Open an issue or fix
 > the doc. Module roles below name files, not implementations — for current
@@ -380,7 +379,6 @@ written via `WebComm::setFootNeutralPitch` and consumed by `isFootLoaded`.
 ## 9. What This Document Does *Not* Specify
 
 - Specific loop rates, thresholds, gains, or pin numbers — read the code.
-- Live milestone status, current focus, in-flight bugs — see `CURRENT_FOCUS.md`.
 - Gait FSM transition details and capture-point math derivations — see
   `GAIT_DESIGN.md` and the comment blocks in `gait_controller.cpp`.
 - The complete WebSocket packet inventory — grep `WebComm.cpp` and `index.html`.

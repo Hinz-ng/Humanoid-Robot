@@ -1,7 +1,7 @@
 # Humanoid Robot
 
-A 40 cm walking robot I designed, 3D-printed and programmed from scratch. It balances, shifts its
-weight, steps, and catches itself when pushed, all from its own sensors and a single ESP32-S3.
+A 40 cm walking robot I designed, 3D-printed and programmed from scratch. It balances, walks,
+and catches itself when pushed, all from its own sensors and a single ESP32-S3.
 
 <!-- Photo or short GIF of the robot standing / stepping / catching a push goes here. -->
 
@@ -40,9 +40,10 @@ go, and works out the joint angles to get them there.
 
 - ✅ Standing balance and weight shifting
 - ✅ Stepping in place
+- ✅ Slow forward walking
 - ✅ Sideways push recovery
 - ✅ Foot sensors gating each step
-- 🔄 Forward walking and smarter foot placement (capture point)
+- 🔄 Faster, steadier walking with smarter foot placement (capture point)
 - 🔄 Forward and backward push recovery
 - 🔄 Turning while walking
 - ⬜ Upper body
@@ -53,9 +54,6 @@ go, and works out the joint angles to get them there.
 |---|---|
 | [Architecture](ARCHITECTURE.md) | how the code is layered and what runs in each control tick |
 | [Gait design](GAIT_DESIGN.md) | the step cycle, foot placement and push recovery |
-| [Steering plan](STEERING_PLAN.md) | how turning works and why it uses hip yaw |
-| [Current focus](CURRENT_FOCUS.md) | what I'm working on now and what's waiting on testing |
-| [Coding standard](CODING_STANDARD.md) | conventions for the codebase |
 
 ## Building
 

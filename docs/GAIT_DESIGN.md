@@ -1,7 +1,6 @@
 # Gait Design
 
 **Owner:** Hinz · **Updated:** 2026-06-06
-**Place this file in:** project knowledge **and** `docs/`.
 **Scope:** Gait FSM, capture-point step placement, catch-step recovery,
 WeightShift coupling.
 **Out of scope:** Specific numeric values (read `project_wide_defs.h`),

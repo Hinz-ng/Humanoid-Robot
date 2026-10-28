@@ -3,7 +3,9 @@
 A 40 cm walking robot I designed, 3D-printed and programmed from scratch. It balances, walks,
 and catches itself when pushed, all from its own sensors and a single ESP32-S3.
 
-<!-- Photo or short GIF of the robot standing / stepping / catching a push goes here. -->
+<p align="center">
+  <img src="../images/walking.gif" width="280" alt="The robot stepping on a wooden floor">
+</p>
 
 ## The idea
 
@@ -47,6 +49,21 @@ go, and works out the joint angles to get them there.
 - 🔄 Forward and backward push recovery
 - 🔄 Turning while walking
 - ⬜ Upper body
+
+## Build log
+
+<table>
+  <tr>
+    <td align="center"><img src="../images/01-first-leg.jpg" width="260"><br>First leg prototype: ankle and knee servos on a printed foot</td>
+    <td align="center"><img src="../images/02-leg-v2.jpg" width="260"><br>Second leg revision with a redesigned shin</td>
+    <td align="center"><img src="../images/03-lower-body.jpg" width="260"><br>Both legs and the hips assembled</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="../images/04-upper-body-v1.jpg" width="260"><br>First version of the upper body and arms</td>
+    <td align="center"><img src="../images/05-weight-shift-test.jpg" width="260"><br>Developing the walking gait: weight-shift testing</td>
+    <td align="center"><img src="../images/06-current.jpg" width="260"><br>Current version, during a powered walking test</td>
+  </tr>
+</table>
 
 ## Documentation
 
